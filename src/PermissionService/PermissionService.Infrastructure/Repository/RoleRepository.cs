@@ -5,7 +5,13 @@ using PermissionService.Domain.IRepository;
 
 namespace PermissionService.Infrastructure.Repository;
 
-/// <summary>角色仓储实现，含角色-权限与账号-角色绑定的读写。</summary>
+/// <summary>
+/// 角色仓储实现，含角色-权限与账号-角色绑定的读写。
+/// </summary>
+/// <remarks>
+/// InsertAsync / UpdateAsync / DeleteAsync 继承 CrudRepository——基类负责雪花 Id 与审计时间戳，
+/// 不要重复实现，否则会绕过 Id 填充（Id 恒为 0 会连带破坏唯一性校验）。
+/// </remarks>
 public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
 {
     /// <summary>构造仓储。</summary>
@@ -25,14 +31,9 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
         }
 
         var total = await select.CountAsync(ct);
-        // 追加第二排序键 Id，避免同排序值时翻页出现重复或遗漏
         var items = await select.OrderByDescending(a => a.Id).Page(page, pageSize).ToListAsync(ct);
         return (items, total);
     }
-
-    /// <inheritdoc />
-    public async Task<Role?> GetByIdAsync(long id, CancellationToken ct = default)
-        => await Db.Select<Role>().Where(a => a.Id == id).FirstAsync(ct);
 
     /// <inheritdoc />
     public async Task<Role?> GetByCodeAsync(string code, CancellationToken ct = default)
@@ -43,21 +44,8 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
         => await Db.Select<Role>().Where(a => a.RoleName == roleName).AnyAsync(ct);
 
     /// <inheritdoc />
-    public async Task<long> InsertAsync(Role role, CancellationToken ct = default)
-    {
-        await Db.Insert(role).ExecuteAffrowsAsync(ct);
-        return role.Id;
-    }
-
-    /// <inheritdoc />
-    public async Task<int> UpdateAsync(Role role, CancellationToken ct = default)
-        => await Db.Update<Role>(role).ExecuteAffrowsAsync(ct);
-
-    /// <inheritdoc />
-    public async Task<int> DeleteAsync(long id, CancellationToken ct = default)
-        => await Db.Update<Role>().Where(a => a.Id == id)
-            .Set(a => new Role { IsDeleted = true, DeletedAt = DateTime.UtcNow })
-            .ExecuteAffrowsAsync(ct);
+    public async Task<bool> ExistsByCodeAsync(string code, CancellationToken ct = default)
+        => await Db.Select<Role>().Where(a => a.Code == code).AnyAsync(ct);
 
     /// <inheritdoc />
     public async Task<List<long>> GetPermissionIdsAsync(long roleId, CancellationToken ct = default)
@@ -72,8 +60,6 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
         var ids = permissionIds.Distinct().ToArray();
         var affected = 0;
 
-        // 先删后插必须原子：中间态会出现「角色一条权限都没有」，
-        // 若此时有请求进来会被误判为无权限（DATA_SPEC 3.7）。
         Db.Transaction(() =>
         {
             affected += Db.Delete<RolePermission>().Where(a => a.RoleId == roleId).ExecuteAffrows();
@@ -94,8 +80,6 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ResolvePermissionCodesAsync(long userId, CancellationToken ct = default)
     {
-        // 分三步查而不是连表 join：FreeSql 3.5 的 Join 重载在链式调用时类型推断容易歧义，
-        // 分步写更直白，也更容易看出每一步的过滤条件。
         var bindings = await Db.Select<UserRole>().Where(a => a.UserId == userId).ToListAsync(ct);
         if (bindings.Count == 0) return Array.Empty<string>();
 
@@ -106,7 +90,6 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
         var permIds = rolePerms.Select(x => x.PermissionId).Distinct().ToArray();
         var perms = await Db.Select<Permission>().Where(a => permIds.Contains(a.Id)).ToListAsync(ct);
 
-        // 只返回启用状态的权限点：停用后网关不再校验
         return perms.Where(a => a.Status == 1 && !string.IsNullOrEmpty(a.Code))
             .Select(a => a.Code).Distinct().ToList();
     }
@@ -148,8 +131,4 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
     /// <inheritdoc />
     public async Task<int> UnbindRoleAsync(long roleId, CancellationToken ct = default)
         => await Db.Delete<UserRole>().Where(a => a.RoleId == roleId).ExecuteAffrowsAsync(ct);
-
-    /// <inheritdoc />
-    public async Task<bool> ExistsByCodeAsync(string code, CancellationToken ct = default)
-        => await Db.Select<Role>().Where(a => a.Code == code).AnyAsync(ct);
 }

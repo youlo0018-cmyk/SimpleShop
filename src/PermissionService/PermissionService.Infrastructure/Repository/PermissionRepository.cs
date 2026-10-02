@@ -5,7 +5,14 @@ using PermissionService.Domain.IRepository;
 
 namespace PermissionService.Infrastructure.Repository;
 
-/// <summary>权限点仓储实现。软删与租户条件由 GlobalFilter 统一注册（DATA_SPEC 3.2.1）。</summary>
+/// <summary>
+/// 权限点仓储实现。
+/// </summary>
+/// <remarks>
+/// InsertAsync / UpdateAsync / GetByIdAsync / DeleteAsync 继承 CrudRepository——
+/// 基类负责雪花 Id、审计时间戳与软删。不要重复实现，否则会绕过 Id 填充。
+/// 软删过滤由 GlobalFilter 注入（DATA_SPEC 3.2.1）。
+/// </remarks>
 public sealed class PermissionRepository : CrudRepository<Permission>, IPermissionRepository
 {
     /// <summary>构造仓储。</summary>
@@ -42,25 +49,4 @@ public sealed class PermissionRepository : CrudRepository<Permission>, IPermissi
         var list = ids.ToArray();
         return await Db.Select<Permission>().Where(a => list.Contains(a.Id)).ToListAsync(ct);
     }
-
-    /// <inheritdoc />
-    public async Task<Permission?> GetByIdAsync(long id, CancellationToken ct = default)
-        => await Db.Select<Permission>().Where(a => a.Id == id).FirstAsync(ct);
-
-    /// <inheritdoc />
-    public async Task<long> InsertAsync(Permission permission, CancellationToken ct = default)
-    {
-        await Db.Insert(permission).ExecuteAffrowsAsync(ct);
-        return permission.Id;
-    }
-
-    /// <inheritdoc />
-    public async Task<int> UpdateAsync(Permission permission, CancellationToken ct = default)
-        => await Db.Update<Permission>(permission).ExecuteAffrowsAsync(ct);
-
-    /// <inheritdoc />
-    public async Task<int> DeleteAsync(long id, CancellationToken ct = default)
-        => await Db.Update<Permission>().Where(a => a.Id == id)
-            .Set(a => new Permission { IsDeleted = true, DeletedAt = DateTime.UtcNow })
-            .ExecuteAffrowsAsync(ct);
 }

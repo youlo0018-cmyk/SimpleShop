@@ -16,6 +16,12 @@
     <Project Path="src/PermissionService/PermissionService.Domain/PermissionService.Domain.csproj" />
     <Project Path="src/PermissionService/PermissionService.Infrastructure/PermissionService.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/UserService/">
+    <Project Path="src/UserService/UserService.Api/UserService.Api.csproj" />
+    <Project Path="src/UserService/UserService.Application/UserService.Application.csproj" />
+    <Project Path="src/UserService/UserService.Domain/UserService.Domain.csproj" />
+    <Project Path="src/UserService/UserService.Infrastructure/UserService.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Collaboration.Domain.Tests/Collaboration.Domain.Tests.csproj" />
   </Folder>
