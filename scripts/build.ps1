@@ -18,7 +18,7 @@ if ($Release) { $Configuration = 'Release' }
 Write-Host "==> 构建 $Configuration" -ForegroundColor Cyan
 Push-Location $root
 try {
-    & dotnet build SimpleShop.slnx -c $Configuration --nologo
+    & dotnet build SimpleShop.sln -c $Configuration --nologo
     if ($LASTEXITCODE -ne 0) { throw "构建失败，退出码 $LASTEXITCODE" }
 }
 finally {
