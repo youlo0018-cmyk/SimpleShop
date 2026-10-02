@@ -112,8 +112,8 @@ S0 基础设施
 | `.../Entities/AdminEntityBase.cs` | 加创建人 + 最后操作人 + `PlatformId` / `MerchantId`（`DATA_SPEC` 2.2） |
 | `.../Entities/CustomerEntityBase.cs` | 加 `CustomerId` / `CustomerName`（`DATA_SPEC` 2.3） |
 | `.../Entities/IPublicVisible.cs` | 公开可见性标记接口 + `BuildCondition(now)`（`DATA_SPEC` 3.2.1） |
-| `.../Repository/IBaseRepository.cs` | 通用仓储接口（`DATA_SPEC` 3.5） |
-| `.../Repository/BaseRepository.cs` | FreeSql 实现，**内含四类 AOP 注入**（`DATA_SPEC` 3.2） |
+| `.../Repository/ICrudRepository.cs` | 通用仓储接口（`DATA_SPEC` 3.5）。命名避开 FreeSql 自带的同名 `BaseRepository` |
+| `.../Repository/CrudRepository.cs` | FreeSql 实现。AOP 单独在 `FreeSqlAopRegistrar` 注册 |
 | `.../Infrastructure/RedisDistributedLock.cs` | 分布式锁，键名规则见 `BUSINESS` 20.2 |
 | `.../Infrastructure/MessageEnvelope.cs` | MQ 消息信封 + 幂等键 |
 | `.../Infrastructure/LoggingEventPublisher.cs` | pv / operation / exception 事件发布 |
@@ -146,7 +146,7 @@ S0 基础设施
 - 8 个容器状态 `healthy`，含自建 ES-IK 容器能 `GET /_analyze` 验证 IK 分词生效
 - `SELECT count(*) FROM pg_database WHERE datname LIKE 'simpleshop%'` = 14
 - `dotnet build SimpleShop.slnx` 通过，且**无警告**
-- `Collaboration.Domain` 编译产出，`BaseRepository` 的四类 AOP 有单元测试骨架
+- `Collaboration.Domain` 编译产出，AOP 与配置校验有单元测试骨架
 - `AI_HANDOFF` 进度日志记录本阶段
 
 ### 2.5 风险

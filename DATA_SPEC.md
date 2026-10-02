@@ -334,6 +334,8 @@
 
 ### 3.5 仓储通用方法
 
+> **实现命名：`CrudRepository<T>` / `ICrudRepository<T>`**（不是 `BaseRepository`）。FreeSql 3.5 自带 `BaseRepository<TEntity>`，同名会让每个 Infrastructure 文件都出现 CS0104 二义性错误。文件在 `src/Collaboration/Collaboration.Domain/Repository/`。
+
 | 方法 | 说明 |
 |---|---|
 | `GetByIdAsync(id)` | 含 AOP 过滤；查不到返回 `null`（不抛异常） |

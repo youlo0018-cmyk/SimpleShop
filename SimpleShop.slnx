@@ -3,6 +3,7 @@
     <Project Path="src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj" />
     <Project Path="src/CustomerService/CustomerService.Domain/CustomerService.Domain.csproj" />
     <Project Path="src/CustomerService/CustomerService.Application/CustomerService.Application.csproj" />
+    <Project Path="src/CustomerService/CustomerService.Infrastructure/CustomerService.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Collaboration.Domain.Tests/Collaboration.Domain.Tests.csproj" />

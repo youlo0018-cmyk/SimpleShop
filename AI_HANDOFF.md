@@ -229,6 +229,21 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-02（实现阶段）：S1 — CustomerService 四层打通到 Infrastructure
+
+- **CustomerService.Domain**：Customer / CustomerAddress / CustomerFavorite 实体 + 三个仓储接口。唯一索引不放实体属性上（`ColumnAttribute` 没有 `IsUnique`），统一由 DDL 脚本定义。
+- **deploy/sql/customer/01-create-tables.sql**：3 表 9 索引。含两条**部分唯一索引**（同一客户至多一条默认地址、同一客户同一 SPU 只留一条有效收藏），都带 `is_deleted = false` 条件，软删后不占用唯一位。实测建表成功、复跑幂等。
+- **CustomerService.Application**：PasswordHasher（PBKDF2-SHA256 + 随机盐，迭代次数随哈希存储）、CustomerTokenService（HS256）、Register / Login 各含 Command + Validator + Handler。Login 对「账号不存在」与「密码错误」返回同一条消息，避免账号枚举。
+- **CustomerService.Infrastructure**：三个仓储实现 + `AddInfrastructure` 注册。`SetDefaultAsync` 用 `IFreeSql.Transaction(Action)` 包住两条语句。
+- **scripts/init-tables.ps1**：按服务目录名映射库名批量执行 DDL，幂等。
+- **验证**：build **0 error 0 warning**；dotnet test **14/14**；建表实测通过。
+- **踩坑与修正（已回写文档）**：
+  1. `Features.Customer` 命名空间遮蔽 `Customer` 实体（CS0118）——`CODING_STANDARD` 陷阱 1，按规定用 using 别名。
+  2. **FreeSql 3.5 自带 `BaseRepository<TEntity>`**，与我们的同名冲突（CS0104）。已把自有基类改名为 **`CrudRepository<T>`**，接口 `ICrudRepository<T>`，并回写 `DATA_SPEC` 3.5 与 `PLAN` 2.2。
+  3. FreeSql 3.5 的 `IInsert.ExecuteReturnSnowflakeIdAsync` 不存在——Id 已由 AOP 填好，直接读实体属性。
+  4. `IFreeSql.TransactionAsync` / `IAdo.MasterConn()` 均不存在——只有同步的 `IFreeSql.Transaction(Action)`。
+- **S1 剩余**：CustomerService.Api 层（控制器 + Program 启动时序 + appsettings）、地址与收藏的 Feature、User / Permission / Auth / Tool 四服务、Gateway。
+
 ### 2026-10-02（实现阶段）：S1 进行中 — 配置源抽象 + 启动时序 S0~S4 + 单元测试骨架
 
 - **配置源抽象**（`Collaboration.Domain/Configuration/`）：`IConfigSource` + `ConfigSourceUnavailableException`、`LocalFileConfigSource`、`ConfigurationValidator`、`BootstrapOptions`、`InfrastructureOptions`。
