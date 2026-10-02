@@ -2,6 +2,7 @@ using System.Reflection;
 using Collaboration.Domain.MediatR;
 using FluentValidation;
 using MediatR;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using UserService.Application.Features.Internal;
 using UserService.Application.Features.User.ManageUser;
@@ -15,8 +16,9 @@ public static class ApiServiceCollectionExtensions
 {
     /// <summary>注册 MediatR、校验器、管道与基础设施。</summary>
     /// <param name="services">服务集合。</param>
+    /// <param name="configuration">应用配置，用于读下游服务地址。</param>
     /// <returns>原集合，便于链式调用。</returns>
-    public static IServiceCollection AddAppServices(this IServiceCollection services)
+    public static IServiceCollection AddAppServices(this IServiceCollection services, IConfiguration configuration)
     {
         // 必须扫 Application 程序集：Handler 与 Validator 都在那里。
         // 用 Assembly.GetExecutingAssembly() 会注册不到任何 Handler。
@@ -30,7 +32,20 @@ public static class ApiServiceCollectionExtensions
         UserValidators.AddUserValidators(services);
         AuthenticateAdminValidators.AddAuthenticateAdminValidators(services);
 
-        services.AddSingleton<IUserRoleClient, UnavailableUserRoleClient>();
+        // 角色绑定走内网 HTTP 打到权限中心。地址只在配置里出现，不写死。
+        var permissionServiceUrl = configuration["Services:PermissionServiceBaseUrl"];
+        if (string.IsNullOrWhiteSpace(permissionServiceUrl))
+        {
+            throw new InvalidOperationException(
+                "缺少配置 Services:PermissionServiceBaseUrl，建号时无法绑定角色。请在 AgileConfig 补上。");
+        }
+
+        services.AddHttpClient<IUserRoleClient, HttpUserRoleClient>(client =>
+        {
+            client.BaseAddress = new Uri(permissionServiceUrl!.TrimEnd('/') + "/");
+            // 权限中心不可用时要尽快失败，不能让建号请求一直挂着
+            client.Timeout = TimeSpan.FromSeconds(5);
+        });
 
         services.AddInfrastructure();
         return services;

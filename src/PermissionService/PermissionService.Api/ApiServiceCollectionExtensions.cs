@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PermissionService.Application.Features.Permission.QueryTree;
 using PermissionService.Infrastructure;
 using PermissionService.Application.Features.Role;
+using PermissionService.Application.Features.Internal;
 using PermissionService.Application.Security;
 
 namespace PermissionService.Api;
@@ -32,6 +33,7 @@ public static class ApiServiceCollectionExtensions
 
         // AddValidatorsFromAssembly 扫不到嵌套静态类里的校验器，这里显式注册
         RoleValidators.AddRoleValidators(services);
+        ResolvePermissionsValidators.AddResolvePermissionsValidators(services);
 
         services.AddInfrastructure();
         return services;

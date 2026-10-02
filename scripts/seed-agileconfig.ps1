@@ -99,6 +99,27 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         'Snowflake:WorkerIdUpperBound' = '64'
         'Tenancy:InternalToken'    = $internalToken
     }
+    # 下游服务地址。服务之间的 HTTP 调用地址只在这里出现，代码里不写死端口。
+    # 端口表见 scripts/service-registry.json（与 BUSINESS.md 3.1 的服务表一致）。
+    $serviceUrls = @{
+        'UserService'             = 'http://127.0.0.1:5011'
+        'CustomerService'         = 'http://127.0.0.1:5280'
+        'ToolService'             = 'http://127.0.0.1:5080'
+        'PermissionService'       = 'http://127.0.0.1:5022'
+        'AuthService'             = 'http://127.0.0.1:5019'
+        'ProductService'          = 'http://127.0.0.1:5058'
+        'CartService'             = 'http://127.0.0.1:5060'
+        'InventoryService'        = 'http://127.0.0.1:5062'
+        'OrderService'            = 'http://127.0.0.1:5064'
+        'PaymentService'          = 'http://127.0.0.1:5066'
+        'MarketingService'        = 'http://127.0.0.1:5072'
+        'MerchantPlatformService' = 'http://127.0.0.1:5070'
+        'PointService'            = 'http://127.0.0.1:5082'
+        'EvaluateService'         = 'http://127.0.0.1:5084'
+    }
+    $cfg['Services:PermissionServiceBaseUrl'] = $serviceUrls['PermissionService']
+    $cfg['Services:UserServiceBaseUrl']        = $serviceUrls['UserService']
+    $cfg['Services:AuthServiceBaseUrl']        = $serviceUrls['AuthService']
     if ($name -eq 'CustomerService') {
         $cfg['Jwt:Issuer']       = 'simpleshop'
         $cfg['Jwt:Audience']     = 'simpleshop-customer'

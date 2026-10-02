@@ -1,6 +1,10 @@
 namespace UserService.Application.Services;
 
 /// <summary>账号-角色绑定的跨服务契约。角色数据在权限中心（PermissionService），账号表不存角色。</summary>
+/// <remarks>
+/// 这是权限 fail-closed 的一部分：账号表**不得**有任何角色字段兜底，
+/// 权限只认权限中心 user_role 表的显式绑定（BUSINESS 5.3）。
+/// </remarks>
 public interface IUserRoleClient
 {
     /// <summary>重绑账号的角色集合。</summary>
@@ -8,18 +12,6 @@ public interface IUserRoleClient
     /// <param name="roleIds">目标角色 Id 集合，可为空表示解绑全部。</param>
     /// <param name="platformId">平台 Id，冗余存储用于按平台裁剪。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>true 表示已绑定；false 表示未绑定（建号不因此失败，需补偿补绑）。</returns>
+    /// <returns>true 表示已绑定；false 表示绑定失败，调用方应告警但不因此让建号失败。</returns>
     Task<bool> ReplaceAsync(long userId, IReadOnlyCollection<long> roleIds, long platformId, CancellationToken ct = default);
-}
-
-/// <summary>S1 阶段的占位实现：权限中心 gRPC 契约尚未建立，此处只打通调用形状。</summary>
-/// <remarks>返回 false 而不是 true，是为了让「角色未绑定」在日志里可见；建号本身不因此失败。</remarks>
-public sealed class UnavailableUserRoleClient : IUserRoleClient
-{
-    /// <inheritdoc />
-    public Task<bool> ReplaceAsync(long userId, IReadOnlyCollection<long> roleIds, long platformId, CancellationToken ct = default)
-    {
-        Console.WriteLine($"[user-role] 权限中心尚未接入，账号 {userId} 的角色未绑定（PLAN.md S1 补接）");
-        return Task.FromResult(false);
-    }
 }
