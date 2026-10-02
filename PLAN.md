@@ -103,7 +103,9 @@ S0 基础设施
 
 | 路径 | 内容 |
 |---|---|
-| `SimpleShop.sln` | 解决方案，**用经典 .sln 而非 .slnx**：.slnx 只支持单层解决方案文件夹，Rider 里 `src` 下会平铺；经典 .sln 支持嵌套，才能显示成 `src → Collaboration / CustomerService → 各层` |
+| `SimpleShop.slnx` | **根解决方案**，登记全部工程。`dotnet sln add` 会按磁盘目录自动生成嵌套的解决方案文件夹 |
+| `src/<服务名>/<服务名>.slnx` | **每个微服务一个独立解决方案**，只含自己的四个分层工程。日常开发打开这个即可 |
+| `tests/<项目名>.slnx` | 测试项目独立方案，便于单跑测试 |
 | `src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj` | net10.0 类库 |
 | `.../Common/ApiResponse.cs` | `ApiResponse { Success, Code, Message, Data, Errors }` |
 | `.../Common/ApiResults.cs` | `ApiResults.Ok(data)` / `ApiResults.Fail(code, msg, errors)` |
@@ -129,7 +131,7 @@ S0 基础设施
 | `scripts/start-infra.ps1` | 起 8 个容器，等健康检查通过 |
 | `scripts/stop-infra.ps1` | 停容器 |
 | `scripts/init-database.ps1` | 执行 `deploy/sql/00`、`01` |
-| `scripts/build.ps1` | `dotnet build SimpleShop.sln` |
+| `scripts/build.ps1` | `dotnet build SimpleShop.slnx` |
 | `scripts/generate-validation-rules.ps1` | 由 JSON 生成两端常量 |
 
 ### 2.3 验收命令
@@ -145,7 +147,7 @@ S0 基础设施
 
 - 8 个容器状态 `healthy`，含自建 ES-IK 容器能 `GET /_analyze` 验证 IK 分词生效
 - `SELECT count(*) FROM pg_database WHERE datname LIKE 'simpleshop%'` = 14
-- `dotnet build SimpleShop.sln` 通过，且**无警告**
+- `dotnet build SimpleShop.slnx` 通过，且**无警告**
 - `Collaboration.Domain` 编译产出，AOP 与配置校验有单元测试骨架
 - `AI_HANDOFF` 进度日志记录本阶段
 

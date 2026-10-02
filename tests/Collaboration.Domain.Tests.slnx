@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="../src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj" />
+  <Project Path="Collaboration.Domain.Tests/Collaboration.Domain.Tests.csproj" />
+</Solution>

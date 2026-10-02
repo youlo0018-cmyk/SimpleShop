@@ -120,6 +120,8 @@ SimpleShop 是一个**多平台（多租户）电商系统**，目标是跑通�
 |---|---|
 | `src/` | 后端微服务（每服务四层） |
 | `src/Collaboration/` | 公共类库（通用仓储、模型基类、gRPC 契约、注册扩展、公共枚举与 DTO） |
+| `SimpleShop.slnx` | **根解决方案**：登记全部工程，按磁盘目录自动嵌套 |
+| `src/<服务名>/<服务名>.slnx` | **每个微服务一个独立解决方案**，只含自己的四个分层工程。日常开发打开这个 |
 | `Gateway/` | Ocelot 网关 |
 | `apps/admin-vue/` | 管理后台（Vue3 + Element Plus） |
 | `apps/user-uniapp/` | 商城端（UniApp：H5 + 微信小程序） |

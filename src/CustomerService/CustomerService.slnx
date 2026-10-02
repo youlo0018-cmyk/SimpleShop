@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="../Collaboration/Collaboration.Domain/Collaboration.Domain.csproj" />
+  <Project Path="CustomerService.Api/CustomerService.Api.csproj" />
+  <Project Path="CustomerService.Application/CustomerService.Application.csproj" />
+  <Project Path="CustomerService.Domain/CustomerService.Domain.csproj" />
+  <Project Path="CustomerService.Infrastructure/CustomerService.Infrastructure.csproj" />
+</Solution>
