@@ -492,3 +492,27 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | 9 | 秒杀异步落单需轮询 `GrabResult`；体验问题记为 P2 风险 21，不要在实现期擅自改成同步 |
 | 10 | 评价均分每日更新是**产品决策不是 bug**，被提出时对照 P1 风险 12 解释，不要「顺手修好」 |
 
+
+### 2026-10-03（实现阶段）：权限点增删改 + 角色 CRUD + 内置角色种子
+
+- **超管守卫**：`ISuperAdminOnly` 标记 + `SuperAdminBehavior` MediatR 管道行为。
+  依据 DATA_SPEC 5.22（权限点/角色增删改额外要求 PlatformId = 0）。
+  用管道统一拦而不是每个 Handler 各写一遍——漏一个就是越权口子；只对实现了该接口的请求生效，权限树查询照常放行。
+- **管道顺序修正**：鉴权必须在参数校验**之前**。原先 ValidationBehavior 注册在前，
+  未授权请求会先撞 400 校验错误，白做一次校验，语义也不对。
+- **权限点**：Create（中文名同父唯一 + code 全局唯一 + Level 由父链推导，防「叶子下再挂模块」突破四层）、
+  Delete（**内置拒绝删除只能停用**，非内置删除时级联清理角色绑定）、Status。
+- **角色**：Create / Update（**内置拒绝修改**）/ Delete（**内置拒绝删除** + 级联清理角色绑定与账号绑定）/
+  BindPermissions（**内置权限锁定不可重绑**）/ Query（每项带已绑定权限点数，省掉前端二次请求）。
+- **新增非泛型 `ApiResponse` 与 `BaseApiException`**，全局中间件增加业务异常分支
+  （原先只有 ValidationException 与兜底 Exception，业务拒绝会掉进 500）。
+- **内置角色种子**（`scripts/seed-roles.ps1`，BUSINESS.md 5.1）：
+  平台管理员/商户管理员各 78 权限（全部），平台运营 73、平台财务 15、商户运营 13、商户财务 13，共 270 条绑定。
+- **修一处列名不一致**：Role.Code 实体映射 `role_code`，DDL 建成了 `code`，查询报 42703。已统一。
+- **实测**：6 个写接口在未授权上下文全部 403；只读接口（permissions/Tree、roles/List）200。
+- **一个容易误判的点**：`[ApiController]` 对非空引用类型做自动模型校验，
+  非法请求体会在进管道**之前**就被框架以 400 拒掉，此时看不到守卫生效。
+  **测守卫必须用合法参数**，否则会误以为守卫没起作用。
+- 状态：build 0 error 0 warning；单测 29/29；API 回归 15/15（CustomerService）。
+- **S1 剩余**：UserService（后台账号）、AuthService（OpenIddict RS256 令牌）、ToolService（统一上传）、
+  以及 Gateway 的双令牌验签与 RBAC（这些都还没写，是 S1 的最后一块）。
