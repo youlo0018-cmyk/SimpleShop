@@ -10,6 +10,12 @@
     <Project Path="src/CustomerService/CustomerService.Domain/CustomerService.Domain.csproj" />
     <Project Path="src/CustomerService/CustomerService.Infrastructure/CustomerService.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/PermissionService/">
+    <Project Path="src/PermissionService/PermissionService.Api/PermissionService.Api.csproj" />
+    <Project Path="src/PermissionService/PermissionService.Application/PermissionService.Application.csproj" />
+    <Project Path="src/PermissionService/PermissionService.Domain/PermissionService.Domain.csproj" />
+    <Project Path="src/PermissionService/PermissionService.Infrastructure/PermissionService.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Collaboration.Domain.Tests/Collaboration.Domain.Tests.csproj" />
   </Folder>
