@@ -2,7 +2,9 @@
   <Folder Name="/src/">
     <Project Path="src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj" />
   </Folder>
-  <Folder Name="/tests/" />
+  <Folder Name="/tests/">
+    <Project Path="tests/Collaboration.Domain.Tests/Collaboration.Domain.Tests.csproj" />
+  </Folder>
   <Folder Name="/apps/" />
   <Folder Name="/deploy/" />
   <Folder Name="/scripts/" />

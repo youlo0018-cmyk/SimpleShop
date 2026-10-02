@@ -31,5 +31,10 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- SqlLiteral 等内部工具不扩大公开面，只对测试项目可见（数据规范 3.2 的安全边界需要被测到） -->
+    <InternalsVisibleTo Include="Collaboration.Domain.Tests" />
+  </ItemGroup>
+
 </Project>
 

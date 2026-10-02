@@ -229,6 +229,17 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-02（实现阶段）：S1 进行中 — 配置源抽象 + 启动时序 S0~S4 + 单元测试骨架
+
+- **配置源抽象**（`Collaboration.Domain/Configuration/`）：`IConfigSource` + `ConfigSourceUnavailableException`、`LocalFileConfigSource`、`ConfigurationValidator`、`BootstrapOptions`、`InfrastructureOptions`。
+  - 按 PLAN.md 2.6 选项 (a) 推进：S1 起用 `appsettings` 作为配置源。**它只改来源不改语义**——没有给任何配置项提供默认值，缺项照样 fail-fast。
+  - AgileConfig 分支**显式抛 NotSupportedException** 而不是静默回退到本地文件，避免「以为连着配置中心其实没有」。网络可达后只需补一个 `IConfigSource` 实现。
+- **启动时序 S0~S4**（`ServiceBootstrap`）：引导配置绑定 → 选配置源 → 指数退避重试拉取 → 校验必填键 → Redis INCR 分配雪花 workerId（超上限失败不回收）。
+- **单元测试**：`tests/Collaboration.Domain.Tests`，14 条全绿。覆盖 `SqlLiteral`（含注入片段转义、类型白名单抛异常）、`ConfigurationValidator`（缺失/空白/重复/大小写）、`SnowflakeId` 生命周期。
+- **测试暴露并修掉一个真实缺陷**：`ConfigurationValidator` 原先依赖调用方字典的 comparer，配置源若返回不同大小写的键会误判缺失。改为内部自建 OrdinalIgnoreCase 视图。
+- `InternalsVisibleTo` 只开放给测试项目，`SqlLiteral` 仍不对外公开。
+- **S1 剩余**：CustomerService 完整四层（基准模板）、User / Permission / Auth / Tool 四服务、Gateway、5 个服务建表 SQL。
+
 ### 2026-10-02（实现阶段）：S0 基础设施完成
 
 - **新增 `PLAN.md`**（实现规划，11 阶段 S0~S10）。规划严格派生自本文档集，实现中发现需要新决策必须先停下来提问，不得自行发挥。
