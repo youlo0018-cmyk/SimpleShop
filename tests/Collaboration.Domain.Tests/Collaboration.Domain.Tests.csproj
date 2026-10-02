@@ -7,6 +7,12 @@
     <RootNamespace>Collaboration.Domain.Tests</RootNamespace>
   </PropertyGroup>
 
+  <!-- 注意：这里**不要**引用 AuthService.Infrastructure。
+       它会通过 Npgsql.EntityFrameworkCore.PostgreSQL 把 Npgsql 拉到 10.x，
+       而本项目其余服务走 FreeSql，依赖 Npgsql 5.0.18。
+       Npgsql 6+ 禁止把 Kind=UTC 的 DateTime 写进 timestamp without time zone，
+       于是 Collaboration.Domain.Tests 里的 FreeSql 用例会集体报错。
+       两套 Npgsql 主版本无法在同一个进程共存——只能分服务隔离，测试项目更不能同时引用。 -->
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
@@ -14,6 +20,12 @@
     <PackageReference Include="coverlet.collector" Version="6.0.2" />
   </ItemGroup>
 
+  <!-- 注意：这里**不要**引用 AuthService.Infrastructure。
+       它会通过 Npgsql.EntityFrameworkCore.PostgreSQL 把 Npgsql 拉到 10.x，
+       而本项目其余服务走 FreeSql，依赖 Npgsql 5.0.18。
+       Npgsql 6+ 禁止把 Kind=UTC 的 DateTime 写进 timestamp without time zone，
+       于是 Collaboration.Domain.Tests 里的 FreeSql 用例会集体报错。
+       两套 Npgsql 主版本无法在同一个进程共存——只能分服务隔离，测试项目更不能同时引用。 -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\Collaboration\Collaboration.Domain\Collaboration.Domain.csproj" />
     <ProjectReference Include="..\..\src\PermissionService\PermissionService.Application\PermissionService.Application.csproj" />

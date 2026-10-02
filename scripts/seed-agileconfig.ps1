@@ -126,6 +126,19 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         $cfg['Jwt:Secret']       = 'simpleshop_dev_jwt_secret_change_me_in_production_0123456789'
         $cfg['Jwt:ExpireHours']  = '12'
     }
+    if ($name -eq 'AuthService') {
+        # 后台令牌服务配置（BUSINESS 4.1 / DATA_SPEC 1.5）
+        # 有效期是**服务端全局**设置，OpenIddict 7 的客户端描述符里没有有效期字段。
+        # 必须是绝对 URI：OpenIddict SetIssuer 直接 new Uri(...) 校验，裸字符串会启动失败。
+        $cfg['Auth:Issuer']        = 'https://simpleshop.local'
+        $cfg['Auth:Audience']      = 'simpleshop-admin'
+        $cfg['Auth:ClientId']      = 'admin-app'
+        $cfg['Auth:AccessTokenHours'] = '2'
+        $cfg['Auth:RefreshTokenDays'] = '7'
+        # 签名证书路径。AuthService 与 Gateway 必须读同一份文件——换了证书所有已签发令牌立刻失效。
+        # 证书本身不入库，由 ./scripts/generate-signing-cert.ps1 生成。
+        $cfg['Auth:SigningCertificatePath'] = 'D:/学习/SimpleShop-new/deploy/certs/signing.pfx'
+    }
     if ($name -eq 'ToolService') {
         # 文件存储配置（DATA_SPEC 3.4）。本地存储用于开发；上云只需改 Provider，
         # 业务代码通过 IFileStorage 抽象，不感知具体后端。

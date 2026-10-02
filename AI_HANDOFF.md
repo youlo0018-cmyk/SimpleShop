@@ -229,6 +229,78 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S1 收口 — ToolService / AuthService 落地，修复两个 P0
+
+**新增服务**
+
+| 服务 | 端口 | 状态 |
+|---|---|---|
+| ToolService | 5080 | ✅ 统一文件上传（扩展名白名单 → 分类大小 → 魔数三步） |
+| AuthService | 5019 | ✅ OpenIddict password flow + RS256 + 公开客户端 admin-app |
+
+**P0 · `CrudRepository.UpdateAsync` 全线静默无效（影响 7 处调用）**
+
+FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET 子句**，一条 SQL 都不发、
+返回 0 且不抛异常，接口回「成功」而数据纹丝不动。受影响：后台账号编辑 / 重置密码 / 启停、
+客户登录写 last_login_at、权限点编辑、角色编辑。
+改为 `Where(主键) + SetDtoIgnore(排除 Id/CreatedAt)`。
+
+**P0 · `UpdateColumnsAsync` 会抹掉未指定列**
+
+原实现直接 `SetDto(dto)`，而 SetDto 把 dto 的每个属性都写进 SET，不区分「调用方传了」
+还是「C# 默认值」——传一个只带 NickName 的局部对象就能把 user_name 静默清成空串。
+改为先 `UpdateColumns(属性名)` 限定可写列再 SetDto。
+
+**P0 · 补齐 `X-Claim-*` → TenantContext 链路**
+
+此前根本没有这个中间件，网关注入了声明也没人读，TenantContextHolder 永远是匿名上下文：
+`SuperAdminBehavior` 一律 403（超管做不了权限点 / 角色增删改），审计字段永远是空。
+新增 `TenantContextMiddleware`，并且**只在内部口令正确时才采信 X-Claim-\***（`Tenancy:InternalToken`，
+存在 deploy/.env 与 AgileConfig，不入库）。服务端口可能被绕过网关直接访问，无条件信任头等于开后门；
+口令没配时一律按匿名处理（宁可没人是超管，不能人人是超管）。
+已实测：无口令 / 错口令 / 普通平台账号 三种伪造全部 403。
+
+**P0 · 令牌里只剩 1 个权限点**
+
+`ClaimsIdentity.SetClaim` 的语义是「先删掉同类型的所有声明再加一条」，循环里用它
+只会留下最后一个——78 个权限点变成 1 个，而接口照常返回 200、令牌照常用，
+直到网关按权限拦截才暴露成「超级管理员什么都做不了」。改用 `AddClaim`。
+
+**AuthService 落地的几个坑（都写进了代码注释）**
+
+| 坑 | 现象 | 结论 |
+|---|---|---|
+| Reject 的 description 写中文 | Kestrel 拒绝非 ASCII 的 WWW-Authenticate 头 → 登录 500 | 拒绝原因必须 ASCII，中文提示由前端按 error 码映射 |
+| `FindByClientIdAsync` 转描述符 | 返回的是 EF 实体不是描述符，`as` 静默给 null → 所有客户端报 Unknown client | 直接用 EF 实体类型 |
+| 校验阶段调 `HandleRequest()` | 流水线停在「校验通过」，200 但 body 为空 | 开了 passthrough 就不要调，交给控制器签发 |
+| OpenIddict 5 之后要 `modelBuilder.UseOpenIddict()` | 迁移脚本里只有一张 `__EFMigrationsHistory` | 少这行生成零张表 |
+| `SetIssuer` 要绝对 URI | 传 `"simpleshop"` 启动即抛 ArgumentException | 用逻辑标识 `https://simpleshop.local` |
+| 缺加密密钥 | 即使 `DisableAccessTokenEncryption` 也强制要求 | 复用同一份证书；不能用 ephemeral（重启即失效） |
+
+**验证**
+
+- 单测 64/64 通过（新增 7 条 CrudRepository 写库回归、28 条 ToolService）
+- `tests/e2e/api-regression.ps1` 15/15 通过
+- `tests/e2e/auth-regression.ps1` 17/17 通过（含 RS256、78 权限点、防账号枚举逐字节比对、
+  账号域互斥、停用账号拦截）
+- 实测令牌：RS256、`sub/tenant_type/platform_id/merchant_id/user_name/role` 齐备、
+  `permission` 数组 78 项
+
+**新增脚本**
+
+| 脚本 | 作用 |
+|---|---|
+| `scripts/service-registry.json` | 端口与服务清单的唯一来源，start/stop/冒烟共用 |
+| `scripts/start-services.ps1` | 按端口探活后启动 dll，日志与 PID 落 `logs/runtime` |
+| `scripts/stop-services.ps1` | 按端口找真实占用进程结束（不信 pid 文件） |
+| `scripts/generate-signing-cert.ps1` | 生成 RS256 签名证书，默认不覆盖已有文件 |
+| `tests/e2e/auth-regression.ps1` | AuthService 回归 |
+
+**两个待办**
+
+- `AuthService.Application` 目前是空项目：OpenIddict 适配本身就是全部编排逻辑，
+  抽不出独立的「应用层」。要么给它塞真实职责，要么承认它没用并从方案里去掉——还没定。
+- Gateway（S1 最后一块）未开始。
 ### 2026-10-03（实现阶段）：PermissionService 权限树跑通（5 大类 / 23 模块 / 78 权限点）
 
 - `GET /permissions/Tree` 实测返回正确的 4 层树：虚拟根「全部权限」(id=0, level=0)
