@@ -5,6 +5,7 @@ namespace CustomerService.Domain.Entities;
 
 /// <summary>客户收藏的商品（SPU）。单客户上限 20（REVIEW.md P2 风险 20）。</summary>
 /// <remarks>刻意继承 CustomerEntityBase：AOP 的客户过滤按该基类判定，不继承就拿不到自动按 CustomerId 过滤。</remarks>
+[Table(Name = "customer_favorite")]
 public class CustomerFavorite : CustomerEntityBase
 {
     /// <summary>被收藏的商品 SPU Id。</summary>

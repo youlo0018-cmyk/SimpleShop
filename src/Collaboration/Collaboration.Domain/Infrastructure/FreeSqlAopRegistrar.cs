@@ -170,7 +170,7 @@ public static class FreeSqlAopRegistrar
 
         var ctx = TenantContextHolder.Current;
         var isInsert = e.CurdType is CurdType.Insert or CurdType.InsertOrUpdate;
-        ApplyAudit(e.States, ctx, isInsert);
+        ApplyAudit(e, e.States, ctx, isInsert);
     }
 
     /// <summary>
@@ -183,36 +183,77 @@ public static class FreeSqlAopRegistrar
     /// 创建人一旦写入便不再修改，因此更新时不覆盖 CreatedById。
     /// 判断实体种类用「待写入值里有哪些键」而不是再取一次实体实例，避免多余的对象访问。
     /// </remarks>
-    private static void ApplyAudit(Dictionary<string, object> states, TenantContext ctx, bool isInsert)
+    /// <summary>写入审计字段。States 的键可能是列名也可能是属性名，两种都试。</summary>
+    private static void ApplyAudit(CurdBeforeEventArgs e, Dictionary<string, object> states, TenantContext ctx, bool isInsert)
     {
         if (isInsert)
         {
-            if (!states.TryGetValue(nameof(EntityBase.Id), out var id) || IsEmpty(id))
+            if (!TryGetState(states, e, nameof(EntityBase.Id), out var id) || IsEmpty(id))
             {
-                states[nameof(EntityBase.Id)] = SnowflakeId.NewId();
+                SetState(states, e, nameof(EntityBase.Id), SnowflakeId.NewId());
             }
 
-            states[nameof(EntityBase.CreatedAt)] = DateTime.UtcNow;
+            SetState(states, e, nameof(EntityBase.CreatedAt), DateTime.UtcNow);
         }
         else
         {
-            states[nameof(EntityBase.UpdatedAt)] = DateTime.UtcNow;
+            SetState(states, e, nameof(EntityBase.UpdatedAt), DateTime.UtcNow);
         }
 
-        if (states.ContainsKey(nameof(AdminEntityBase.OperationId)))
+        if (HasState(states, e, nameof(AdminEntityBase.OperationId)))
         {
-            states[nameof(AdminEntityBase.CreatedById)] = ctx.UserId;
-            states[nameof(AdminEntityBase.CreatedByName)] = ctx.UserName;
-            states[nameof(AdminEntityBase.OperationId)] = ctx.UserId;
-            states[nameof(AdminEntityBase.OperationName)] = ctx.UserName;
+            SetState(states, e, nameof(AdminEntityBase.CreatedById), ctx.UserId);
+            SetState(states, e, nameof(AdminEntityBase.CreatedByName), ctx.UserName);
+            SetState(states, e, nameof(AdminEntityBase.OperationId), ctx.UserId);
+            SetState(states, e, nameof(AdminEntityBase.OperationName), ctx.UserName);
             return;
         }
 
-        if (states.ContainsKey(nameof(CustomerEntityBase.CustomerId)))
+        if (HasState(states, e, nameof(CustomerEntityBase.CustomerId)))
         {
-            states[nameof(CustomerEntityBase.CustomerId)] = ctx.UserId;
-            states[nameof(CustomerEntityBase.CustomerName)] = ctx.UserName;
+            SetState(states, e, nameof(CustomerEntityBase.CustomerId), ctx.UserId);
+            SetState(states, e, nameof(CustomerEntityBase.CustomerName), ctx.UserName);
         }
+    }
+
+    /// <summary>把属性名解析成 States 里实际使用的键：优先属性名，其次列名。</summary>
+    private static string? ResolveKey(CurdBeforeEventArgs e, string propertyName)
+    {
+        return propertyName;
+    }
+
+    private static string? ResolveColumn(CurdBeforeEventArgs e, string propertyName)
+    {
+        var columns = e.Table?.Columns;
+        if (columns is null) return null;
+        if (!columns.TryGetValue(propertyName, out var col)) return null;
+        var dbName = col.Table?.DbName;
+        return string.IsNullOrEmpty(dbName) ? null : dbName;
+    }
+
+    private static bool HasState(Dictionary<string, object> states, CurdBeforeEventArgs e, string propertyName)
+    {
+        return TryGetState(states, e, propertyName, out _);
+    }
+
+    private static bool TryGetState(Dictionary<string, object> states, CurdBeforeEventArgs e, string propertyName, out object? value)
+    {
+        if (states.TryGetValue(propertyName, out value)) return true;
+        var col = ResolveColumn(e, propertyName);
+        if (col is not null && states.TryGetValue(col, out value)) return true;
+        value = null;
+        return false;
+    }
+
+    private static void SetState(Dictionary<string, object> states, CurdBeforeEventArgs e, string propertyName, object value)
+    {
+        if (states.ContainsKey(propertyName))
+        {
+            states[propertyName] = value;
+            return;
+        }
+        var col = ResolveColumn(e, propertyName);
+        if (col is not null) states[col] = value;
     }
 
     private static bool IsEmpty(object? value) => value is null or 0L or 0;

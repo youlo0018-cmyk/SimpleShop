@@ -21,11 +21,19 @@ public static partial class ServiceBootstrap
                 "Bootstrap.Source 设为 AgileConfig，但没配 Bootstrap:AgileConfigAddress。");
         }
 
-        // 显式失败而不是静默回退到本地文件：宁可服务起不来，也不要「以为连着配置中心其实没有」。
-        // AgileConfig 官方 registry 当前网络不可达（PLAN.md 2.6），网络恢复后在此接入即可。
-        throw new NotSupportedException(
-            "AgileConfig 配置源尚未接入。请把 Bootstrap.Source 改回 LocalFile，"
-            + "或在网络可达后补上 AgileConfigConfigSource 实现。");
+        if (string.IsNullOrWhiteSpace(bootstrap.AppId) || string.IsNullOrWhiteSpace(bootstrap.AppSecret))
+        {
+            throw new ConfigSourceUnavailableException(
+                "Bootstrap.Source 设为 AgileConfig，但没配 Bootstrap:AppId 或 Bootstrap:AppSecret。");
+        }
+
+        var baseAddress = bootstrap.AgileConfigAddress.EndsWith('/')
+            ? bootstrap.AgileConfigAddress
+            : bootstrap.AgileConfigAddress + "/";
+
+        var http = new HttpClient { BaseAddress = new Uri(baseAddress), Timeout = TimeSpan.FromSeconds(10) };
+        var configEnv = string.IsNullOrWhiteSpace(bootstrap.Env) ? environment : bootstrap.Env;
+        return new AgileConfigConfigSource(http, bootstrap.AppId, bootstrap.AppSecret, configEnv);
     }
 
     private static async Task<T> RetryAsync<T>(

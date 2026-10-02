@@ -1,8 +1,6 @@
 using Collaboration.Domain.Context;
 using FreeSql;
-using FreeSql.PostgreSQL;
 using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
 
 namespace Collaboration.Domain.Infrastructure;
 
@@ -22,10 +20,12 @@ public static class FreeSqlServiceCollectionExtensions
 
         services.AddSingleton(_ =>
         {
-            // FreeSql 3.5 的 FreeSqlBuilder 只有三参的 UseConnectionString，
-            // 单串重载是旧版本 API。必须显式给出 provider 类型。
+            // FreeSql 3.5 的 UseConnectionString 第三参 providerType 是**可选**的，
+            // 由 DataType 自动解析 provider。手动传 typeof(PostgreSQLProvider<NpgsqlConnection>)
+            // 反而会让 Build() 抛 NullReferenceException——不要多传。
             var freeSql = new FreeSqlBuilder()
-                .UseConnectionString(DataType.PostgreSQL, connectionString, typeof(PostgreSQLProvider<NpgsqlConnection>))
+                .UseConnectionString(DataType.PostgreSQL, connectionString)
+                // 关闭 CodeFirst，表结构一律由 deploy/sql 管（DATA_SPEC 2.9）
                 .UseAutoSyncStructure(false)
                 .Build();
 

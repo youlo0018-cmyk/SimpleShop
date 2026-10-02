@@ -28,6 +28,15 @@ public sealed class BootstrapOptions
     public string AppSecret { get; set; } = string.Empty;
 
     /// <summary>
+    /// AgileConfig 的环境名，例如 DEV、TEST、PROD。
+    /// </summary>
+    /// <remarks>
+    /// 刻意与 ASP.NET 的 EnvironmentName 分开：两者可以合法地不同
+    /// （例如 ASP.NET 用 Development，配置中心用 DEV）。留空时回退到 ASP.NET 环境名。
+    /// </remarks>
+    public string Env { get; set; } = string.Empty;
+
+    /// <summary>
     /// 连接配置中心的重试次数，失败按指数退避重试。
     /// </summary>
     /// <remarks>全部失败则 fail-fast 退出（DATA_SPEC 1.1 铁律 2）。</remarks>

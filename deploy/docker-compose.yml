@@ -75,18 +75,17 @@ services:
     networks: [simpleshop]
 
   agileconfig:
-    image: registry.agileconfig.com/registry-server:8.0.0
+    # 官方 registry（registry.agileconfig.com）在本环境 DNS 解析失败，
+    # 改用 Docker Hub 上的官方镜像 kklldog/agile_config（源码 https://github.com/dotnetcore/AgileConfig）。
+    image: kklldog/agile_config:latest
     container_name: simpleshop-agileconfig
     restart: unless-stopped
-    # ⚠ 2026-10-02 实测：registry.agileconfig.com 与 agileconfig.com 在本环境 DNS 解析失败，
-    #   Docker Hub 也没有 agileconfig 命名空间，镜像无法拉取。
-    #   因此放入 config profile，默认不启动，不阻塞其余中间件。
-    #   网络可达后用 `docker compose --profile config up -d agileconfig` 启动。
-    #   在此之前，S1 起的服务需要用 appsettings 本地配置作为**配置源**（不是默认值兜底）：
-    #   连接串等仍要求显式配置，缺失即 fail-fast，只是来源不是 AgileConfig。
-    profiles: ["config"]
+    # 环境变量名里带冒号（db:provider），必须用列表写法，映射写法会被 YAML 当成嵌套结构
     environment:
-      TZ: Asia/Shanghai
+      - TZ=Asia/Shanghai
+      - adminConsole=true
+      - db:provider=postgresql
+      - db:conn=Host=postgres;Port=5432;Database=simpleshop_configcenter;User Id=postgres;Password=simpleshop_dev_2026;Pooling=true;Maximum Pool Size=10
     ports:
       - "5000:5000"
     volumes:

@@ -4,6 +4,12 @@ using FreeSql.DataAnnotations;
 namespace CustomerService.Domain.Entities;
 
 /// <summary>前台客户账号。与后台账号完全隔离，不同库、不同登录端点、不同令牌（DATA_SPEC 2.6）。</summary>
+/// <remarks>
+/// 表名列名一律显式指定小写下划线，与 deploy/sql 的 DDL 对齐（DATA_SPEC 2.7）。
+/// 不加 [Table]，FreeSql 会按实体名去找带引号的 "Customer"，而实际建的是小写 customer，
+/// 报 42P01 relation does not exist。同理每个属性都要有 [Column(Name=...)]。
+/// </remarks>
+[Table(Name = "customer")]
 public class Customer : EntityBase
 {
     /// <summary>登录名，全局唯一。</summary>

@@ -4,6 +4,7 @@ using FreeSql.DataAnnotations;
 namespace CustomerService.Domain.Entities;
 
 /// <summary>客户收货地址。归属某客户，AOP 自动按 CustomerId 过滤（DATA_SPEC 2.3）。</summary>
+[Table(Name = "customer_address")]
 public class CustomerAddress : CustomerEntityBase
 {
     /// <summary>收货人姓名。</summary>

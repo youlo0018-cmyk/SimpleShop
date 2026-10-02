@@ -78,3 +78,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_favorite_spu
 
 COMMENT ON TABLE customer_favorite IS '客户收藏（REVIEW P2 风险 20：单客户上限 20）';
 
+-- ============================================================================
+-- 授权：建表是用 postgres 执行的，simpleshop_app 只是数据库级 GRANT，
+-- 不含表权限，运行时会报 42501 permission denied for table。
+-- 每个服务的建表脚本末尾都要有这三行（这是约定，见 PLAN.md 13 全局约束）。
+-- ALTER DEFAULT PRIVILEGES 保证后续新增的表也自动授权。
+-- ============================================================================
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO simpleshop_app;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO simpleshop_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO simpleshop_app;
+
