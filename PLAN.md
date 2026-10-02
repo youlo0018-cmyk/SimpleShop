@@ -171,7 +171,7 @@ S0 基础设施
 | 项 | 结论 |
 |---|---|
 | 依赖版本 | FreeSql **3.5.311**（三件套同版本）；Npgsql 显式钉 **5.0.18**（FreeSql 内置 5.0.11 有高危公告，5.0.18 是 5.x 线末版且已修复；升 6.x+ 需验证 provider 兼容性）；Yitter 雪花包名是 **`Yitter.IdGenerator`**（`Yitter.NetCore` 在 nuget 上不存在）；MessagePack 3.1.10 |
-| FreeSql AOP API | 3.5.x **移除了** `Aop.DataMapping` / `Aop.DataFilter`。改用 `Aop.ParseExpression`（查询过滤，设 `Result` 追加到 WHERE）与 `Aop.CurdBefore`（写入前改 `States`） |
+| FreeSql AOP API | 3.5.x **移除了** `Aop.DataMapping` / `Aop.DataFilter`，且 `Aop.CurdBefore` 实测在本项目调用链上**不触发**。**最终方案不依赖任何 AOP 钩子**：查询过滤用 `IFreeSql.GlobalFilter.ApplyIf`（AND 进查询），审计字段显式写在 `CrudRepository`。详见 DATA_SPEC 3.2.1 |
 | 条件内联 | `ParseExpression` 只有字符串通道、没有参数通道，因此过滤条件必须内联为字面量。由 `SqlLiteral` 做类型白名单（只接受令牌声明、枚举常量、服务端时钟的值），杜绝注入 |
 | 建库脚本 | PostgreSQL **不允许在函数/DO 块里 `CREATE DATABASE`**，改用 psql 的 `\gexec` 做幂等批量执行；脚本必须用 psql 跑 |
 | fluentd | 官方镜像不含 `fluent-plugin-elasticsearch`（会报 Unknown output plugin 并退出），已自建镜像补装；镜像内无 `ps`，健康检查改用镜像自带 ruby 做 TCP 探测 |

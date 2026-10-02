@@ -229,6 +229,33 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-02（实现阶段）：修复 P0 级过滤缺陷，CustomerService 全链路验证通过
+
+- **缺陷（上一提交遗留，P0 级）**：`Aop.ParseExpression` 的 `Result` 是**替换**整个 WHERE 而非追加，
+  导致业务条件被顶掉。实测症状：不存在的账号 `not_exist_user` 能登录成功，返回的是库里第一条记录。
+  影响面：租户过滤、客户过滤、公开可见性过滤**全部同样失效**，等于越权。
+- **同时发现的第二个缺陷**：`Aop.CurdBefore` 在本项目调用链上**不触发**（加诊断打印验证过），
+  导致雪花 Id 写成 0、`created_at` 写成 `0001-01-01`。
+- **修复方案（不依赖任何 AOP 钩子）**：
+  - 查询过滤改用 `IFreeSql.GlobalFilter.ApplyIf(name, condition, where)`，它是 AND 进查询的。
+    新增 `FilterRegistrar`（`src/Collaboration/.../Infrastructure/FilterRegistrar.cs`），
+    启动时按实体程序集逐类型注册软删 / 租户 / 客户 / 公开可见性四类过滤。
+  - 审计字段（雪花 Id / CreatedAt / CreatedBy / OperationBy）**显式写在 `CrudRepository`
+    的 InsertAsync / UpdateAsync**，可读可测，不依赖钩子。
+  - `IPublicVisible` 改为自引用泛型 `IPublicVisible<TSelf>`，返回 `Expression<Func<TSelf,bool>>`，
+    避免「SQL 字符串转表达式」这种脆弱转换。
+- **实测验证（四项全过）**：
+  1. 雪花 Id 正确：`customerId = 194392770340357`（原为 0）
+  2. `created_at` 正确：`2026-10-02 15:33:06`（原为 0001-01-01）
+  3. 不存在的账号登录 → `success=False 登录名或密码不正确`（原为 success=True 并泄露第一条记录）
+  4. 软删过滤生效：手动置 `is_deleted=true` 后该行仍在库（1 行、未删除 0 行）但查询查不到
+- 密码加盐已验证：PBKDF2-SHA256 + 每用户 16 字节随机盐，格式 `pbkdf2$次数$盐$哈希`，
+  登录时用同一个盐重算并做 `FixedTimeEquals` 定时安全比较；错误密码与不存在账号返回**同一句提示**，不泄露账号是否存在。
+  下一步把 `PasswordHasher` 下沉到 Collaboration，让后台账号（UserService/AuthService）复用同一份。
+- 文档同步：`DATA_SPEC` 3.2 新增「实现方式：GlobalFilter + 仓储显式审计」并记录踩坑；
+  `PLAN` 2.7 落地记录已更新。
+- **待补**：把「不存在的账号必须登录失败」写成回归用例，目前只有本次手工验证。
+
 ### 2026-10-02（实现阶段）：S1 — CustomerService 四层打通到 Infrastructure
 
 - **CustomerService.Domain**：Customer / CustomerAddress / CustomerFavorite 实体 + 三个仓储接口。唯一索引不放实体属性上（`ColumnAttribute` 没有 `IsUnique`），统一由 DDL 脚本定义。

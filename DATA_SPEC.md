@@ -261,7 +261,21 @@
 | **客户过滤** | 所有 `CustomerEntityBase` 派生实体 | `CustomerId == 当前客户` |
 | **公开可见性过滤** | 实现 `IPublicVisible` 的实体 | **仅 C 端与游客上下文**追加（见 3.2.1） |
 
-#### 3.2.1 公开可见性过滤
+#### 3.2.1 实现方式：GlobalFilter + 仓储显式审计（不是 AOP）
+
+> **2026-10-02 实测修正**：原先用 `Aop.ParseExpression` 追加过滤条件是**错的**。
+> 它的 `Result` 是**替换**整个 WHERE，不是追加，导致业务条件被顶掉。
+> 实测症状：不存在的账号 `not_exist_user` 能登录成功并返回库里第一条记录。
+> 若那样部署，租户隔离 / 客户过滤 / 可见性过滤全部失效，等于越权。
+> 正确做法：
+> - **查询过滤**用 `IFreeSql.GlobalFilter.ApplyIf(name, condition, where)`——它 AND 进查询。
+>   由 `FilterRegistrar.Register(freeSql, 实体程序集...)` 启动时注册，按实体类型逐个建表达式。
+> - **审计字段**（雪花 Id / CreatedAt / CreatedBy / OperationBy）**显式写在 `CrudRepository`
+>   的 InsertAsync / UpdateAsync 里**，不依赖钩子。
+>   原因：实测 FreeSql 3.5 的 `Aop.CurdBefore` 在本项目调用链上没有触发，
+>   依赖它会导致 Id 写成 0、CreatedAt 写成 `0001-01-01`。
+
+#### 3.2.2 公开可见性过滤
 
 **背景**：租户过滤解决「谁能看到谁的数据」，公开可见性过滤解决「哪些数据允许对外」。两者是**并列的独立维度**，缺一不可——漏掉后者就会把未审核内容暴露给顾客。
 

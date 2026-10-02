@@ -1,6 +1,7 @@
 using Collaboration.Domain.Context;
 using FreeSql;
 using Microsoft.Extensions.DependencyInjection;
+using System.Reflection;
 
 namespace Collaboration.Domain.Infrastructure;
 
@@ -10,8 +11,12 @@ public static class FreeSqlServiceCollectionExtensions
     /// <summary>注册 FreeSql 单例并挂上四类 AOP。</summary>
     /// <param name="services">服务集合。</param>
     /// <param name="connectionString">本服务的 PostgreSQL 连接串，必须由配置源提供。</param>
+    /// <param name="entityAssemblies">实体所在程序集，通常是本服务的 Xxx.Domain，用于注册全局过滤。</param>
     /// <returns>原集合，便于链式调用。</returns>
-    public static IServiceCollection AddAppFreeSql(this IServiceCollection services, string connectionString)
+    public static IServiceCollection AddAppFreeSql(
+        this IServiceCollection services,
+        string connectionString,
+        params Assembly[] entityAssemblies)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
         {
@@ -29,7 +34,7 @@ public static class FreeSqlServiceCollectionExtensions
                 .UseAutoSyncStructure(false)
                 .Build();
 
-            FreeSqlAopRegistrar.Register(freeSql);
+            FilterRegistrar.Register(freeSql, entityAssemblies);
             return freeSql;
         });
 

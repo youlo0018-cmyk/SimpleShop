@@ -38,7 +38,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
 builder.Services.AddSingleton(_ => redis.GetDatabase(redisOptions.Database));
 builder.Services.AddOptions<JwtOptions>().Bind(builder.Configuration.GetSection(JwtOptions.SectionName));
 
-builder.Services.AddAppFreeSql(builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()!.Default);
+builder.Services.AddAppFreeSql(
+    builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()!.Default,
+    typeof(CustomerService.Domain.Entities.Customer).Assembly);
 builder.Services.AddAppServices();
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());

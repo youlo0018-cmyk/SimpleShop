@@ -24,14 +24,57 @@ public abstract class CrudRepository<T> : ICrudRepository<T> where T : EntityBas
     /// <inheritdoc />
     public async Task<long> InsertAsync(T entity, CancellationToken ct = default)
     {
-        // Id 由 AOP 的 CurdBefore 填好（Yitter 雪花），所以这里不需要再向数据库取回值
+        // 审计字段显式在这里填，不用 AOP 钩子。
+        // 实测 FreeSql 3.5 的 Aop.CurdBefore 在本项目调用链上没有触发，
+        // 依赖它会导致 Id 写成 0、CreatedAt 写成默认值 0001-01-01。
+        if (entity.Id == 0) entity.Id = SnowflakeId.NewId();
+        entity.CreatedAt = DateTime.UtcNow;
+        ApplyCreator(entity);
+
         await Db.Insert(entity).ExecuteAffrowsAsync(ct);
         return entity.Id;
     }
 
     /// <inheritdoc />
-    public Task<int> UpdateAsync(T entity, CancellationToken ct = default)
-        => Db.Update<T>(entity).ExecuteAffrowsAsync(ct);
+    public async Task<int> UpdateAsync(T entity, CancellationToken ct = default)
+    {
+        entity.UpdatedAt = DateTime.UtcNow;
+        ApplyOperator(entity);
+        return await Db.Update<T>(entity).ExecuteAffrowsAsync(ct);
+    }
+
+    /// <summary>写入创建人快照。后台实体记操作人；客户实体的用户就是 CustomerId。</summary>
+    /// <param name="entity">待写入实体。</param>
+    /// <remarks>创建人一旦写入便不再修改，因此只在插入时调用。</remarks>
+    private static void ApplyCreator(T entity)
+    {
+        var ctx = TenantContextHolder.Current;
+
+        if (entity is AdminEntityBase admin)
+        {
+            admin.CreatedById = ctx.UserId;
+            admin.CreatedByName = ctx.UserName;
+            admin.OperationId = ctx.UserId;
+            admin.OperationName = ctx.UserName;
+            return;
+        }
+
+        if (entity is CustomerEntityBase customer)
+        {
+            customer.CustomerId = ctx.UserId;
+            customer.CustomerName = ctx.UserName;
+        }
+    }
+
+    /// <summary>更新最后操作人快照，仅后台实体需要。</summary>
+    /// <param name="entity">待更新实体。</param>
+    private static void ApplyOperator(T entity)
+    {
+        if (entity is not AdminEntityBase admin) return;
+        var ctx = TenantContextHolder.Current;
+        admin.OperationId = ctx.UserId;
+        admin.OperationName = ctx.UserName;
+    }
 
     /// <inheritdoc />
     public Task<int> UpdateColumnsAsync(long id, object dto, CancellationToken ct = default)
