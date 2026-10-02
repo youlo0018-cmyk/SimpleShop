@@ -93,11 +93,52 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         $cfg['Jwt:Secret']       = 'simpleshop_dev_jwt_secret_change_me_in_production_0123456789'
         $cfg['Jwt:ExpireHours']  = '12'
     }
+    if ($name -eq 'ToolService') {
+        # 文件存储配置（DATA_SPEC 3.4）。本地存储用于开发；上云只需改 Provider，
+        # 业务代码通过 IFileStorage 抽象，不感知具体后端。
+        $cfg['FileStorage:Provider']            = 'Local'
+        $cfg['FileStorage:LocalRoot']           = 'D:/学习/SimpleShop-new/uploads'
+        $cfg['FileStorage:PublicBase']          = '/gateway/files/Content'
+        $cfg['FileStorage:AllowedExtensions']   = 'png,jpg,jpeg,gif,bmp,webp,pdf,doc,xls,ppt,txt'
+        $cfg['FileStorage:MaxSizeBytes:image']      = '5242880'
+        $cfg['FileStorage:MaxSizeBytes:document']   = '20971520'
+        $cfg['FileStorage:MaxSizeBytes:audio']      = '20971520'
+        $cfg['FileStorage:MaxSizeBytes:video']      = '209715200'
+        $cfg['FileStorage:MaxSizeBytes:default']    = '10485760'
+    }
     return $cfg
 }
 
-$serviceMap = [ordered]@{ 'CustomerService' = 3 }
-if ($Service) { $serviceMap = [ordered]@{}; foreach ($s in $Service) { $serviceMap[$s] = 3 } }
+# ---------- Redis 库号分配：每个服务独占一个库 ----------
+# 不能所有服务共用一个库：Redis 的 key 不带服务前缀，一旦同名 key（例如 "cache:home"）
+# 出现在两个服务里就会互相覆盖，排查起来极难发现。所以这里显式一号一服务。
+# Redis 默认 16 个库（0-15），14 个服务用 1..14，留 0 给运维/调试。
+$redisDbMap = [ordered]@{
+    'CustomerService'         = 1
+    'PermissionService'       = 2
+    'UserService'             = 3
+    'ToolService'             = 4
+    'AuthService'             = 5
+    'ProductService'          = 6
+    'CartService'             = 7
+    'InventoryService'        = 8
+    'OrderService'            = 9
+    'PaymentService'          = 10
+    'MarketingService'        = 11
+    'MerchantPlatformService' = 12
+    'PointService'            = 13
+    'EvaluateService'         = 14
+}
+
+if ($Service) {
+    $serviceMap = [ordered]@{}
+    foreach ($s in $Service) {
+        if (-not $redisDbMap.Contains($s)) { throw "服务 $s 未分配 Redis 库号，请先在 redisDbMap 中登记。" }
+        $serviceMap[$s] = $redisDbMap[$s]
+    }
+} else {
+    $serviceMap = $redisDbMap
+}
 
 # ---------- 认证：api 系列接口全部走 Basic（管理员账号 + 密码），不需要 JWT ----------
 $basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${AdminUser}:${AdminPassword}"))

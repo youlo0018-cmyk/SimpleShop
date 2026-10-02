@@ -17,6 +17,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Collaboration\Collaboration.Domain\Collaboration.Domain.csproj" />
     <ProjectReference Include="..\..\src\PermissionService\PermissionService.Application\PermissionService.Application.csproj" />
+    <ProjectReference Include="..\..\src\ToolService\ToolService.Domain\ToolService.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ToolService\ToolService.Application\ToolService.Application.csproj" />
+    <ProjectReference Include="..\..\src\ToolService\ToolService.Infrastructure\ToolService.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

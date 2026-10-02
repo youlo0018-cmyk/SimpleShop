@@ -1,0 +1,21 @@
+{
+  "comment": "服务注册表。start-services.ps1 / stop-services.ps1 / 冒烟脚本共用这一份，避免端口表在脚本里各写一遍后互相打架。implemented=false 表示服务尚未落地，脚本会跳过而不是报错。",
+  "services": [
+    { "name": "Gateway",             "port": 5008, "implemented": false, "project": "src/Gateway/Gateway.Api/Gateway.Api.csproj" },
+    { "name": "AuthService",         "port": 5019, "implemented": false, "project": "src/AuthService/AuthService.Api/AuthService.Api.csproj" },
+    { "name": "UserService",         "port": 5011, "implemented": true,  "project": "src/UserService/UserService.Api/UserService.Api.csproj" },
+    { "name": "CustomerService",     "port": 5280, "implemented": true,  "project": "src/CustomerService/CustomerService.Api/CustomerService.Api.csproj" },
+    { "name": "ToolService",         "port": 5080, "implemented": true,  "project": "src/ToolService/ToolService.Api/ToolService.Api.csproj" },
+    { "name": "PermissionService",   "port": 5022, "implemented": true,  "project": "src/PermissionService/PermissionService.Api/PermissionService.Api.csproj" },
+    { "name": "ProductService",      "port": 5058, "implemented": false, "project": "src/ProductService/ProductService.Api/ProductService.Api.csproj" },
+    { "name": "CartService",         "port": 5060, "implemented": false, "project": "src/CartService/CartService.Api/CartService.Api.csproj" },
+    { "name": "InventoryService",    "port": 5062, "implemented": false, "project": "src/InventoryService/InventoryService.Api/InventoryService.Api.csproj" },
+    { "name": "OrderService",        "port": 5064, "implemented": false, "project": "src/OrderService/OrderService.Api/OrderService.Api.csproj" },
+    { "name": "PaymentService",      "port": 5066, "implemented": false, "project": "src/PaymentService/PaymentService.Api/PaymentService.Api.csproj" },
+    { "name": "MarketingService",    "port": 5072, "implemented": false, "project": "src/MarketingService/MarketingService.Api/MarketingService.Api.csproj" },
+    { "name": "MerchantPlatformService", "port": 5070, "implemented": false, "project": "src/MerchantPlatformService/MerchantPlatformService.Api/MerchantPlatformService.Api.csproj" },
+    { "name": "PointService",        "port": 5082, "implemented": false, "project": "src/PointService/PointService.Api/PointService.Api.csproj" },
+    { "name": "EvaluateService",     "port": 5084, "implemented": false, "project": "src/EvaluateService/EvaluateService.Api/EvaluateService.Api.csproj" },
+    { "name": "LogService",          "port": 5088, "implemented": false, "project": "src/LogService/LogService.Api/LogService.Api.csproj" }
+  ]
+}
