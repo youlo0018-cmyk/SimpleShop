@@ -31,8 +31,33 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
     }
 
     /// <inheritdoc />
+    public async Task<Role?> GetByIdAsync(long id, CancellationToken ct = default)
+        => await Db.Select<Role>().Where(a => a.Id == id).FirstAsync(ct);
+
+    /// <inheritdoc />
     public async Task<Role?> GetByCodeAsync(string code, CancellationToken ct = default)
         => await Db.Select<Role>().Where(a => a.Code == code).FirstAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<bool> ExistsByNameAsync(string roleName, CancellationToken ct = default)
+        => await Db.Select<Role>().Where(a => a.RoleName == roleName).AnyAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<long> InsertAsync(Role role, CancellationToken ct = default)
+    {
+        await Db.Insert(role).ExecuteAffrowsAsync(ct);
+        return role.Id;
+    }
+
+    /// <inheritdoc />
+    public async Task<int> UpdateAsync(Role role, CancellationToken ct = default)
+        => await Db.Update<Role>(role).ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<int> DeleteAsync(long id, CancellationToken ct = default)
+        => await Db.Update<Role>().Where(a => a.Id == id)
+            .Set(a => new Role { IsDeleted = true, DeletedAt = DateTime.UtcNow })
+            .ExecuteAffrowsAsync(ct);
 
     /// <inheritdoc />
     public async Task<List<long>> GetPermissionIdsAsync(long roleId, CancellationToken ct = default)
@@ -52,17 +77,15 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
         Db.Transaction(() =>
         {
             affected += Db.Delete<RolePermission>().Where(a => a.RoleId == roleId).ExecuteAffrows();
+            if (ids.Length == 0) return;
 
-            if (ids.Length > 0)
+            var now = DateTime.UtcNow;
+            affected += Db.Insert(new List<RolePermission>(ids.Select(pid => new RolePermission
             {
-                var now = DateTime.UtcNow;
-                affected += Db.Insert(new List<RolePermission>(ids.Select(pid => new RolePermission
-                {
-                    RoleId = roleId,
-                    PermissionId = pid,
-                    CreatedAt = now
-                }))).ExecuteAffrows();
-            }
+                RoleId = roleId,
+                PermissionId = pid,
+                CreatedAt = now
+            }))).ExecuteAffrows();
         });
 
         return Task.FromResult(affected);
@@ -83,6 +106,7 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
         var permIds = rolePerms.Select(x => x.PermissionId).Distinct().ToArray();
         var perms = await Db.Select<Permission>().Where(a => permIds.Contains(a.Id)).ToListAsync(ct);
 
+        // 只返回启用状态的权限点：停用后网关不再校验
         return perms.Where(a => a.Status == 1 && !string.IsNullOrEmpty(a.Code))
             .Select(a => a.Code).Distinct().ToList();
     }
@@ -106,21 +130,26 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
         Db.Transaction(() =>
         {
             affected += Db.Delete<UserRole>().Where(a => a.UserId == userId).ExecuteAffrows();
+            if (ids.Length == 0) return;
 
-            if (ids.Length > 0)
+            var now = DateTime.UtcNow;
+            affected += Db.Insert(new List<UserRole>(ids.Select(rid => new UserRole
             {
-                var now = DateTime.UtcNow;
-                affected += Db.Insert(new List<UserRole>(ids.Select(rid => new UserRole
-                {
-                    UserId = userId,
-                    RoleId = rid,
-                    PlatformId = platformId,
-                    CreatedAt = now
-                }))).ExecuteAffrows();
-            }
+                UserId = userId,
+                RoleId = rid,
+                PlatformId = platformId,
+                CreatedAt = now
+            }))).ExecuteAffrows();
         });
 
         return Task.FromResult(affected);
     }
-}
 
+    /// <inheritdoc />
+    public async Task<int> UnbindRoleAsync(long roleId, CancellationToken ct = default)
+        => await Db.Delete<UserRole>().Where(a => a.RoleId == roleId).ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<bool> ExistsByCodeAsync(string code, CancellationToken ct = default)
+        => await Db.Select<Role>().Where(a => a.Code == code).AnyAsync(ct);
+}

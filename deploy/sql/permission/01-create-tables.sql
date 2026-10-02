@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS role (
     is_deleted     boolean      NOT NULL DEFAULT false,
     deleted_at     timestamp    NULL,
     role_name      varchar(64)  NOT NULL,
-    code           varchar(64)  NOT NULL,
+    role_code      varchar(64)  NOT NULL,
     allowed_scopes integer      NOT NULL DEFAULT 1,
     data_scope     integer      NOT NULL DEFAULT 1,
     status         integer      NOT NULL DEFAULT 1,
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS role (
     CONSTRAINT pk_role PRIMARY KEY (id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uk_role_code ON role (code);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_role_code ON role (role_code);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_role_name ON role (role_name);
 
 CREATE TABLE IF NOT EXISTS role_permission (

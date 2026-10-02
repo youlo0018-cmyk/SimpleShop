@@ -5,6 +5,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PermissionService.Application.Features.Permission.QueryTree;
 using PermissionService.Infrastructure;
+using PermissionService.Application.Features.Role;
 using PermissionService.Application.Security;
 
 namespace PermissionService.Api;
@@ -24,10 +25,13 @@ public static class ApiServiceCollectionExtensions
 
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(appAssembly));
         services.AddValidatorsFromAssembly(appAssembly);
-        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
-        // 仅对实现 ISuperAdminOnly 的请求生效（内部会判一次），
-        // 不影响权限树查询等普通请求
+        // 管道顺序有意义：鉴权必须在参数校验之前。
+        // 否则未授权请求会先撞到 400 校验错误，白做一次参数校验，语义也不对。
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(SuperAdminBehavior<,>));
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+
+        // AddValidatorsFromAssembly 扫不到嵌套静态类里的校验器，这里显式注册
+        RoleValidators.AddRoleValidators(services);
 
         services.AddInfrastructure();
         return services;

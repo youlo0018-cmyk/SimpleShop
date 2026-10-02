@@ -69,5 +69,29 @@ public interface IRoleRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>受影响行数。幂等。</returns>
     Task<int> ReplaceUserRolesAsync(long userId, IReadOnlyCollection<long> roleIds, long platformId, CancellationToken ct = default);
+    /// <summary>判断角色名是否已存在。</summary>
+    /// <param name="roleName">角色名。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>存在返回 true。幂等只读。</returns>
+    Task<bool> ExistsByNameAsync(string roleName, CancellationToken ct = default);
+
+    /// <summary>解绑某角色下的所有账号。删除角色时级联调用。</summary>
+    /// <param name="roleId">角色 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。幂等。</returns>
+    Task<int> UnbindRoleAsync(long roleId, CancellationToken ct = default);
+
+    /// <summary>软删角色。</summary>
+    /// <param name="id">角色 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。幂等。</returns>
+    Task<int> DeleteAsync(long id, CancellationToken ct = default);
+
+    /// <summary>判断角色编码是否已存在。</summary>
+    /// <param name="code">角色编码。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>存在返回 true。幂等只读。</returns>
+    Task<bool> ExistsByCodeAsync(string code, CancellationToken ct = default);
+
 }
 
