@@ -151,11 +151,29 @@ S0 基础设施
 
 ### 2.5 风险
 
-| 风险 | 应对 |
+| 风险 | 应对 | 实际结果（2026-10-02） |
+|---|---|---|
+| ES-IK 镜像构建失败 | 降级为 `smartcn` 分词器 | **已发生**。IK 的 7.x/8.x 只在 `get.infini.cloud` 分发，该域 SSL 被阻断；GitHub（infinilabs/analysis-ik）tag 只到 v1.10.6 / v5.0.0-rc1，无 8.x 产物。已改为内置 `smartcn`，并把 IK 安装做成 `INSTALL_IK` 构建参数，网络可达时开箱即用 |
+| Docker 镜像拉取慢 | 先起快的，ES 最后 | 正常。postgres/redis/consul/rabbitmq/fluentd/kibana 均拉取成功 |
+| AgileConfig 镜像不可用 | 配置先用本地 `appsettings`，注册后切回（**但不得写死默认值**，`DATA_SPEC` 1.1） | **已发生**。`registry.agileconfig.com` 与 `agileconfig.com` 均 DNS 解析失败，Docker Hub 无 `agileconfig` 命名空间。已放入 `config` profile 默认不启动，**这一项需要重新决策，见下方待决** |
+| NuGet 私有源证书过期 | 加项目级 `NuGet.config` 隔离 | **已发生**。机器全局源 `nuget.companycn.net` 证书 NotTimeValid、私有阿里云源 401，只有 nuget.org 可用。已加 `NuGet.config` 只保留官方源 |
+
+### 2.6 待决（阻塞 S1）
+
+| # | 问题 |
 |---|---|
-| ES-IK 镜像构建失败（IK 插件下载不到） | 降级为 `smartcn` 分词器（`BUSINESS` 15.2 已列 IK 为选型，此处记录实际落地结果） |
-| Docker 镜像拉取慢 | 先起 postgres/redis/consul/rabbitmq，ES 最后起 |
-| AgileConfig 镜像不可用 | 配置先用本地 `appsettings` 兜底跑通，服务注册后切回（**但不得写死在代码里**，`DATA_SPEC` 1.1） |
+| 1 | **AgileConfig 拿不到**。文档要求它作为唯一配置源且 fail-fast（`DATA_SPEC` 1.1）。在网络可达前，S1 的服务需要一个本地配置源。选项：(a) S1 起用 `appsettings.json` 作为配置源，AgileConfig 就绪后切换；(b) 自建 AgileConfig（需 clone 源码联网构建）；(c) 等网络恢复。**这一项必须先定，否则 S1 无法开工。** |
+
+### 2.7 落地记录
+
+| 项 | 结论 |
+|---|---|
+| 依赖版本 | FreeSql **3.5.311**（三件套同版本）；Npgsql 显式钉 **5.0.18**（FreeSql 内置 5.0.11 有高危公告，5.0.18 是 5.x 线末版且已修复；升 6.x+ 需验证 provider 兼容性）；Yitter 雪花包名是 **`Yitter.IdGenerator`**（`Yitter.NetCore` 在 nuget 上不存在）；MessagePack 3.1.10 |
+| FreeSql AOP API | 3.5.x **移除了** `Aop.DataMapping` / `Aop.DataFilter`。改用 `Aop.ParseExpression`（查询过滤，设 `Result` 追加到 WHERE）与 `Aop.CurdBefore`（写入前改 `States`） |
+| 条件内联 | `ParseExpression` 只有字符串通道、没有参数通道，因此过滤条件必须内联为字面量。由 `SqlLiteral` 做类型白名单（只接受令牌声明、枚举常量、服务端时钟的值），杜绝注入 |
+| 建库脚本 | PostgreSQL **不允许在函数/DO 块里 `CREATE DATABASE`**，改用 psql 的 `\gexec` 做幂等批量执行；脚本必须用 psql 跑 |
+| fluentd | 官方镜像不含 `fluent-plugin-elasticsearch`（会报 Unknown output plugin 并退出），已自建镜像补装；镜像内无 `ps`，健康检查改用镜像自带 ruby 做 TCP 探测 |
+
 
 ---
 
@@ -443,7 +461,7 @@ S0 基础设施
 
 | 阶段 | 状态 | 开始 | 完成 | 备注 |
 |---|---|---|---|---|
-| S0 基础设施 | 进行中 | 2026-10-02 | | |
+| S0 基础设施 | 已完成（7/8 容器） | 2026-10-02 | 2026-10-02 | AgileConfig 官方源不可达，见 2.6 待决；ES 分词器降级 smartcn，见 2.7 |
 | S1 认证与租户地基 | 未开始 | | | |
 | S2 商品与库存 | 未开始 | | | |
 | S3 营销引擎 | 未开始 | | | |

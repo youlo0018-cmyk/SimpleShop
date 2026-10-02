@@ -1,0 +1,13 @@
+cluster.name: simpleshop-es
+node.name: simpleshop-node-1
+network.host: 0.0.0.0
+discovery.type: single-node
+
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+
+http.port: 9200
+
+# 单节点开发环境，磁盘水位放宽，避免写入被熔断
+cluster.routing.allocation.disk.threshold_enabled: false
+

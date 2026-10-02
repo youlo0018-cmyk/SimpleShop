@@ -1,0 +1,171 @@
+# SimpleShop 本地开发中间件
+# 依据：BUSINESS.md 21（外部依赖）、DATA_SPEC.md 1（启动时序）
+# 全部容器必须 healthy 才算 S0 通过（PLAN.md 2.4）
+name: simpleshop
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: simpleshop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: simpleshop_dev_2026
+      POSTGRES_DB: postgres
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - ../deploy/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [simpleshop]
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: simpleshop-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - ../deploy/data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [simpleshop]
+
+  consul:
+    image: hashicorp/consul:1.19
+    container_name: simpleshop-consul
+    restart: unless-stopped
+    command: ["agent", "-dev", "-client=0.0.0.0", "-bind=0.0.0.0"]
+    ports:
+      - "8500:8500"
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [simpleshop]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: simpleshop-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: simpleshop
+      RABBITMQ_DEFAULT_PASS: simpleshop_dev_2026
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - ../deploy/data/rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+    networks: [simpleshop]
+
+  agileconfig:
+    image: registry.agileconfig.com/registry-server:8.0.0
+    container_name: simpleshop-agileconfig
+    restart: unless-stopped
+    # ⚠ 2026-10-02 实测：registry.agileconfig.com 与 agileconfig.com 在本环境 DNS 解析失败，
+    #   Docker Hub 也没有 agileconfig 命名空间，镜像无法拉取。
+    #   因此放入 config profile，默认不启动，不阻塞其余中间件。
+    #   网络可达后用 `docker compose --profile config up -d agileconfig` 启动。
+    #   在此之前，S1 起的服务需要用 appsettings 本地配置作为**配置源**（不是默认值兜底）：
+    #   连接串等仍要求显式配置，缺失即 fail-fast，只是来源不是 AgileConfig。
+    profiles: ["config"]
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../deploy/data/agileconfig:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5000/health || exit 1"]
+      interval: 15s
+      timeout: 8s
+      retries: 20
+    networks: [simpleshop]
+
+  elasticsearch:
+    build:
+      context: ./elasticsearch
+      dockerfile: Dockerfile
+    image: simpleshop/elasticsearch-ik:8.15.0
+    container_name: simpleshop-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      TZ: Asia/Shanghai
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    ports:
+      - "9200:9200"
+    volumes:
+      - ../deploy/data/elasticsearch:/usr/share/elasticsearch/data
+      - ./elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks: [simpleshop]
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: simpleshop-kibana
+    restart: unless-stopped
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      TZ: Asia/Shanghai
+      I18N_LOCALE: zh-CN
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:5601/api/status | grep -q '\"level\":\"available\"' || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+    networks: [simpleshop]
+
+  fluentd:
+    build:
+      context: ./fluentd
+      dockerfile: Dockerfile
+    image: simpleshop/fluentd-es:v1.16
+    container_name: simpleshop-fluentd
+    restart: unless-stopped
+    command: ["fluentd", "-c", "/fluentd/etc/fluent.conf", "-v"]
+    ports:
+      - "24224:24224"
+    volumes:
+      - ./fluentd/fluent.conf:/fluentd/etc/fluent.conf:ro
+      - ../deploy/data/fluentd:/fluentd/log
+    healthcheck:
+      # 该镜像内没有 ps / netstat / curl，用镜像自带的 ruby 做 TCP 探测
+      test: ["CMD", "ruby", "-rsocket", "-e", "TCPSocket.new('127.0.0.1', 24224).close"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    networks: [simpleshop]
+
+networks:
+  simpleshop:
+    driver: bridge
+

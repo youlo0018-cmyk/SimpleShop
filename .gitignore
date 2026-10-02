@@ -1,0 +1,38 @@
+# .NET
+bin/
+obj/
+.vs/
+*.user
+artifacts/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# 运行时产物
+logs/
+*.log
+*.pid
+
+# 视觉回归产物（基线图入库，current/diff 不入库）
+tests/visual/current/
+tests/visual/diff/
+
+# 本地覆盖
+appsettings.Development.json
+*.local.json
+.env
+
+# 密钥与证书（RS256 自签证书不入库）
+deploy/certs/
+*.pfx
+*.key
+*.pem
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+

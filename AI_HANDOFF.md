@@ -229,6 +229,27 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-02（实现阶段）：S0 基础设施完成
+
+- **新增 `PLAN.md`**（实现规划，11 阶段 S0~S10）。规划严格派生自本文档集，实现中发现需要新决策必须先停下来提问，不得自行发挥。
+- **S0 交付物**：
+  - `deploy/docker-compose.yml`：7 个中间件全部 healthy（postgres / redis / consul / rabbitmq / elasticsearch / kibana / fluentd）+ AgileConfig（config profile，默认不启）。
+  - `deploy/elasticsearch/Dockerfile`、`deploy/fluentd/Dockerfile`（自建镜像）、`deploy/fluentd/fluent.conf`。
+  - `deploy/sql/00-create-databases.sql`：14 个库 + 应用角色 + 授权 + 每库 UTC，**幂等可重跑**（已实测复跑通过）。
+  - `deploy/shared/validation-rules.json`：9 条校验规则单一来源。
+  - `scripts/`：`start-infra` / `stop-infra` / `init-database` / `build` / `generate-validation-rules`。
+  - `src/Collaboration/Collaboration.Domain`：`EntityBase` / `AdminEntityBase` / `CustomerEntityBase` / `IPublicVisible` / `ApiResponse` / `ApiResults` / `BaseApiResponseCode` / `TenantContext` / `AccessContext` / `TenantContextHolder` / `SnowflakeId` / `SqlLiteral` / `FreeSqlAopRegistrar` / `ValidationPatterns`（生成物）。
+  - `NuGet.config`：隔离失效的机器级私有源。`.gitignore`、`SimpleShop.slnx`。
+- **验证结果**：`./scripts/build.ps1` **0 error 0 warning**（csproj 把 CS1591 缺注释设为编译错误）；14 库可连、脚本复跑幂等；7 容器 healthy。
+- **三处技术落差点（已记入 PLAN.md 2.7）**：
+  1. FreeSql 3.5.311 **移除**了 `Aop.DataMapping` / `Aop.DataFilter`，改用 `ParseExpression` + `CurdBefore`；因前者只有字符串通道，过滤条件必须内联，用 `SqlLiteral` 做类型白名单防注入。
+  2. PostgreSQL **不允许在 DO 块里 `CREATE DATABASE`**，改用 psql 的 `\gexec`。
+  3. 雪花包名是 `Yitter.IdGenerator`（不是 `Yitter.NetCore`）；`ColumnAttribute` 的长度属性是 `StringLength`（不是 `Length`）；属性在 `FreeSql.DataAnnotations` 命名空间。
+- **两处外部依赖不可用（已记入 PLAN.md 2.5/2.6）**：
+  - **AgileConfig**：`registry.agileconfig.com` 与 `agileconfig.com` DNS 解析失败，Docker Hub 无 `agileconfig` 命名空间。**阻塞 S1**，需要先定配置源方案。
+  - **IK 分词器**：7.x/8.x 只在 `get.infini.cloud` 分发（SSL 阻断），GitHub 无 8.x 产物。已降级 ES 内置 `smartcn`，IK 做成 `INSTALL_IK` 构建参数待恢复。
+- **下一步**：等用户决策 AgileConfig 方案后进入 S1（认证与租户地基）。
+
 ### 2026-10-02（需求阶段·第六轮）：新增 TEST_CASES.md 测试用例文档
 
 - **新增 `TEST_CASES.md`**（9 章，约 516 条用例 + 约 180 张基线图）：

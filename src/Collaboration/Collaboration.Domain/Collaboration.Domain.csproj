@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Collaboration.Domain</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: 缺 XML 注释的公开成员。100% 注释是强制规范，宁可编译失败也不放过 -->
+    <WarningsAsErrors>CS1591</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 版本说明：
+         FreeSql 三件套版本必须一致，否则 provider 与 DbContext 类型不匹配。
+         雪花 Id 用 Yitter.IdGenerator（注意不是 Yitter.NetCore，nuget 上不存在该 ID）。
+         Npgsql 显式钉在 5.0.18：FreeSql.Provider.PostgreSQL 内置依赖是 5.0.11，
+         该版本有已知高危公告；5.0.18 是 5.x 线的最后一个版本，已包含修复。
+         升到 6.x+ 需要验证 FreeSql provider 兼容性，不在本次范围内。 -->
+    <PackageReference Include="FreeSql" Version="3.5.311" />
+    <PackageReference Include="FreeSql.DbContext" Version="3.5.311" />
+    <PackageReference Include="FreeSql.Provider.PostgreSQL" Version="3.5.311" />
+    <PackageReference Include="Npgsql" Version="5.0.18" />
+    <PackageReference Include="Yitter.IdGenerator" Version="1.0.14" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.24" />
+    <PackageReference Include="MessagePack" Version="3.1.10" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>
+

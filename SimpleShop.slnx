@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/apps/" />
+  <Folder Name="/deploy/" />
+  <Folder Name="/scripts/" />
+</Solution>
+
