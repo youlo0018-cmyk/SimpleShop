@@ -42,6 +42,11 @@ public static class ValidationPatterns
     /// <summary>platformCode 规则的提示文案。</summary>
     public const string platformCodeMessage = "平台编码需为 6 位字母";
 
+    /// <summary>permissionCode 规则的正则。</summary>
+    public const string permissionCodePattern = "^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$";
+    /// <summary>permissionCode 规则的提示文案。</summary>
+    public const string permissionCodeMessage = "权限编码格式应为 module:action，如 user:read";
+
     /// <summary>discountRate 规则的正则。</summary>
     public const string discountRatePattern = "^\\d+(\\.\\d{1,2})?$";
     /// <summary>discountRate 规则的提示文案。</summary>

@@ -1,6 +1,8 @@
 using Collaboration.Domain.Common;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using PermissionService.Application.Features.Permission.CreatePermission;
+using PermissionService.Application.Features.Permission.DeletePermission;
 using PermissionService.Application.Features.Permission.QueryTree;
 
 namespace PermissionService.Api.Controllers;
@@ -19,9 +21,32 @@ public sealed class PermissionController : ControllerBase
     /// <summary>查询权限树，4 层结构，最外层是虚拟根节点「全部权限」。</summary>
     /// <param name="includeDisabled">是否包含已停用权限点，默认 false。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>权限树。节点只含中文名，不返回编码给界面直接展示（DESIGN_SPEC 6）。</returns>
+    /// <returns>权限树。节点含 selectable，前端据此禁止勾选空模块。</returns>
     [HttpGet("Tree")]
     public Task<ApiResponse<List<PermissionNodeDto>>> Tree([FromQuery] bool includeDisabled = false, CancellationToken ct = default)
         => _mediator.Send(new QueryPermissionTreeCommand(includeDisabled), ct);
-}
 
+    /// <summary>新建权限点。仅超级管理员。</summary>
+    /// <param name="command">新建命令，ParentId 传 0 表示一级业务大类。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回新权限点 Id。</returns>
+    [HttpPost("Create")]
+    public Task<ApiResponse<long>> Create([FromBody] CreatePermissionCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>删除权限点。仅超级管理员；内置权限点会被拒绝。</summary>
+    /// <param name="command">删除命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    [HttpPost("Delete")]
+    public Task<ApiResponse> Delete([FromBody] DeletePermissionCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>启用 / 停用权限点。仅超级管理员；内置权限点只能停用。</summary>
+    /// <param name="command">状态变更命令，Status 为 1 启用 或 2 停用。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    [HttpPost("Status")]
+    public Task<ApiResponse> Status([FromBody] ChangePermissionStatusCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+}

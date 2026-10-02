@@ -5,6 +5,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using PermissionService.Application.Features.Permission.QueryTree;
 using PermissionService.Infrastructure;
+using PermissionService.Application.Security;
 
 namespace PermissionService.Api;
 
@@ -24,6 +25,9 @@ public static class ApiServiceCollectionExtensions
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(appAssembly));
         services.AddValidatorsFromAssembly(appAssembly);
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+        // 仅对实现 ISuperAdminOnly 的请求生效（内部会判一次），
+        // 不影响权限树查询等普通请求
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(SuperAdminBehavior<,>));
 
         services.AddInfrastructure();
         return services;

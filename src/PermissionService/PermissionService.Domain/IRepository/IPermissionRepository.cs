@@ -55,5 +55,11 @@ public interface IPermissionRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>命中的权限点列表。幂等只读。</returns>
     Task<List<Permission>> GetByIdsAsync(IReadOnlyCollection<long> ids, CancellationToken ct = default);
+    /// <summary>软删权限点。</summary>
+    /// <param name="id">权限点 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。幂等：重复软删第二次返回 0。</returns>
+    Task<int> DeleteAsync(long id, CancellationToken ct = default);
+
 }
 

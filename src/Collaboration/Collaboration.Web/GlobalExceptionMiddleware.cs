@@ -44,6 +44,12 @@ public sealed class GlobalExceptionMiddleware
                 .ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).ToArray(), StringComparer.OrdinalIgnoreCase);
             await WriteAsync(context, HttpStatusCode.BadRequest, "请求参数校验失败", errors);
         }
+        catch (BaseApiException ex)
+        {
+            _logger.LogInformation(ex, "请求 {Path} 业务拒绝：{Message}", context.Request.Path, ex.Message);
+            await WriteAsync(context, (HttpStatusCode)ex.Code, ex.Message, ex.Errors);
+        }
+
         catch (Exception ex)
         {
             _logger.LogError(ex, "请求 {Path} 未处理异常", context.Request.Path);

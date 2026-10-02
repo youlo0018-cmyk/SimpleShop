@@ -30,6 +30,10 @@
       "pattern": "^[A-Za-z]{6}$",
       "message": "平台编码需为 6 位字母"
     },
+    "permissionCode": {
+      "pattern": "^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$",
+      "message": "权限编码格式应为 module:action，如 user:read"
+    },
     "discountRate": {
       "pattern": "^\\d+(\\.\\d{1,2})?$",
       "min": "0.01",

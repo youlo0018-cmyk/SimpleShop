@@ -40,3 +40,34 @@ public sealed class ApiResponse<T>
     public IDictionary<string, string[]> Errors { get; set; } = new Dictionary<string, string[]>();
 }
 
+
+/// <summary>无数据负载的统一响应体。DATA_SPEC 3.5 定义的基础形态。</summary>
+public class ApiResponse
+{
+    /// <summary>是否成功。</summary>
+    public bool Success { get; set; }
+
+    /// <summary>响应码，见 <see cref="BaseApiResponseCode"/>。</summary>
+    public int Code { get; set; }
+
+    /// <summary>提示消息，面向用户的中文完整句。</summary>
+    public string Message { get; set; } = string.Empty;
+
+    /// <summary>字段级错误集合。前端只用它做 tip 提示，不飘红输入框（CODING_STANDARD 3.4）。</summary>
+    public IDictionary<string, string[]> Errors { get; set; } = new Dictionary<string, string[]>();
+}
+
+/// <summary>无数据响应构造重载。</summary>
+public static class ApiResponseFactory
+{
+    /// <summary>构造成功响应。</summary>
+    /// <param name="message">可选提示消息。</param>
+    public static ApiResponse Ok(string message = "") => new() { Success = true, Code = 0, Message = message };
+
+    /// <summary>构造失败响应。</summary>
+    /// <param name="code">响应码。</param>
+    /// <param name="message">失败原因。</param>
+    /// <param name="errors">字段级错误集合。</param>
+    public static ApiResponse Fail(BaseApiResponseCode code, string message, IDictionary<string, string[]>? errors = null)
+        => new() { Success = false, Code = (int)code, Message = message, Errors = errors ?? new Dictionary<string, string[]>() };
+}
