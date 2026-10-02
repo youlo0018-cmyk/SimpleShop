@@ -44,3 +44,8 @@ Thumbs.db
 svc.log
 logs-run.out
 logs-run.err
+perm.log
+perm2.log
+perm3.log
+perm4.log
+perm.err

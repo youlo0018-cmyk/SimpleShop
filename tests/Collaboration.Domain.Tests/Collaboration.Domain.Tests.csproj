@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Collaboration\Collaboration.Domain\Collaboration.Domain.csproj" />
+    <ProjectReference Include="..\..\src\PermissionService\PermissionService.Application\PermissionService.Application.csproj" />
   </ItemGroup>
 
 </Project>
