@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ProductService.Domain</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: 缺 XML 注释的公开成员。100% 注释是强制规范，宁可编译失败也不放过 -->
+    <WarningsAsErrors>CS1591</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 实体基类（EntityBase / AdminEntityBase）与 FreeSql 标注都来自协作库 -->
+    <ProjectReference Include="..\..\Collaboration\Collaboration.Domain\Collaboration.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

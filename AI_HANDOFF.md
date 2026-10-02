@@ -169,9 +169,9 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Permission | 5022 | ✅ 权限树（4 层 / 106 节点）、权限点增删改、角色 CRUD、内置角色种子 |
 | Tool | 5080 | ✅ 统一文件上传（三步校验）+ 本地回源 |
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
-| Product / Cart / Inventory / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Product | 5058 | 🔄 进行中（分类域完成：三级约束 / 同级唯一 / 有子项禁删；品牌与 SPU/SKU 未开始） |\n| Cart / Inventory / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
 
-**S1（一期·地基）已完成并通过端到端验证。** 下一步是 S2 Product + Cart + Inventory。
+**S1（一期·地基）已完成并通过端到端验证。** S2 已开工：ProductService 分类域完成。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
 
 **验证现状**
 
@@ -180,7 +180,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | `dotnet test` | 64/64 |
 | `tests/e2e/api-regression.ps1` | 15/15 |
 | `tests/e2e/auth-regression.ps1` | 17/17 |
-| `tests/e2e/gateway-regression.ps1` | 13/13 |
+| `tests/e2e/gateway-regression.ps1` | 13/13 |\n| `tests/e2e/product-regression.ps1` | 11/11 |
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -252,6 +252,38 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S2 开工 — ProductService 分类域（5058）
+
+S2 的第一块。四层骨架 + 6 张表（category / brand / product / product_spec /
+product_spec_value / sku / sku_spec_value），先把**分类**这条竖切做通。
+
+**为什么先做分类**：分类是商品、活动、装修的共同依赖，且规则最硬（三级上限、
+同级唯一、有子项禁删），先把规则钉死，后面几个域才不会各自发明一套分类语义。
+
+**几条容易写错的规则**
+
+| 规则 | 容易错在哪 |
+|---|---|
+| `Level` 由服务端按 `ParentId` 链算出 | 前端传了也必须忽略，否则可以直接建到第四级 |
+| 同父级内名称唯一 | 用 `partial unique index ... WHERE is_deleted = false` 才符合软删语义；普通 unique 会让软删的同名一直占坑 |
+| 有子分类 / 有商品时禁止删除 | 直接软删会让商品「挂在一个不存在的分类下」，且后台已改不回去 |
+| SKU 表**没有 stock 列** | 库存在 InventoryService 的库里；两边都存就是两份真相 |
+| `[Column]` 上不写 `DecimalLength` / `Scale` | FreeSql 的 `ColumnAttribute` 没这两个属性（写了 CS0246）；精度 numeric(18,2) 由建表脚本定 |
+
+**建表脚本一处细节**：`uk_category_parent_name` 用了
+`CREATE UNIQUE INDEX ... WHERE is_deleted = false`。这不是炫技——普通唯一索引
+会让「软删掉的同名分类」永远占着位置，新建同名被误拒，而业务上它明明已经不存在了。
+
+**验证**：`tests/e2e/product-regression.ps1` 11/11 通过，覆盖三级约束、
+同级重名、孤儿父节点、有子项禁删、树的 hasChildren，以及经网关时的 401。
+
+**踩的坑**
+
+- `Features/Category` 与 `Domain.Entities.Category` 同名——又踩了一次 CODING_STANDARD 第 1 号陷阱。
+  本次在 handler 里用 `using CategoryEntity = ...` 别名解决，csproj 里也写了注释。
+- PowerShell 脚本里写辅助函数时**不要**用 `return` 返回业务 Id：格式化文字会一起被返回，
+  赋值拿到的就是那行文字。改成函数只 `Write-Host`、结果走 `$script:` 变量。
+  同理 `Cat` / `Try` / `Get-Content` 这类名字会撞内置别名或关键字。
 ### 2026-10-03（实现阶段）：S1 收官 — Gateway 落地（5008），S1 全部完成
 
 **Gateway 做对的第一件事是「先剥头」**

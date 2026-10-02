@@ -7,7 +7,7 @@
     { "name": "CustomerService",     "port": 5280, "implemented": true,  "project": "src/CustomerService/CustomerService.Api/CustomerService.Api.csproj" },
     { "name": "ToolService",         "port": 5080, "implemented": true,  "project": "src/ToolService/ToolService.Api/ToolService.Api.csproj" },
     { "name": "PermissionService",   "port": 5022, "implemented": true,  "project": "src/PermissionService/PermissionService.Api/PermissionService.Api.csproj" },
-    { "name": "ProductService",      "port": 5058, "implemented": false, "project": "src/ProductService/ProductService.Api/ProductService.Api.csproj" },
+    { "name": "ProductService",      "port": 5058, "implemented": true,   "project": "src/ProductService/ProductService.Api/ProductService.Api.csproj" },
     { "name": "CartService",         "port": 5060, "implemented": false, "project": "src/CartService/CartService.Api/CartService.Api.csproj" },
     { "name": "InventoryService",    "port": 5062, "implemented": false, "project": "src/InventoryService/InventoryService.Api/InventoryService.Api.csproj" },
     { "name": "OrderService",        "port": 5064, "implemented": false, "project": "src/OrderService/OrderService.Api/OrderService.Api.csproj" },

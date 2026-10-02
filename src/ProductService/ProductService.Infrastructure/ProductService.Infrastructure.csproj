@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ProductService.Infrastructure</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>CS1591</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 引用 Application 而不是 Domain：仓储实现要用到应用层的契约与 DTO。
+         Api → Infrastructure → Application → Domain 是全项目统一的层级链。 -->
+    <ProjectReference Include="..\ProductService.Application\ProductService.Application.csproj" />
+  </ItemGroup>
+
+</Project>

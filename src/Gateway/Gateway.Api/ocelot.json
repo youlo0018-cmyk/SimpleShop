@@ -56,6 +56,14 @@
       "DownstreamPathTemplate": "/roles/{everything}",
       "DownstreamScheme": "http",
       "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5022 } ]
-    }
+    },
+     {
+       "//": "商品域（分类 / 品牌 / 商品）。",
+       "UpstreamPathTemplate": "/gateway/categories/{everything}",
+       "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+       "DownstreamPathTemplate": "/categories/{everything}",
+       "DownstreamScheme": "http",
+       "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5058 } ]
+     },
   ]
 }
