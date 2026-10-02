@@ -47,6 +47,17 @@ function Write-Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan 
 # ---------- 每个服务的配置项（键用 .NET 配置节语法） ----------
 $dbPassword = 'simpleshop_dev_2026'
 
+# 网关与下游服务之间的内部共享口令：下游只在这个口令正确时才采信 X-Claim-* 请求头。
+# 必须与 Gateway 用的是同一个值，配置项名叫 Tenancy:InternalToken。
+# 没配的后果是「所有人按匿名处理」——超管接口全 403，fail-closed 而不是放行。
+if (-not $env:INTERNAL_SERVICE_TOKEN) {
+    if (-not $env:AGILECONFIG_INTERNAL_TOKEN) {
+        throw '缺少 INTERNAL_SERVICE_TOKEN。请在 deploy/.env 里设置（该文件不入库），网关与各服务要用同一个值。'
+    }
+    $env:INTERNAL_SERVICE_TOKEN = $env:AGILECONFIG_INTERNAL_TOKEN
+}
+$internalToken = $env:INTERNAL_SERVICE_TOKEN
+
 # 服务名到库名不是机械转换，必须显式映射：
 #   CustomerService -> simpleshopcustomer（不是 simpleshopcustomerservice）
 #   MerchantPlatformService -> simpleshopmerchant
@@ -86,6 +97,7 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         'RabbitMq:VirtualHost'      = '/'
         'Snowflake:WorkerIdKeyPrefix' = 'snowflake:worker'
         'Snowflake:WorkerIdUpperBound' = '64'
+        'Tenancy:InternalToken'    = $internalToken
     }
     if ($name -eq 'CustomerService') {
         $cfg['Jwt:Issuer']       = 'simpleshop'

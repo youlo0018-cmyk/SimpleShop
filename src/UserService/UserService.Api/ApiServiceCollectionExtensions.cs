@@ -3,6 +3,7 @@ using Collaboration.Domain.MediatR;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using UserService.Application.Features.Internal;
 using UserService.Application.Features.User.ManageUser;
 using UserService.Application.Services;
 using UserService.Infrastructure;
@@ -27,6 +28,7 @@ public static class ApiServiceCollectionExtensions
 
         // 校验器放在静态类里，AddValidatorsFromAssembly 扫不到，显式注册
         UserValidators.AddUserValidators(services);
+        AuthenticateAdminValidators.AddAuthenticateAdminValidators(services);
 
         services.AddSingleton<IUserRoleClient, UnavailableUserRoleClient>();
 

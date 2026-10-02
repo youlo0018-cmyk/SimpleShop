@@ -47,6 +47,7 @@ builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
 var app = builder.Build();
+app.UseAppTenantContext();
 app.UseAppExceptionHandling();
 app.MapHealthChecks("/health");
 app.MapControllers();

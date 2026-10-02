@@ -35,6 +35,16 @@ public static class FreeSqlServiceCollectionExtensions
                 .Build();
 
             FilterRegistrar.Register(freeSql, entityAssemblies);
+
+            // 排障用 SQL 追踪：设 SIMPLESHOP_SQL_TRACE=1 才开，默认关。
+            // FreeSql 默认不打印任何 SQL，出了「接口返回成功但数据没变」这类问题时
+            // 没有语句可看，只能靠猜；这里给出开关，但不默认打开（量级很大）。
+            if (string.Equals(Environment.GetEnvironmentVariable("SIMPLESHOP_SQL_TRACE"), "1", StringComparison.Ordinal))
+            {
+                freeSql.Aop.CommandBefore += (_, e) =>
+                    Console.WriteLine($"[sql] {e.Command.CommandText}");
+            }
+
             return freeSql;
         });
 

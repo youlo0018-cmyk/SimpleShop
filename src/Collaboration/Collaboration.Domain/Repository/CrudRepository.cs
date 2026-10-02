@@ -42,7 +42,21 @@ public abstract class CrudRepository<T> : ICrudRepository<T> where T : EntityBas
     {
         entity.UpdatedAt = DateTime.UtcNow;
         ApplyOperator(entity);
-        return await Db.Update<T>(entity).ExecuteAffrowsAsync(ct);
+
+        // 踩过的坑（P0）：原来写的是 Db.Update<T>(entity)。
+        // FreeSql 3.5 下这个重载在实体带雪花主键（IsIdentity=false）时**生成空的 SET 子句，
+        // 一条 SQL 都不发**，ExecuteAffrowsAsync 返回 0 且不抛异常——
+        // 接口回「成功」，数据纹丝不动。全项目 7 处 UpdateAsync 调用全是这种假成功，
+        // 包括后台账号的编辑 / 重置密码 / 启停。补显式 Where + SetDtoIgnore 才真正落库。
+        //
+        // SetDto 会把实体所有属性都写进 SET，包括主键与 created_at。
+        // 值与库里相同所以不会写坏，但语义上「主键与创建时间不可变」，
+        // 这里显式排除，避免以后有人依赖这一点时被意外突破。
+        return await Db.Update<T>()
+            .Where(a => a.Id == entity.Id)
+            .SetDtoIgnore(entity, static name =>
+                name is nameof(EntityBase.Id) or nameof(EntityBase.CreatedAt))
+            .ExecuteAffrowsAsync(ct);
     }
 
     /// <summary>写入创建人快照。后台实体记操作人；客户实体的用户就是 CustomerId。</summary>
@@ -80,8 +94,26 @@ public abstract class CrudRepository<T> : ICrudRepository<T> where T : EntityBas
 
     /// <inheritdoc />
     public Task<int> UpdateColumnsAsync(long id, object dto, CancellationToken ct = default)
-        => Db.Update<T>().Where(a => a.Id == id).SetDto(dto).ExecuteAffrowsAsync(ct);
+    {
+        // 踩过的坑（P0）：原来直接 SetDto(dto)。
+        // SetDto 会把 dto 的**每一个**属性都写进 SET，不区分「调用方传了」还是「C# 默认值」。
+        // 于是传一个只带 NickName 的局部对象，就能把 user_name 静默清成空串——数据被抹掉且接口报成功。
+        // UpdateColumns 先把可写列限定成 dto 实际声明的属性，主键与创建时间排除在外。
+        var columns = dto.GetType()
+            .GetProperties()
+            .Where(p => p.CanRead && p.CanWrite)
+            .Select(p => p.Name)
+            .Where(n => n is not nameof(EntityBase.Id) and not nameof(EntityBase.CreatedAt))
+            .ToArray();
 
+        if (columns.Length == 0) return Task.FromResult(0);
+
+        return Db.Update<T>()
+            .Where(a => a.Id == id)
+            .UpdateColumns(columns)
+            .SetDto(dto)
+            .ExecuteAffrowsAsync(ct);
+    }
     /// <inheritdoc />
     public Task<int> DeleteAsync(long id, CancellationToken ct = default)
         => Db.Update<T>()
