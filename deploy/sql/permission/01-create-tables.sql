@@ -19,7 +19,11 @@ CREATE TABLE IF NOT EXISTS permission (
     CONSTRAINT pk_permission PRIMARY KEY (id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uk_permission_code ON permission (code);
+-- 只有叶子（权限点）才有 code，大类与模块是空串。
+-- 所以唯一索引必须是部分索引：只约束 code 非空的行，
+-- 否则会有 28 行空串互相撞唯一约束。
+DROP INDEX IF EXISTS uk_permission_code;
+CREATE UNIQUE INDEX IF NOT EXISTS uk_permission_code ON permission (code) WHERE code <> '';
 CREATE INDEX IF NOT EXISTS idx_permission_parent ON permission (parent_id, level, sort_order);
 
 CREATE TABLE IF NOT EXISTS role (

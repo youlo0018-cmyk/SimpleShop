@@ -229,6 +229,28 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：PermissionService 权限树跑通（5 大类 / 23 模块 / 78 权限点）
+
+- `GET /permissions/Tree` 实测返回正确的 4 层树：虚拟根「全部权限」(id=0, level=0)
+  → 5 个业务大类 → 23 个功能模块 → 78 个权限点（中文名 + 编码 + 绑定路径）。
+- 播种脚本 `scripts/seed-permissions.ps1` 最终可用：**5 大类 / 23 模块 / 78 权限点 = 106 节点**。
+- **本轮定位的 5 个坑（全部是 PowerShell 特性，不是业务问题）**：
+  1. `[ordered]@{}` 是 `OrderedDictionary`，**Int32 键索引返回 null**，模块与权限点循环全部空转 → 改字符串键
+  2. 布尔被输出成 PowerShell 的 `True`，PostgreSQL 只认小写 `true` → 显式转 `true`/`false`
+  3. 大类/模块行少一列（漏 `api_path`），列整体错位
+  4. 叶子行把 `parent_id` 和 `api_path` **位置写反**（列序是 `...code, api_path, parent_id...`）
+  5. **单元素数组解包**：`@(@('payment:read',...))` 只有一个内层数组时被拆平成一维，
+     导致 6 个叶子串位成 `code='/'` → 用 `,@(...)` 强制包一层
+- **顺带修正**：`permission.code` 唯一索引改为**部分索引**（`WHERE code <> ''`），
+  因为大类/模块无 code 是空串，普通唯一索引会互相撞。
+- **数字对上了**：修掉解包 bug 后权限点数从 82 变回 **78**，与 `BUSINESS.md` 5.2 完全一致。
+  之前怀疑「多出 4 个」是解包 bug 的假象，实际一直是对的。
+- 反复插曲后改用 **`COPY ... FROM STDIN`（CSV）** 代替拼 INSERT 字符串：
+  转义交给 `ConvertTo-Csv`，彻底避开引号与列序两类坑。脚本里保留了注释说明原因。
+- **待定（需你确认）**：品牌模块（2108）无独立权限点（按 5.2 复用 `product:*`），
+  在权限树里显示为**空节点**。前端遇到空节点是禁止勾选还是允许，文档未定义。
+- **下一步**：权限点增删改（仅超管）、角色 CRUD、账号绑定角色；然后 UserService / AuthService / ToolService。
+
 ### 2026-10-03（实现阶段）：补齐三项欠账 + 落地全局异常中间件与 API 回归
 
 - **① PasswordHasher 下沉到 Collaboration**

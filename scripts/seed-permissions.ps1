@@ -61,7 +61,7 @@ $leaves = [ordered]@{
              @('order:receive', '确认收货', '/gateway/orders/Receive'), @('order:cancel', '取消订单', '/gateway/orders/Cancel'),
              @('order:pickup', '取货核销', '/gateway/orders/Pickup'), @('order:simulate', '模拟支付', '/gateway/payments/Simulate'),
              @('logistics:manage', '物流公司维护', '/gateway/logistics/*'))
-    '2112' = @(@('payment:read', '支付单列表', '/gateway/payments/List'))
+    '2112' = ,@(@('payment:read', '支付单列表', '/gateway/payments/List'))
     '2113' = @(@('refund:read', '退款单列表', '/gateway/refunds/List'), @('refund:apply', '发起退款', '/gateway/payments/Refund'),
              @('refund:approve', '审批退款', '/gateway/refunds/Approve'), @('refund:reject', '拒绝退款', '/gateway/refunds/Reject'))
     '2114' = @(@('marketing:read', '活动列表', '/gateway/marketing/activities/List'), @('marketing:create', '新建活动', '/gateway/marketing/activities/Create'),
@@ -80,7 +80,7 @@ $leaves = [ordered]@{
              @('design:merchant', '商户装修', '/gateway/merchant-configs/*'))
     '2121' = @(@('dashboard:view', '工作台看板', '/gateway/reports/Report'), @('report:view', '经营报表', '/gateway/reports/*'),
              @('report:marketing', '营销效果报表', '/gateway/reports/Marketing'), @('report:seckill', '秒杀效果报表', '/gateway/reports/Seckill'))
-    '2122' = @(@('search:reindex', '重建商品索引', '/gateway/products/Reindex'))
+    '2122' = ,@(@('search:reindex', '重建商品索引', '/gateway/products/Reindex'))
     '2123' = @(@('file:upload', '文件上传', '/gateway/files/*'), @('log:read', '日志查询', '/gateway/logs/*'))
 }
 
@@ -89,58 +89,82 @@ $leaves = [ordered]@{
 
 function Q([string]$v) { return "'" + $v.Replace("'", "''") + "'" }
 
-$rows = [System.Collections.Generic.List[string]]::new()
-function Add-Row($vals) {
-    # 布尔必须输出小写 true/false：PowerShell 的 [string]$true 是 "True"，
-    # PostgreSQL 不认会直接报语法错误。
-    $parts = $vals | ForEach-Object {
-        if ($_ -is [bool]) { if ($_) { 'true' } else { 'false' } }
-        elseif ($_ -is [string]) { Q $_ }
-        else { [string]$_ }
-    }
-    $rows.Add('(' + ($parts -join ',') + ')')
+$records = [System.Collections.Generic.List[object]]::new()
+
+function Add-Row($vals)
+{
+    # 列顺序：id, created_at, name, code, api_path, parent_id, level, sort_order, status, is_builtin, description
+    $records.Add([pscustomobject]@{
+        id         = $vals[0]
+        created_at = $vals[1]
+        name       = $vals[2]
+        code       = $vals[3]
+        api_path   = $vals[4]
+        parent_id  = $vals[5]
+        level      = $vals[6]
+        sort_order = $vals[7]
+        status     = $vals[8]
+        is_builtin = $vals[9]
+        description = $vals[10]
+    })
 }
 
 $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
 
-foreach ($g in $groups) {
-    # 列顺序：id, created_at, name, code, api_path, parent_id, level, sort_order, status, is_builtin, description
+foreach ($g in $groups)
+{
     Add-Row @($g.Id, $now, $g.Name, '', '', 0, 1, $g.Sort, 1, $true, '内置业务大类')
 }
 
-foreach ($groupId in $modules.Keys) {
+foreach ($groupId in $modules.Keys)
+{
     $sort = 0
-    foreach ($m in $modules[$groupId]) {
+    foreach ($m in $modules[$groupId])
+    {
         $sort++
         Add-Row @($m.Id, $now, $m.Name, '', '', $groupId, 2, $sort, 1, $true, '内置功能模块')
     }
 }
 
 $leafId = 3001
-foreach ($moduleId in $leaves.Keys) {
+foreach ($moduleId in $leaves.Keys)
+{
     $sort = 0
-    foreach ($leaf in $leaves[$moduleId]) {
+    foreach ($leaf in $leaves[$moduleId])
+    {
         $sort++
-        Add-Row @($leafId, $now, $leaf[1], $leaf[0], $moduleId, 3, $sort, 1, $true, $leaf[2], $leaf[2])
+        Add-Row @($leafId, $now, $leaf[1], $leaf[0], $leaf[2], $moduleId, 3, $sort, 1, $true, $leaf[2])
         $leafId++
     }
 }
 
 $leafCount = $leafId - 3001
-Write-Host ("==> 权限树：{0} 大类 / {1} 模块 / {2} 权限点" -f $groups.Count, (($modules.Values | ForEach-Object { $_.Count }) | Measure-Object -Sum).Sum, $leafCount) -ForegroundColor Cyan
+$moduleCount = ($modules.Values | ForEach-Object { $_.Count } | Measure-Object -Sum).Sum
+Write-Host ("==> 权限树：{0} 大类 / {1} 模块 / {2} 权限点" -f $groups.Count, $moduleCount, $leafCount) -ForegroundColor Cyan
 
-$structIds = @($groups.Id) + @($modules.Values | ForEach-Object { $_.Id })
-$sql = 'BEGIN;' +
-       'DELETE FROM permission WHERE id IN (' + ($structIds -join ',') + ') OR code <> '''';' +
-       'INSERT INTO permission (id, created_at, name, code, api_path, parent_id, level, sort_order, status, is_builtin, description) VALUES ' +
-       ($rows -join ',') + ';' +
-       'COMMIT;'
+# 用 COPY ... FROM STDIN 走 CSV，而不是拼 INSERT 字符串。
+# 拼字符串时要自己处理引号与列顺序，漏一处就是 syntax error；COPY 由 PostgreSQL 解析，
+# 转义交给 ConvertTo-Csv，彻底避开这类坑。
+$csv = ($records | ConvertTo-Csv -NoTypeInformation) -join "`n"
+$structIds = (@($groups.Id) + @($modules.Values | ForEach-Object { $_.Id })) -join ','
+$columns = 'id, created_at, name, code, api_path, parent_id, level, sort_order, status, is_builtin, description'
 
-$sql | docker exec -i $Container psql -U $User -d $Database -v ON_ERROR_STOP=1 -q
-if ($LASTEXITCODE -ne 0) { throw "权限树播种失败，退出码 $LASTEXITCODE" }
+$sql = @(
+    'BEGIN;'
+    "DELETE FROM permission WHERE id IN ($structIds) OR code <> '';"
+    "COPY permission ($columns) FROM STDIN WITH (FORMAT csv, HEADER true);"
+    $csv
+    '\.'
+    'COMMIT;'
+) -join "`n"
+
+$out = $sql | docker exec -i $Container psql -U $User -d $Database -v ON_ERROR_STOP=1 2>&1
+if ($LASTEXITCODE -ne 0)
+{
+    $out | Select-Object -First 4 | ForEach-Object { Write-Host $_ }
+    throw "权限树播种失败，退出码 $LASTEXITCODE"
+}
 
 $count = (docker exec $Container psql -U $User -d $Database -tAc "select count(*) from permission where is_deleted = false").Trim()
-Write-Host "==> 完成，库中权限节点 $count 条" -ForegroundColor Green
-
-
-
+$leafRows = (docker exec $Container psql -U $User -d $Database -tAc "select count(*) from permission where level = 3 and is_deleted = false").Trim()
+Write-Host "==> 完成：库中权限节点 $count 条，其中叶子权限点 $leafRows 条" -ForegroundColor Green
