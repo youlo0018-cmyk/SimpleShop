@@ -47,6 +47,10 @@ function Write-Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan 
 # ---------- 每个服务的配置项（键用 .NET 配置节语法） ----------
 $dbPassword = 'simpleshop_dev_2026'
 
+# 客户 JWT 的 HS256 密钥。CustomerService 签发、Gateway 验签，必须是同一个值——
+# 提成变量就是为了避免两处各写一份、改了一处忘了另一处。
+$customerJwtSecret = 'simpleshop_dev_jwt_secret_change_me_in_production_0123456789'
+
 # 网关与下游服务之间的内部共享口令：下游只在这个口令正确时才采信 X-Claim-* 请求头。
 # 必须与 Gateway 用的是同一个值，配置项名叫 Tenancy:InternalToken。
 # 没配的后果是「所有人按匿名处理」——超管接口全 403，fail-closed 而不是放行。
@@ -78,27 +82,35 @@ $dbMap = @{
     'MerchantPlatformService' = 'simpleshopmerchant'
     'PointService'            = 'simpleshoppoint'
     'EvaluateService'         = 'simpleshopevaluate'
+    # 网关不连数据库：留空即可，脚本会跳过写 ConnectionStrings:Default。
+    # 硬塞一个连不上的连接串只会误导后来排查的人。
+    'Gateway'                 = ''
 }
 
 function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     $db = $dbMap[$name]
-    if (-not $db) { throw "未在 dbMap 中登记服务 $name，请先补充（BUSINESS.md 3.3）。" }
+    if ($null -eq $db) { throw "未在 dbMap 中登记服务 $name，请先补充（BUSINESS.md 3.3）。无库的服务写空串。" }
 
-    $cfg = [ordered]@{
-        'ConnectionStrings:Default' = "Host=127.0.0.1;Port=5432;Database=$db;Username=simpleshop_app;Password=$dbPassword;Pooling=true;Maximum Pool Size=20"
-        'Redis:ConnectionString'    = '127.0.0.1:6379'
-        'Redis:Database'            = "$redisDb"
-        'Consul:Address'            = 'http://127.0.0.1:8500'
-        'Consul:ServiceName'        = "$name"
-        'RabbitMq:Host'             = 'localhost'
-        'RabbitMq:Port'             = '5672'
-        'RabbitMq:UserName'         = 'simpleshop'
-        'RabbitMq:Password'         = $dbPassword
-        'RabbitMq:VirtualHost'      = '/'
-        'Snowflake:WorkerIdKeyPrefix' = 'snowflake:worker'
-        'Snowflake:WorkerIdUpperBound' = '64'
-        'Tenancy:InternalToken'    = $internalToken
+    $cfg = [ordered]@{}
+
+    # 无库的服务（如 Gateway）不写连接串，而不是写一个假的。
+    # 填一个永远用不上的连接串会误导后来排查的人。
+    if ($db) {
+        $cfg['ConnectionStrings:Default'] = "Host=127.0.0.1;Port=5432;Database=$db;Username=simpleshop_app;Password=$dbPassword;Pooling=true;Maximum Pool Size=20"
     }
+
+    $cfg['Redis:ConnectionString']    = '127.0.0.1:6379'
+    $cfg['Redis:Database']            = "$redisDb"
+    $cfg['Consul:Address']            = 'http://127.0.0.1:8500'
+    $cfg['Consul:ServiceName']        = "$name"
+    $cfg['RabbitMq:Host']             = 'localhost'
+    $cfg['RabbitMq:Port']             = '5672'
+    $cfg['RabbitMq:UserName']         = 'simpleshop'
+    $cfg['RabbitMq:Password']         = $dbPassword
+    $cfg['RabbitMq:VirtualHost']      = '/'
+    $cfg['Snowflake:WorkerIdKeyPrefix'] = 'snowflake:worker'
+    $cfg['Snowflake:WorkerIdUpperBound'] = '64'
+    $cfg['Tenancy:InternalToken']    = $internalToken
     # 下游服务地址。服务之间的 HTTP 调用地址只在这里出现，代码里不写死端口。
     # 端口表见 scripts/service-registry.json（与 BUSINESS.md 3.1 的服务表一致）。
     $serviceUrls = @{
@@ -123,8 +135,35 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     if ($name -eq 'CustomerService') {
         $cfg['Jwt:Issuer']       = 'simpleshop'
         $cfg['Jwt:Audience']     = 'simpleshop-customer'
-        $cfg['Jwt:Secret']       = 'simpleshop_dev_jwt_secret_change_me_in_production_0123456789'
+        $cfg['Jwt:Secret']       = $customerJwtSecret
         $cfg['Jwt:ExpireHours']  = '12'
+    }
+    if ($name -eq 'Gateway') {
+        # 网关配置。路由表在 ocelot.json（随代码发布），这里只放密钥与下游地址。
+        # InternalToken 必须与所有下游的 Tenancy:InternalToken 一致——
+        # 网关是唯一合法的写入方，下游只认这个口令才采信 X-Claim-*。
+        $cfg['Gateway:InternalToken'] = $internalToken
+
+        # 后台令牌：与 AuthService 同一份证书公钥、同一签发方
+        $cfg['Gateway:AdminToken:Issuer'] = 'https://simpleshop.local/'
+        $cfg['Gateway:AdminToken:SigningCertificatePath'] = 'D:/学习/SimpleShop-new/deploy/certs/signing.pfx'
+
+        # 客户令牌：与 CustomerService 同一个 HS256 密钥、同一个签发方
+        $cfg['Gateway:CustomerToken:Issuer'] = 'simpleshop-customer'
+        $cfg['Gateway:CustomerToken:Secret'] = $customerJwtSecret
+
+        # RBAC：路径 → 权限点映射从权限中心拉，缓存 30 秒
+        $cfg['Gateway:Rbac:PermissionServiceUrl'] = $serviceUrls['PermissionService']
+        $cfg['Gateway:Rbac:CacheSeconds'] = '30'
+        # 拉不到映射时默认**拒绝**（fail-closed）：宁可全站 503，也不能让权限中心一挂
+        # 全站就人人都是超管。
+        $cfg['Gateway:Rbac:AllowAllWhenUnavailable'] = 'false'
+
+        # 匿名白名单：只列登录 / 注册 / 换令牌。
+        # 不写黑名单——黑名单意味着「忘了加的接口默认放行」，等于没做鉴权。
+        $cfg['Gateway:AnonymousPaths:0'] = '/gateway/customers/Register'
+        $cfg['Gateway:AnonymousPaths:1'] = '/gateway/customers/Login'
+        $cfg['Gateway:AnonymousPaths:2'] = '/gateway/auth/Token'
     }
     if ($name -eq 'AuthService') {
         # 后台令牌服务配置（BUSINESS 4.1 / DATA_SPEC 1.5）
@@ -174,6 +213,9 @@ $redisDbMap = [ordered]@{
     'MerchantPlatformService' = 12
     'PointService'            = 13
     'EvaluateService'         = 14
+    # 网关目前**不**真的用 Redis（不分配雪花 workerId，也不做 Redis 缓存）。
+    # 这里仍占一个号，是为了让「每个服务一号」这条校验保持统一，后续要加缓存时不用改脚本。
+    'Gateway'                 = 15
 }
 
 if ($Service) {
@@ -241,4 +283,6 @@ foreach ($name in $serviceMap.Keys) {
 }
 
 Write-Step '完成'
+
+
 

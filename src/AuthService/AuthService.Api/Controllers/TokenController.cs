@@ -41,7 +41,7 @@ public sealed class TokenController : ControllerBase
                 "OpenIddict 事务不存在，说明请求没有经过令牌端点。路由或端点配置可能改错了。");
         }
 
-        var request = transaction.Request;
+        var request = transaction.Request ?? throw new InvalidOperationException("OpenIddict 请求为空。");
         if (!string.Equals(request.GrantType, GrantTypes.Password, StringComparison.Ordinal))
         {
             return Error(Errors.UnsupportedGrantType, "This endpoint only supports the password grant type.");

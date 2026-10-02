@@ -16,6 +16,9 @@
     <Project Path="src/CustomerService/CustomerService.Domain/CustomerService.Domain.csproj" />
     <Project Path="src/CustomerService/CustomerService.Infrastructure/CustomerService.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/Gateway/">
+    <Project Path="src/Gateway/Gateway.Api/Gateway.Api.csproj" />
+  </Folder>
   <Folder Name="/src/PermissionService/">
     <Project Path="src/PermissionService/PermissionService.Api/PermissionService.Api.csproj" />
     <Project Path="src/PermissionService/PermissionService.Application/PermissionService.Application.csproj" />

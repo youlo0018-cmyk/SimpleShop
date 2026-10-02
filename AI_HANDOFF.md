@@ -158,6 +158,29 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | 二期·营销 | 限时抢购（Marketing 内） | 依赖 Marketing 优惠引擎 |
 | 横切 | Log | 日志消费，可最后接入 |
 
+### 4.1.1 当前落地状态（2026-10-03）
+
+| 服务 | 端口 | 状态 |
+|---|---|---|
+| Collaboration（公共类库） | - | ✅ 配置源 / 雪花 / 仓储 / 租户上下文 / 异常中间件 |
+| Gateway | 5008 | ✅ Ocelot 路由 + 双令牌验签 + RBAC + 租户头注入 |
+| Auth | 5019 | ✅ OpenIddict password flow + RS256 + 公开客户端 admin-app |
+| User | 5011 | ✅ 账号域（建号/编辑/重置密码/启停/分页 + 内部凭据校验） |
+| Permission | 5022 | ✅ 权限树（4 层 / 106 节点）、权限点增删改、角色 CRUD、内置角色种子 |
+| Tool | 5080 | ✅ 统一文件上传（三步校验）+ 本地回源 |
+| Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
+| Product / Cart / Inventory / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+
+**S1（一期·地基）已完成并通过端到端验证。** 下一步是 S2 Product + Cart + Inventory。
+
+**验证现状**
+
+| 套件 | 结果 |
+|---|---|
+| `dotnet test` | 64/64 |
+| `tests/e2e/api-regression.ps1` | 15/15 |
+| `tests/e2e/auth-regression.ps1` | 17/17 |
+| `tests/e2e/gateway-regression.ps1` | 13/13 |
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -229,6 +252,40 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S1 收官 — Gateway 落地（5008），S1 全部完成
+
+**Gateway 做对的第一件事是「先剥头」**
+
+`GatewaySecurityMiddleware` 的四步顺序一步都不能换：
+剥掉入站的 `X-Claim-*` / `X-Internal-Token` → 按 `alg` 分派验签 → RBAC → 用令牌里的声明重新注入。
+不剥的话任何人发一个 `X-Claim-PlatformId: 0` 就是平台超管，
+整套租户隔离会被最外层一行代码捅破。已实测：无令牌 / 伪造租户头 两种情况都是 401。
+
+**双令牌按 alg 分派，不做「两种都试一遍」**
+
+后台 RS256（读 AuthService 同一份证书的公钥）/ 客户 HS256（共享密钥）。
+两种都试会给「用 HS256 密钥签一个 alg 写成 RS256 的令牌」留下蒙混过关的机会。
+`ValidAlgorithms` 显式钉死，`alg=none` 与算法降级都在这里被挡掉。
+
+**RBAC 是数据驱动的，不是路由表里的硬编码**
+
+网关从权限中心拉「路径 → 权限点」映射（`GET /internal/permissions/RouteMap`），缓存 30 秒。
+权限点是运行时可维护的实体，硬编码会让「改权限点立即生效于网关」这条需求根本没法实现。
+权限中心不可用时**默认拒绝**（fail-closed）：宁可全站 503，也不能让它一挂就人人都是超管。
+
+**踩过的坑**
+
+| 坑 | 现象 | 结论 |
+|---|---|---|
+| `ValidateTokenAsync` 的 Claims 是字典 | 78 个权限点变成一个长度 78 的数组，直接 ToString 会让 RBAC 全失效 | 必须把数组摊平成多条 Claim |
+| Ocelot 25 的 `DownstreamHostAndPorts` | 必须是**数组**，对象形式启动报 6 条 FileValidationFailedError | 见 ocelot.json 注释 |
+| Ocelot 是终结性中间件 | `/health` 匹配不到路由就 404，探活直接失效 | 用 `UseWhen` 把探活摘出去 |
+| 共享配置校验强制要求数据库连接串 | 网关不连库，却被判「配置缺失」而拒启动 | 加了 `exemptBaseKeys` 显式豁免，比填假连接串诚实 |
+| 测试项目引用 AuthService.Infrastructure | 把 Npgsql 从 5.0.18 顶到 10.x，FreeSql 用例全体报 `Kind=UTC` 错 | 测试项目不能同时引用两套 Npgsql，已在 csproj 写明 |
+
+**验证**：单测 64/64、api 15/15、auth 17/17、**gateway 13/13**。
+新增 `tests/e2e/gateway-regression.ps1`，覆盖伪造租户头、令牌外头不影响判定、
+低权限令牌被 RBAC 拒绝（实测 13 项权限 vs 超管 78 项）、`/internal/**` 不经网关暴露。
 ### 2026-10-03（实现阶段）：S1 收口 — ToolService / AuthService 落地，修复两个 P0
 
 **新增服务**

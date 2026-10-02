@@ -37,4 +37,15 @@ public sealed class InternalPermissionController : ControllerBase
     [HttpPost("BindUserRoles")]
     public Task<ApiResponse<int>> BindUserRoles([FromBody] BindUserRolesCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>查询网关 RBAC 用的「接口路径 → 权限点」映射。</summary>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>全部启用且绑定了路径的权限点。网关缓存 30 秒。</returns>
+    /// <remarks>
+    /// 刻意用 GET：网关启动与每 30 秒的缓存刷新都要拉它，语义上是幂等只读，
+    /// 也不会因为被当成写操作而被什么「只允许 POST」的网关策略拦住。
+    /// </remarks>
+    [HttpGet("RouteMap")]
+    public Task<ApiResponse<List<RouteMapEntry>>> RouteMap(CancellationToken ct)
+        => _mediator.Send(new GetRouteMapCommand(), ct);
 }

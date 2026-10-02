@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Gateway.Api</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>CS1591</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 复用 ServiceBootstrap（先读 AgileConfig 再取下游配置）与 TenancyOptions（租户头名常量）。
+         网关本身不碰数据库，引 Collaboration.Domain 只是为了那一个配置加载器，
+         顺带带进来的 Npgsql 不会被用到。 -->
+    <ProjectReference Include="..\..\Collaboration\Collaboration.Domain\Collaboration.Domain.csproj" />
+    <ProjectReference Include="..\..\Collaboration\Collaboration.Web\Collaboration.Web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 版本说明：Ocelot 25.0.1 的 net10.0 目标依赖 Microsoft.AspNetCore 10.0.12 系列包。
+         网关是唯一使用 Ocelot 的地方，其余服务不引入，避免误路由。 -->
+    <PackageReference Include="Ocelot" Version="25.0.1" />
+    <PackageReference Include="Ocelot.Provider.Polly" Version="24.1.0" />
+    <!-- 网关要自己验签后台 RS256 与客户 HS256 两种令牌，用 JwtBearer 的底层处理器 -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 路由表随代码发布（见 ocelot.json 里的说明：Ocelot 要数组结构，AgileConfig 存不了） -->
+    <None Update="ocelot.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

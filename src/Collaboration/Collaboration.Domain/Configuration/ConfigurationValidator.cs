@@ -6,20 +6,37 @@ public static class ConfigurationValidator
     /// <summary>所有服务都必须具备的配置键，服务可追加但不能减少。</summary>
     public static IReadOnlyList<string> BaseRequiredKeys { get; } = BuildBaseKeys();
 
+    /// <summary>
+    /// 豁免的基础键名，供**确实不需要**该资源的服务显式声明。
+    /// </summary>
+    /// <remarks>
+    /// 目前只有 Gateway 用了它：网关不连数据库、不发消息，
+    /// 让它填一个永远用不上的 ConnectionStrings:Default 属于撒谎配置——
+    /// 将来有人排查时看到「网关有数据库连接串」会以为它真的连了库。
+    /// 显式豁免比填假值诚实。
+    /// </remarks>
+    public const string DatabaseConnectionKey = "ConnectionStrings:Default";
+
     /// <summary>校验配置是否齐全，缺项则抛出并列出全部缺失键。</summary>
     /// <param name="config">已拉取的配置键值对。</param>
     /// <param name="extra">服务追加的必填键，可为空。</param>
+    /// <param name="exemptBaseKeys">要从基础必填项里豁免的键，必须显式列出，不做「全部豁免」这种宽松开关。</param>
     /// <exception cref="ConfigSourceUnavailableException">存在缺失键时抛出。</exception>
-    public static void EnsureRequired(IReadOnlyDictionary<string, string?> config, IReadOnlyList<string>? extra = null)
+    public static void EnsureRequired(
+        IReadOnlyDictionary<string, string?> config,
+        IReadOnlyList<string>? extra = null,
+        IReadOnlyList<string>? exemptBaseKeys = null)
     {
         // 自己建一份大小写不敏感的视图：配置键按 .NET 约定应大小写不敏感，
         // 但调用方传进来的字典 comparer 不受我们控制，不能假设它已经正确。
         var lookup = new Dictionary<string, string?>(config, StringComparer.OrdinalIgnoreCase);
+        var exempt = new HashSet<string>(exemptBaseKeys ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         var missing = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var key in BaseRequiredKeys.Concat(extra ?? Array.Empty<string>()))
         {
             if (!seen.Add(key)) continue;
+            if (exempt.Contains(key)) continue;
             if (!lookup.TryGetValue(key, out var v) || string.IsNullOrWhiteSpace(v)) missing.Add(key);
         }
 
@@ -32,11 +49,10 @@ public static class ConfigurationValidator
     private static IReadOnlyList<string> BuildBaseKeys()
     {
         var keys = new List<string>();
-        keys.Add("ConnectionStrings:Default");
+        keys.Add(DatabaseConnectionKey);
         keys.Add("Redis:ConnectionString");
         keys.Add("Consul:Address");
         keys.Add("RabbitMq:Host");
         return keys;
     }
 }
-

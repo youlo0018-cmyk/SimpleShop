@@ -1,0 +1,61 @@
+{
+  "// 说明": "网关路由表。路径与端口必须与 scripts/service-registry.json 保持一致。",
+  "// 为什么路由表留在文件里而不进 AgileConfig": "Ocelot 需要的是 Routes 数组，AgileConfig 只能存扁平的键值对，表达不了这个结构。端口写在这里是可接受的：它是部署拓扑的一部分，不是密钥。生产环境部署时改写本文件，或改用 Consul 服务发现。",
+  "// 安全": "刻意**没有** /gateway/internal/** 的任何路由。下游的 /internal 接口靠这一条隔离——认证中心必须在还没拿到令牌时就能查权限，所以这些接口没法用「已登录才能调」保护自己，只能靠网关不转发来隔离。",
+
+  "GlobalConfiguration": {
+    "BaseUrl": "http://127.0.0.1:5008",
+    "RequestIdKey": "X-Correlation-Id"
+  },
+
+  "Routes": [
+    {
+      "//": "后台令牌服务。Token 端点由中间件放行（匿名白名单）。",
+      "UpstreamPathTemplate": "/gateway/auth/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "DownstreamPathTemplate": "/connect/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5019 } ]
+    },
+    {
+      "//": "前台客户域。Register / Login 匿名，其余需登录（游客不可下单，见 BUSINESS.md）。",
+      "UpstreamPathTemplate": "/gateway/customers/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "DownstreamPathTemplate": "/customers/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5280 } ]
+    },
+    {
+      "//": "统一文件上传与本地回源。注意 DownstreamHostAndPorts 必须是数组：Ocelot 25 的 schema 不接受对象形式，不改会在启动时报 6 条 FileValidationFailedError。",
+      "UpstreamPathTemplate": "/gateway/files/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "DownstreamPathTemplate": "/files/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5080 } ]
+    },
+    {
+      "//": "后台账号域。",
+      "UpstreamPathTemplate": "/gateway/users/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "DownstreamPathTemplate": "/users/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5011 } ]
+    },
+    {
+      "//": "权限点与权限树。",
+      "UpstreamPathTemplate": "/gateway/permissions/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "DownstreamPathTemplate": "/permissions/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5022 } ]
+    },
+    {
+      "//": "角色。",
+      "UpstreamPathTemplate": "/gateway/roles/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "DownstreamPathTemplate": "/roles/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5022 } ]
+    }
+  ]
+}
