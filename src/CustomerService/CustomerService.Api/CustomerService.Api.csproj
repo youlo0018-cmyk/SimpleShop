@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CustomerService.Infrastructure\CustomerService.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Collaboration\Collaboration.Web\Collaboration.Web.csproj" />
   </ItemGroup>
 
   <ItemGroup>

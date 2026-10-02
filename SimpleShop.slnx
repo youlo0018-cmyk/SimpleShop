@@ -2,6 +2,7 @@
   <Folder Name="/src/" />
   <Folder Name="/src/Collaboration/">
     <Project Path="src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj" />
+    <Project Path="src/Collaboration/Collaboration.Web/Collaboration.Web.csproj" />
   </Folder>
   <Folder Name="/src/CustomerService/">
     <Project Path="src/CustomerService/CustomerService.Api/CustomerService.Api.csproj" />

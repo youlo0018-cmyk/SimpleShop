@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Security;
 using CustomerService.Application.Services;
 using CustomerService.Domain.Entities;
 using CustomerService.Domain.IRepository;

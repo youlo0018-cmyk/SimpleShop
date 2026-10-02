@@ -26,6 +26,7 @@ tests/visual/diff/
 appsettings.Development.json
 *.local.json
 .env
+deploy/.env
 
 # 密钥与证书（RS256 自签证书不入库）
 deploy/certs/
@@ -39,3 +40,7 @@ deploy/certs/
 .DS_Store
 Thumbs.db
 
+# 本地运行产物
+svc.log
+logs-run.out
+logs-run.err

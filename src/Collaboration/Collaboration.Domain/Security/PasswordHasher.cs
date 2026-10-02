@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace CustomerService.Application.Services;
+namespace Collaboration.Domain.Security;
 
 /// <summary>密码哈希：PBKDF2-SHA256 + 随机盐。</summary>
 /// <remarks>

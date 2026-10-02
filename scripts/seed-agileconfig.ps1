@@ -11,13 +11,36 @@
 param(
     [string]$Server = 'http://127.0.0.1:5000',
     [string]$Env = 'DEV',
-    [string]$AdminUser = 'admin',
-    [string]$AdminPassword = 'Simpleshop@2026',
-    [string]$AppSecret = 'simpleshop_app_secret_dev',
+    [string]$AdminUser = '',
+    [string]$AdminPassword = '',
+    [string]$AppSecret = '',
     [string[]]$Service
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 凭据不在脚本里留默认值，改为从环境变量或 deploy/.env 读取。
+# 理由：脚本会进 git，写死配置中心管理密码等于把后门入库。deploy/.env 已在 .gitignore 中。
+$envFile = Join-Path $PSScriptRoot '..\deploy\.env'
+if (Test-Path $envFile) {
+    Get-Content -LiteralPath $envFile -Encoding UTF8 | ForEach-Object {
+        if ($_ -match '^\s*([^#=]+?)\s*=\s*(.*)$') {
+            $k = $Matches[1].Trim()
+            $v = $Matches[2].Trim().Trim('"').Trim("'")
+            if (-not [Environment]::GetEnvironmentVariable($k)) {
+                [Environment]::SetEnvironmentVariable($k, $v)
+            }
+        }
+    }
+}
+
+if (-not $AdminUser) { $AdminUser = $env:AGILECONFIG_ADMIN_USER }
+if (-not $AdminPassword) { $AdminPassword = $env:AGILECONFIG_ADMIN_PASSWORD }
+if (-not $AppSecret) { $AppSecret = $env:AGILECONFIG_APP_SECRET }
+
+if (-not $AdminUser -or -not $AdminPassword -or -not $AppSecret) {
+    throw '缺少凭据。请复制 deploy/.env.example 为 deploy/.env 填入真实值（该文件不入库），或设置环境变量 AGILECONFIG_ADMIN_USER / AGILECONFIG_ADMIN_PASSWORD / AGILECONFIG_APP_SECRET，也可用 -AdminUser / -AdminPassword / -AppSecret 参数传入。'
+}
 
 function Write-Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 

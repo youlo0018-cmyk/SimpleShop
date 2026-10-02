@@ -229,6 +229,32 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：补齐三项欠账 + 落地全局异常中间件与 API 回归
+
+- **① PasswordHasher 下沉到 Collaboration**
+  - 从 `CustomerService.Application/Services` 移到 `Collaboration.Domain/Security`，前后台账号共用同一份实现，
+    「都要加盐」成为结构上保证而非靠人记。
+  - 新增 8 条单元测试（含「同一密码两次哈希不同」直接证明随机盐）：**单元测试 22/22 通过**。
+- **② 凭据外移**
+  - `scripts/seed-agileconfig.ps1` 不再有硬编码默认值，改为读环境变量或 `deploy/.env`（已 gitignore）。
+  - 新增 `deploy/.env.example`。
+  - 已确认管理密码 `Simpleshop@2026` **不再出现在任何被跟踪文件里**（`git grep` 为空）。
+  - 说明：`appsettings.json` 里的 `AppSecret` 保留——它是**只读应用凭据**且是 bootstrap 机制本身，
+    与能写配置中心的管理密码性质不同。
+- **③ 回归用例**：`tests/e2e/api-regression.ps1`，15 条，覆盖注册、登录、参数校验、
+  以及 **4 条标红的审计与安全回归**（不存在的账号必须失败、错误提示不泄露账号存在性、
+  雪花 Id 与创建时间必须落库、密码不明文且随机盐）。
+  **实测 15/15 通过。**
+- **补上 CODING_STANDARD 3.3 一直缺失的全局异常中间件**
+  - 新增 `src/Collaboration/Collaboration.Web`（普通 Sdk + FrameworkReference，保持 Domain 无框架依赖）。
+  - `GlobalExceptionMiddleware`：`ValidationException` → 400 + 字段级 errors；
+    其他未处理异常 → 500 + 通用消息，**详细信息只写日志不回前端**（堆栈与连接串属信息泄露）。
+  - 之前校验失败会裸奔成 500，现在正确返回 400。
+- **踩坑记录**：`dotnet test` **只构建测试项目及其依赖，不会重建 `CustomerService.Api`**，
+  导致服务跑的是加中间件之前的旧二进制，误判「中间件没生效」。验证任何后端改动前必须先跑 `scripts/build.ps1`。
+- 另有两处回归脚本自身的手机号位数错误（13 位 / 10 位），已修正为 11 位。
+- **下一步**：S1 剩余的 UserService / PermissionService / AuthService / ToolService。
+
 ### 2026-10-02（实现阶段）：修复 P0 级过滤缺陷，CustomerService 全链路验证通过
 
 - **缺陷（上一提交遗留，P0 级）**：`Aop.ParseExpression` 的 `Result` 是**替换**整个 WHERE 而非追加，

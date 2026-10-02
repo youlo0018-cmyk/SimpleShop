@@ -1,10 +1,12 @@
 using System.Linq.Expressions;
+using Collaboration.Domain.Context;
 using Collaboration.Domain.Entities;
+using Collaboration.Domain.Infrastructure;
 using FreeSql;
 
 namespace Collaboration.Domain.Repository;
 
-/// <summary>通用仓储实现（FreeSql）。软删与租户条件不在这里写，由 AOP 统一注入（DATA_SPEC 3.2）。</summary>
+/// <summary>通用仓储实现（FreeSql）。查询过滤不在这里写，由 GlobalFilter 统一注册（DATA_SPEC 3.2.1）。</summary>
 public abstract class CrudRepository<T> : ICrudRepository<T> where T : EntityBase, new()
 {
     /// <summary>FreeSql 实例，由 Infrastructure 层注入。</summary>

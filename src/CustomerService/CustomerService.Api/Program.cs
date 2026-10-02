@@ -1,4 +1,5 @@
 using Collaboration.Domain.Configuration;
+using Collaboration.Web;
 using Collaboration.Domain.Infrastructure;
 using CustomerService.Api;
 using CustomerService.Infrastructure;
@@ -46,6 +47,7 @@ builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
 var app = builder.Build();
+app.UseAppExceptionHandling();
 app.MapHealthChecks("/health");
 app.MapControllers();
 app.Run();
