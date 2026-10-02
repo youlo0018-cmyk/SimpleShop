@@ -65,5 +65,13 @@
        "DownstreamScheme": "http",
        "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5058 } ]
      },
+    {
+      "//": "品牌。与分类同一个下游服务（ProductService 5058）。",
+      "UpstreamPathTemplate": "/gateway/brands/{everything}",
+      "UpstreamHttpMethod": [ "GET", "POST", "PUT", "DELETE" ],
+      "DownstreamPathTemplate": "/brands/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [ { "Host": "127.0.0.1", "Port": 5058 } ]
+    },
   ]
 }

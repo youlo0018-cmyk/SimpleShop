@@ -1,8 +1,8 @@
 using Collaboration.Domain.MediatR;
 using FluentValidation;
 using MediatR;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using ProductService.Application.Features.Brand;
 using ProductService.Application.Features.Category;
 using ProductService.Infrastructure;
 
@@ -26,6 +26,7 @@ public static class ApiServiceCollectionExtensions
 
         // 嵌套静态类里的校验器 AddValidatorsFromAssembly 扫不到，显式注册
         CategoryValidators.AddCategoryValidators(services);
+        BrandValidators.AddBrandValidators(services);
 
         services.AddInfrastructure();
         return services;
