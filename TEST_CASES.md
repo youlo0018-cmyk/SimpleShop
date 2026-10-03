@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 230/230） | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 233/233） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -81,7 +81,7 @@
 | `api-regression.ps1` | CustomerService 健康 / 注册 / 登录 | 15 |
 | `auth-regression.ps1` | AuthService 令牌签发与内容 | 17 |
 | `gateway-regression.ps1` | 网关鉴权、租户头剥离、RBAC | 13 |
-| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU + **前台商品只读（无需登录）** | 43 |
+| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU + **前台商品与导航只读（无需登录）** | 46 |
 | `cart-regression.ps1` | CartService 累加语义购物车 | 13 |
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
 | `marketing-regression.ps1` | MarketingService 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价 | 35 |
@@ -532,6 +532,9 @@
 | API-SHP-009 | P1 | 游客不计券 | `customerId = 0` 时只算活动价 |
 | API-SHP-010 | P0 | 前后台前缀互不泄露 | 后台能看到的待审核商品前台看不到 |
 | API-SHP-011 | P0 | 营销服务不可用时按原价回退 | 静默回退原价展示，**不是整页 500**（BUSINESS.md 11.5） |
+| API-SHP-011b | P1 | 前台分类树能看到启用中的三级分类 | 必须**递归整棵树**取 Id，只看顶层会漏掉三级分类 |
+| API-SHP-011b2 | P0 | 停用后立刻从前台分类树消失 | 前台接口**不提供** `includeDisabled` 参数（后台的 `/categories/Tree` 有），所以停用后没有任何办法再看到它 |
+| API-SHP-011c | P1 | 前台品牌列表可匿名访问 | 不需要登录 |
 
 ### 2.6 PNT / EVL 积分、评价
 

@@ -195,6 +195,8 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         $cfg['Gateway:AnonymousPaths:2'] = '/gateway/auth/Token'
         $cfg['Gateway:AnonymousPaths:3'] = '/gateway/shop/products/List'
         $cfg['Gateway:AnonymousPaths:4'] = '/gateway/shop/products/Detail'
+        $cfg['Gateway:AnonymousPaths:5'] = '/gateway/shop/catalog/CategoryTree'
+        $cfg['Gateway:AnonymousPaths:6'] = '/gateway/shop/catalog/Brands'
     }
     if ($name -eq 'AuthService') {
         # 后台令牌服务配置（BUSINESS 4.1 / DATA_SPEC 1.5）

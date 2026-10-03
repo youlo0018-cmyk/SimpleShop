@@ -169,7 +169,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Permission | 5022 | ✅ 权限树（4 层 / 106 节点）、权限点增删改、角色 CRUD、内置角色种子 |
 | Tool | 5080 | ✅ 统一文件上传（三步校验）+ 本地回源 |
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
-| Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU + **前台只读（匿名、到手价）** 完成；Elasticsearch + IK 分词搜索未开始） |
+| Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU + **前台只读（匿名商品 / 分类树 / 品牌、到手价）** 完成；Elasticsearch + IK 分词搜索未开始） |
 | Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
 | Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 + 按订单发放（实付每满 1 元 1 积分） |
 | Marketing | 5072 | ✅ 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价试算 FinalPrice。限时抢购（活动类型 4）未开始 |
@@ -186,11 +186,11 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
 | `dotnet test`（单元测试） | **220/220** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **230/230**，9 个脚本全绿 |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **233/233**，9 个脚本全绿 |
 | └ `api-regression.ps1` | 15/15 |
 | └ `auth-regression.ps1` | 17/17 |
 | └ `gateway-regression.ps1` | 13/13 |
-| └ `product-regression.ps1` | 43/43 |
+| └ `product-regression.ps1` | 46/46 |
 | └ `cart-regression.ps1` | 13/13 |
 | └ `inventory-regression.ps1` | 21/21 |
 | └ `marketing-regression.ps1` | 35/35 |
@@ -316,12 +316,12 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 #### 验证
 
-单元测试 **220/220**，端到端 **230/230**（product 43/43，新增 12 条 SHP 用例），
+单元测试 **220/220**，端到端 **233/233**（product 46/46，新增 15 条 SHP 用例），
 全量构建 **0 warning 0 error**，13 个进程在跑。
 
 #### 还没做（诚实清单）
 
-- **前台分类树 / 品牌列表的只读接口**：商品有了，但分类树与品牌仍只有后台接口
+
 - **限时抢购**：活动类型 4 与 `session_id` 已预留，场次模型与下单链路未做
 - **Elasticsearch + IK 分词搜索**：ProductService 未做
 - **前台接口未按平台隔离**：`QueryShopProducts` 目前按 `platformId = 0`（不限）向营销服务取活动，

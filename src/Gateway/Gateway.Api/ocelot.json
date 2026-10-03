@@ -264,6 +264,24 @@
       ]
     },
     {
+      "//说明": "前台分类树与品牌。同样独立前缀，且不带「是否含停用」参数——前台不该有这个开关。",
+      "UpstreamPathTemplate": "/gateway/shop/catalog/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/shop/catalog/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5058
+        }
+      ]
+    },
+    {
       "//说明": "C 端订单。与后台刻意分成两个上游前缀：后台订单在 /admin/orders 下，这样权限点能只绑后台那几个操作，不会把「发货」「退款」也开放给小程序。",
       "UpstreamPathTemplate": "/gateway/orders/{everything}",
       "UpstreamHttpMethod": [

@@ -561,6 +561,48 @@ Invoke-Case 'API-SHP-011' '🔴 营销服务不可用时按原价回退，而不
     return $r.success -and $item.finalPrice -eq $item.originalPrice -and $item.hasDiscount -eq $false
 }
 
+function Get-ShopCategoryIds {
+    # 递归收集整棵树的 Id。只看顶层会漏掉三级分类——
+    # 本节建的分类挂在第三级，而前台返回的树是「一级节点 + children」的嵌套结构。
+    $tree = Invoke-RestMethod "$Gateway/gateway/shop/catalog/CategoryTree" -TimeoutSec 30
+    $ids = New-Object System.Collections.Generic.List[string]
+
+    function Walk($nodes) {
+        foreach ($n in @($nodes)) {
+            $ids.Add([string]$n.id)
+            if ($n.children) { Walk $n.children }
+        }
+    }
+
+    Walk $tree.data
+    return , $ids
+}
+
+Invoke-Case 'API-SHP-011b' '🔴 前台分类树能看到启用中的三级分类（递归整棵树）' {
+    $ids = Get-ShopCategoryIds
+    return $ids.Contains([string]$script:shopCategoryIds[2])
+}
+
+Invoke-Case 'API-SHP-011b2' '🔴 停用后立刻从前台分类树消失，且接口没有「含停用」开关' {
+    $l3 = $script:shopCategoryIds[2]
+
+    # 停用
+    Invoke-RestMethod "$Gateway/gateway/categories/Update" -Method Post -Headers $script:headers `
+        -Body (@{ categoryId = [long]$l3; categoryName = "前台$($script:suffix)"; sortOrder = 0; status = 2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $after = Get-ShopCategoryIds
+
+    # 前台接口不接受 includeDisabled 参数（对比后台的 /categories/Tree 有），
+    # 所以停用后没有任何办法再看到它
+    return -not $after.Contains([string]$l3)
+}
+
+Invoke-Case 'API-SHP-011c' '前台品牌列表可匿名访问（不需要登录）' {
+    $b = Invoke-RestMethod "$Gateway/gateway/shop/catalog/Brands" -TimeoutSec 30
+    return $b.success -and $b.data -is [array]
+}
+
 Invoke-Case 'API-SHP-012' '清理：停用活动 → 删商品 → 删分类' {
     if ($script:shopActivityId -gt 0) {
         Invoke-RestMethod "$Marketing/marketing/activities/Delete" -Method Post `
