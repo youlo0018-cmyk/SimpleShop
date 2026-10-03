@@ -9,11 +9,12 @@ public static class InfrastructureServiceCollectionExtensions
 {
     /// <summary>注册仓储。</summary>
     /// <param name="services">服务集合。</param>
-    /// <returns>原集合。</returns>
+    /// <returns>原集合，便于链式调用。</returns>
     public static IServiceCollection AddInfrastructure(this IServiceCollection services)
     {
         services.AddScoped<ICategoryRepository, CategoryRepository>();
         services.AddScoped<IBrandRepository, BrandRepository>();
+        services.AddScoped<IProductRepository, ProductRepository>();
         return services;
     }
 }

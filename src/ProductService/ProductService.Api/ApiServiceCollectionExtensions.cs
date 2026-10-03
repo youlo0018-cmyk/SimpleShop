@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using ProductService.Application.Features.Brand;
 using ProductService.Application.Features.Category;
+using ProductService.Application.Features.Product;
 using ProductService.Infrastructure;
 
 namespace ProductService.Api;
@@ -27,6 +28,7 @@ public static class ApiServiceCollectionExtensions
         // 嵌套静态类里的校验器 AddValidatorsFromAssembly 扫不到，显式注册
         CategoryValidators.AddCategoryValidators(services);
         BrandValidators.AddBrandValidators(services);
+        ProductValidators.AddProductValidators(services);
 
         services.AddInfrastructure();
         return services;

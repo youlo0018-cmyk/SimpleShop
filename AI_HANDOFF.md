@@ -169,9 +169,9 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Permission | 5022 | ✅ 权限树（4 层 / 106 节点）、权限点增删改、角色 CRUD、内置角色种子 |
 | Tool | 5080 | ✅ 统一文件上传（三步校验）+ 本地回源 |
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
-| Product | 5058 | 🔄 进行中（分类域完成：三级约束 / 同级唯一 / 有子项禁删；品牌与 SPU/SKU 未开始） |\n| Cart / Inventory / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU 完成；Elasticsearch 搜索、前台只读接口未开始） |\n| Cart / Inventory / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
 
-**S1（一期·地基）已完成并通过端到端验证。** S2 已开工：ProductService 分类域完成。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
+**S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService 的分类 / 品牌 / 商品域完成。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
 
 **验证现状**
 
@@ -180,7 +180,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | `dotnet test` | 64/64 |
 | `tests/e2e/api-regression.ps1` | 15/15 |
 | `tests/e2e/auth-regression.ps1` | 17/17 |
-| `tests/e2e/gateway-regression.ps1` | 13/13 |\n| `tests/e2e/product-regression.ps1` | 11/11 |
+| `tests/e2e/gateway-regression.ps1` | 13/13 |\n| `tests/e2e/product-regression.ps1` | 31/31 |
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -252,6 +252,52 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S2 — ProductService 商品域（SPU / 规格 / SKU）
+
+分类与品牌之上把商品本体做通了：一个 Save 入口同时管新建与编辑，
+规格与 SKU 都按「完整列表 + 按编码 Upsert」处理——前端提交它看到的全量 SKU，
+不必自己维护哪条是新增、哪条被删了。
+
+**输入用规格值「名称」而不是 Id，这是对文档的有意偏离**
+
+DATA_SPEC 5.7.2 写的是 `Skus[].SpecValueIds`。但新建商品时规格值还没落库，
+Id 根本不存在，前端拿不到；编辑时前端手里也是从编辑页读到的名称。
+所以入参改成按 `Specs` 顺序对齐的 `SpecValues`（字符串数组），服务端按名称解析；
+**响应侧仍然返回解析后的 SpecValueIds**，两边都有。少一层「先建规格再回填」的往返，
+也不会出现前端拿着过期 Id 提交。已在 `SaveProductCommand` 的注释里写明理由。
+
+**一个真 bug：SKU 链接的复合主键撞车**
+
+新建商品时 SKU 还没有 Id（雪花 Id 是 insert 时才生成），
+而 `sku_spec_value` 的链接是调用方提前拼好的，于是四个 SKU 的链接全是 `(0, 红值)`，
+插入直接报 `duplicate key value violates unique constraint "pk_sku_spec_value"`。
+修法不是「先生成 Id 再传进去」（那要改调用顺序、容易再退化），
+而是把接口改成 **`SkuCode → IReadOnlyList<SkuSpecLink>`**，由仓储在拿到真实 Id 后自己补链接。
+理由写在 `SkuSpecLink` 的注释里。
+
+**规格为什么整棵重建而不是增量 diff**
+
+SKU 的 `SpecValueIds` 指向具体的规格值行。值行一旦被复用 / 重建，
+历史 SKU 的关联就会指向不该指的东西。所以先软删旧规格再插新的，
+宁可多写一次也不留悬空关联。
+
+**审核状态机**
+
+- 新建固定 `10 待审核` + 默认下架
+- 编辑**不重置**审核状态（驳回后改完仍是 30，必须显式 `SubmitAudit` 才回到 10）
+  —— 否则运营改到一半就自动排队，审核员会看到一堆没改完就送审的商品
+- 已审核通过的商品不允许重复审核
+- 上架前置条件是审核已通过；**下架没有前置条件**（商品有问题时必须能立刻下架）
+
+**两条测试失败其实是代码对、测试错，值得记一笔**
+
+- 价格区间用例：我构造数据时把**停用的 SKU 设成了最贵那个**，于是期望值写错了。
+  实现正确地排除了停用 SKU（这正是要证明的点）。
+- 审核状态机用例：想在一个**已通过**的商品上制造「驳回」状态，但「已通过不允许重复审核」
+  这条规则把它挡住了。规则是对的，测试顺序错了 —— 改成一个全新商品来走驳回流程。
+
+**验证**：`tests/e2e/product-regression.ps1` 31/31（含三级分类约束、SKU 规格完整性、
+价格倒挂、Upsert 语义、审核状态机、价格区间排除停用 SKU）。
 ### 2026-10-03（实现阶段）：S2 开工 — ProductService 分类域（5058）
 
 S2 的第一块。四层骨架 + 6 张表（category / brand / product / product_spec /
