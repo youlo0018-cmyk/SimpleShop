@@ -133,6 +133,7 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     $cfg['Services:UserServiceBaseUrl']        = $serviceUrls['UserService']
     $cfg['Services:AuthServiceBaseUrl']        = $serviceUrls['AuthService']
     $cfg['Services:InventoryServiceBaseUrl']   = $serviceUrls['InventoryService']
+    $cfg['Services:ProductServiceBaseUrl']    = $serviceUrls['ProductService']
     if ($name -eq 'CustomerService') {
         $cfg['Jwt:Issuer']       = 'simpleshop'
         $cfg['Jwt:Audience']     = 'simpleshop-customer'
@@ -284,6 +285,7 @@ foreach ($name in $serviceMap.Keys) {
 }
 
 Write-Step '完成'
+
 
 
 

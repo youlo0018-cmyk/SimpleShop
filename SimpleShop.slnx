@@ -6,6 +6,12 @@
     <Project Path="src/AuthService/AuthService.Domain/AuthService.Domain.csproj" />
     <Project Path="src/AuthService/AuthService.Infrastructure/AuthService.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/CartService/">
+    <Project Path="src/CartService/CartService.Api/CartService.Api.csproj" />
+    <Project Path="src/CartService/CartService.Application/CartService.Application.csproj" />
+    <Project Path="src/CartService/CartService.Domain/CartService.Domain.csproj" />
+    <Project Path="src/CartService/CartService.Infrastructure/CartService.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Collaboration/">
     <Project Path="src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj" />
     <Project Path="src/Collaboration/Collaboration.Web/Collaboration.Web.csproj" />

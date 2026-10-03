@@ -227,6 +227,23 @@
           "Port": 5072
         }
       ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/carts/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/carts/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5060
+        }
+      ]
     }
   ]
 }

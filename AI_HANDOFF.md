@@ -172,7 +172,8 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU 完成；Elasticsearch 搜索、前台只读接口未开始） |
 | Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
 | Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 |
-| Marketing | 5072 | 🔄 进行中（券全生命周期完成；满减/满折/满赠「活动」与限时抢购未开始） |\n| Cart / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Marketing | 5072 | 🔄 进行中（券全生命周期完成；满减/满折/满赠「活动」与限时抢购未开始） |
+| Cart | 5060 | ✅ 累加语义购物车 + SKU 快照 + 上限 99 + 勾选状态 |\n| Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
 
 **S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService、InventoryService、PointService 完成；9 个服务在跑。下一步 Marketing，然后才是 OrderService。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
 
@@ -187,6 +188,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | `tests/e2e/inventory-regression.ps1` | 21/21 |
 | `tests/e2e/point-regression.ps1` | 23/23 |
 | `tests/e2e/marketing-regression.ps1` | 18/18 |
+| `tests/e2e/cart-regression.ps1` | 13/13 |
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -258,6 +260,39 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S2 — CartService 落地（5060），S2 收官
+
+购物车不复杂，但它有一条**极易写反**的语义，是 TEST_CASES 里唯一的 P0：
+
+> `/carts/Add` 是**累加**语义，调用方传的是增量（加购传购买数量，购物车加减传 ±1），
+> **不要传「目标数量」**。
+
+写成 `quantity = delta` 的话，连续加购 1、1、1 得到的是 1、1、1 —— 或者反过来
+把「目标数量 3」当增量传三次变成 9。症状很隐蔽：数量看着合理，就是多了几倍。
+
+回归用例 API-CRT-001 专门锁这条，另外覆盖：
+
+| 用例 | 规则 |
+|---|---|
+| API-CRT-002 | 小计 = 单价 × 数量，两位小数（25.50 × 4 = 102.00） |
+| API-CRT-004 | 传 -1 是减 1（购物车加减号与加购走同一入口） |
+| API-CRT-005 | 减到 0 时**移除该行**，购物车不该存在 0 件的条目 |
+| API-CRT-006 | 超过 99 被拒 |
+| API-CRT-007 | 每次加购刷新快照（商品名 / 规格 / 价格 / 图片） |
+| API-CRT-010 | 改别人的购物车行无效（所有读写都按 customerId 过滤） |
+
+**快照必须每次加购都刷新**：商品改名或改价后，购物车要立刻跟上，
+否则结算页显示的价格和实际下单的不一致——这是最容易被当成「缓存问题」而漏掉的 bug。
+
+**ProductService 补了 `GET /internal/products/skus`**：购物车与订单都需要 SKU 快照信息
+（商品名 / 规格文本 / 图片 / 价格）。让它们各写一份查商品的代码不如给一个统一内部查询，
+快照口径只有一处，以后加字段不用改三个服务。
+
+**S2 现状**：Product（分类 / 品牌 / 商品 / 规格 / SKU）、Inventory、
+Point、Marketing（券）、Cart 全部落地，**11 个服务在跑**，
+下单链路 ①占券 ②锁积分 ③锁库存 的三个依赖都已就绪且各自可测。
+
+**验证**：cart-regression 13/13；全量 单测 86/86 + e2e 151/151 = 237 项断言。
 ### 2026-10-03（实现阶段）：S2 — MarketingService 券全生命周期（5072）
 
 订单链路的 ① 占券落地。这轮把「券」这条线从模板一直走到核销。

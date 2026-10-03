@@ -46,7 +46,7 @@
     {
       "name": "CartService",
       "port": 5060,
-      "implemented": false,
+      "implemented": true,
       "project": "src/CartService/CartService.Api/CartService.Api.csproj"
     },
     {
