@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 198/198） | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 201/201） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -86,7 +86,7 @@
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
 | `marketing-regression.ps1` | MarketingService 券全生命周期 | 18 |
 | `point-regression.ps1` | PointService 积分冻结 / 消耗 / 过期 / 签到 | 23 |
-| `order-regression.ps1` | OrderService 下单补偿链路、状态机、模拟支付、自提取货码、完成发积分 | 47 |
+| `order-regression.ps1` | OrderService 下单补偿链路、状态机、模拟支付、自提取货码、完成发积分、支付超时关单 | 50 |
 
 ### 0.6 视觉回归的稳定性前提
 
@@ -428,7 +428,9 @@
 | API-TRD-012 | P0 | 模拟支付失败 | 断言订单**保持 10**，可重新支付 |
 | API-TRD-013 | P0 | 支付幂等 | 重复确认；断言**不重复发事件** |
 | API-TRD-014 | P0 | 支付金额服务端反查 | 传伪造金额；断言被纠正为订单实付（**PaymentService 未做**，随该服务一并落地） |
-| API-TRD-015 | P0 | 支付超时关单 | 断言订单转 91、库存释放、积分解冻、券回退（**依赖 Scheduled 定时任务，尚未落地**） |
+| API-TRD-015 | P0 | 支付超时关单 | 断言订单转 91、库存释放、积分解冻、券回退。回归：把 `created_at` 往前拨 40 分钟后调 `POST /internal/orders/close-timeout`，断言状态 91 且库存 locked−2 / available+2（API-ORD-110） |
+| API-TRD-015b | P0 | 关单幂等 | 同一张单重复关不产生第二次占用变更；状态不是 10 的单只报告不改（API-ORD-111） |
+| API-TRD-015c | P0 | 没超时的单不得误关 | 新下的单（创建时间就在当下）在阈值 30 分钟内不得被扫（API-ORD-112）。这条专门挡「阈值算成 0 分钟，一上线把所有待支付单全关掉」 |
 | API-TRD-017 | P0 | 库存不足响应码必须是 4001 | 断言 `code = 4001 StockNotEnough` 而不是笼统 4000，前端才能提示「库存不足」而不是「操作失败请重试」 |
 | API-TRD-018 | P0 | 库存记录不存在不能报成库存不足 | 未初始化库存的 SKU → 回业务错误（数据问题），**不能**伪装成 4001 把问题盖住 |
 | API-TRD-019 | P0 | 取消先改状态再退占用 | 两个并发取消只有一个生效；退占用失败**不能**把「已取消」改成「取消失败」 |

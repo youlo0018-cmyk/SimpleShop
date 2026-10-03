@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ScheduledService</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: 缺 XML 注释的公开成员。100% 注释是强制规范 -->
+    <WarningsAsErrors>CS1591</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 只引用 Collaboration：定时任务不含业务规则，它只负责「什么时候做」，
+         做什么全部由被调用的服务自己判断（BUSINESS.md 7.3）。
+         引用 OrderService 之类会让「定时任务直接改别人的库/别人的规则」成为可能。 -->
+    <ProjectReference Include="..\..\Collaboration\Collaboration.Domain\Collaboration.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 与全项目一致：Worker SDK 只给 Hosting，不给 Configuration / HttpClient -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+  </ItemGroup>
+</Project>

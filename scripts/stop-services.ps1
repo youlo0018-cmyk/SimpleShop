@@ -36,6 +36,27 @@ function Get-ListeningPids([int]$port) {
 
 foreach ($s in $targets) {
     $port = [int]$s.port
+
+    # ---------- 无端口进程分支：只能按 pid 文件结束 ----------
+    if ($port -le 0) {
+        $pidFile0 = Join-Path (Join-Path $root 'logs\runtime') "$($s.name).pid"
+        if (-not (Test-Path $pidFile0)) {
+            Write-Host ("==> {0,-22} 无端口，且没有 pid 文件" -f $s.name) -ForegroundColor DarkGray
+            continue
+        }
+        $raw0 = (Get-Content $pidFile0 -Raw -ErrorAction SilentlyContinue)
+        $procId0 = if ([string]::IsNullOrWhiteSpace($raw0)) { 0 } else { [int]$raw0.Trim() }
+        $proc0 = if ($procId0 -gt 0) { Get-Process -Id $procId0 -ErrorAction SilentlyContinue } else { $null }
+        if ($null -eq $proc0) {
+            Write-Host ("==> {0,-22} 无端口，进程已退出" -f $s.name) -ForegroundColor DarkGray
+            continue
+        }
+        Write-Host ("==> 结束 {0,-22} 无端口 pid {1} ({2})" -f $s.name, $procId0, $proc0.ProcessName) -ForegroundColor Yellow
+        try { Stop-Process -Id $procId0 -Force:$Force -ErrorAction Stop }
+        catch { Write-Host "    结束失败: $($_.Exception.Message)" -ForegroundColor Red }
+        continue
+    }
+
     $pids = @(Get-ListeningPids $port)
     if ($pids.Count -eq 0) {
         Write-Host ("==> {0,-22} 端口 {1} 未被占用" -f $s.name, $port) -ForegroundColor DarkGray

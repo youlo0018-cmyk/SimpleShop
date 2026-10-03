@@ -92,6 +92,13 @@
       "project": "src/EvaluateService/EvaluateService.Api/EvaluateService.Api.csproj"
     },
     {
+      "//说明": "定时任务进程，没有端口也没有 /health。端口写 0，启停脚本改用 pid 文件判断存活。",
+      "name": "ScheduledService",
+      "port": 0,
+      "implemented": true,
+      "project": "src/ScheduledService/ScheduledService/ScheduledService.csproj"
+    },
+    {
       "name": "LogService",
       "port": 5088,
       "implemented": false,

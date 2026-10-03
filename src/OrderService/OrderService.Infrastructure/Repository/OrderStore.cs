@@ -47,6 +47,15 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
             .ToListAsync(ct);
 
     /// <inheritdoc />
+    public async Task<List<Order>> FindTimeoutCandidatesAsync(
+        DateTime deadlineUtc, int limit, CancellationToken ct = default)
+        => await _db.Select<Order>()
+            .Where(a => a.Status == OrderStatuses.PendingPayment && a.CreatedAt <= deadlineUtc)
+            .OrderBy(a => a.CreatedAt).OrderBy(a => a.Id)
+            .Limit(Math.Max(1, limit))
+            .ToListAsync(ct);
+
+    /// <inheritdoc />
     public async Task<(List<Order> Orders, long Total)> ListByCustomerAsync(
         long customerId, int status, int page, int pageSize, CancellationToken ct = default)
     {

@@ -49,9 +49,61 @@ function Test-Healthy([int]$port) {
     } catch { return $false }
 }
 
+# 无端口进程（定时任务）只能用 pid 文件判断存活：
+# 它们不监听端口，也没有 /health 可探活，端口表对它们是空的。
+function Test-AliveFromPidFile([string]$pidFile) {
+    if (-not (Test-Path $pidFile)) { return $false }
+    $raw = (Get-Content $pidFile -Raw -ErrorAction SilentlyContinue)
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
+    $proc = Get-Process -Id ([int]$raw.Trim()) -ErrorAction SilentlyContinue
+    return ($null -ne $proc)
+}
+
 $started = 0
 foreach ($s in $targets) {
     $port = [int]$s.port
+
+    # ---------- 无端口进程分支 ----------
+    if ($port -le 0) {
+        $logDir0 = $root
+        $proj0 = Join-Path $logDir0 $s.project
+        if (-not (Test-Path $proj0)) { throw "项目不存在: $proj0" }
+        $projDir0 = Split-Path -Parent $proj0
+        $asm0 = [IO.Path]::GetFileNameWithoutExtension($proj0)
+        $dll0 = Join-Path $projDir0 "bin\Debug\net10.0\$asm0.dll"
+        if (-not (Test-Path $dll0)) { throw "找不到编译产物 $dll0，请先运行 ./scripts/build.ps1" }
+
+        $log0 = Join-Path (Join-Path $root 'logs\runtime') "$($s.name).log"
+        $err0 = Join-Path (Join-Path $root 'logs\runtime') "$($s.name).err.log"
+        $pidFile0 = Join-Path (Join-Path $root 'logs\runtime') "$($s.name).pid"
+
+        if (Test-AliveFromPidFile $pidFile0) {
+            Write-Host ("==> {0,-22} 无端口，已在运行，跳过" -f $s.name) -ForegroundColor DarkGray
+            continue
+        }
+
+        Write-Host ("==> 启动 {0,-22}（无端口后台进程）" -f $s.name) -ForegroundColor Cyan
+        $env:ASPNETCORE_ENVIRONMENT = 'Development'
+        $proc0 = Start-Process -FilePath 'dotnet' `
+            -ArgumentList @($dll0) `
+            -WorkingDirectory $projDir0 `
+            -RedirectStandardOutput $log0 -RedirectStandardError $err0 `
+            -WindowStyle Hidden -PassThru
+        [System.IO.File]::WriteAllText($pidFile0, [string]$proc0.Id)
+
+        # 没有 /health 可探活，只能看「启动后几秒内有没有立刻崩」
+        Start-Sleep -Seconds 4
+        if ($proc0.HasExited) {
+            $tail0 = if (Test-Path $err0) { (Get-Content $err0 -Tail 5) -join ' | ' } else { '(无日志)' }
+            Write-Host ("    启动失败 (pid {0} 退出码 {1})" -f $proc0.Id, $proc0.ExitCode) -ForegroundColor Red
+            Write-Host "    错误日志: $tail0" -ForegroundColor Red
+        } else {
+            Write-Host ("    已启动 (pid {0})" -f $proc0.Id) -ForegroundColor Green
+            $started++
+        }
+        continue
+    }
+
     if (Test-Healthy $port) {
         Write-Host ("==> {0,-22} 端口 {1} 已在运行，跳过" -f $s.name, $port) -ForegroundColor DarkGray
         continue

@@ -584,6 +584,50 @@ Invoke-Case 'API-ORD-092' '实物订单不能用虚拟发货' {
     return (-not $r.success) -and $r.message -match '实物商品'
 }
 
+Write-Host "`n=== ORD 支付超时关单 ===" -ForegroundColor Cyan
+
+Invoke-Case 'API-ORD-110' '🔴 超时未支付的订单被关掉，三项占用全部释放' {
+    $r = OrderPost 'Create' (New-OrderBody 'timeout')
+    $no = $r.data.orderNo
+    $before = Get-Stock $script:skuIds[0]
+
+    # 把创建时间往前拨 40 分钟。阈值是 30 分钟，直接改库比等 30 分钟现实得多——
+    # 这也是仓库里其它回归脚本处理时间相关规则的老办法。
+    #
+    # 必须写 `now() AT TIME ZONE 'UTC'`：容器会话时区是 Asia/Shanghai，
+    # 直接写 `now() - interval` 得到的是 timestamptz，赋给 timestamp 列时会按会话时区折算，
+    # 结果是把时间「往前拨」变成了「往前推 8 小时」——单看 SQL 完全看不出问题。
+    docker exec simpleshop-postgres psql -U postgres -d simpleshoporder -q -c `
+        "UPDATE ""order"" SET created_at = (now() AT TIME ZONE 'UTC') - interval '40 minutes' WHERE order_no = '$no';" | Out-Null
+
+    $close = Invoke-Api "$Order/internal/orders/close-timeout" 'Post' @{ orderNo = ''; limit = 0 }
+    $after = Get-Stock $script:skuIds[0]
+    $d = Get-Order $no
+
+    Write-Host ("        关单结果：扫描 {0} 关单 {1}" -f $close.data.scanned, $close.data.closed) -ForegroundColor DarkGray
+    return $r.success -and $close.success -and $d.status -eq 91 `
+        -and $after.locked -eq ($before.locked - 2) -and $after.available -eq ($before.available + 2)
+}
+
+Invoke-Case 'API-ORD-111' '🔴 关过的单不会被重复关（幂等）' {
+    $d = Get-Order $script:basicOrderNo
+    $close = Invoke-Api "$Order/internal/orders/close-timeout" 'Post' @{ orderNo = $script:basicOrderNo; limit = 0 }
+
+    # 手工指定单号时状态不对就只报告、不改状态。
+    # 定时任务扫全量时更安全：查询本身就带 status = 10 的条件。
+    return $close.success -and $d.status -eq 50
+}
+
+Invoke-Case 'API-ORD-112' '没超时的单不会被误关' {
+    $list = Invoke-RestMethod "$Order/orders/List?customerId=$($script:customerId)&status=10&pageSize=50" -TimeoutSec 30
+    Invoke-Api "$Order/internal/orders/close-timeout" 'Post' @{ orderNo = ''; limit = 0 } | Out-Null
+    $after = Invoke-RestMethod "$Order/orders/List?customerId=$($script:customerId)&status=10&pageSize=50" -TimeoutSec 30
+
+    # 刚下的单创建时间就在当下，阈值 30 分钟内不该被扫。
+    # 这条专门挡「阈值算错成 0 分钟」这种一上线就把所有待支付单全关掉的错。
+    return @($list.data.items).Count -eq @($after.data.items).Count
+}
+
 Write-Host "`n=== ORD 查询与越权 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-ORD-100' '我的订单分页只返回自己的单' {

@@ -172,34 +172,19 @@ public sealed class QueryOrderDetailHandler
     }
 }
 
-/// <summary>取消订单处理器。</summary>
-/// <remarks>
-/// 取消必须<b>先改状态再退占用</b>，不是反过来：反过来会出现两个请求都读到「待支付」、
-/// 都去退了一遍库存，把别人的货也退了。改状态用条件更新，只有一个请求能成功。
-/// </remarks>
+/// <summary>取消订单处理器（C 端主动取消）。</summary>
 public sealed class CancelOrderHandler : MediatR.IRequestHandler<CancelOrderCommand, ApiResponse>
 {
     private readonly IOrderStore _store;
-    private readonly IInventoryPort _inventory;
-    private readonly IPointPort _points;
-    private readonly ICouponPort _coupons;
-    private readonly ILogger<CancelOrderHandler> _logger;
+    private readonly OrderCancellationService _cancellation;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
-    /// <param name="inventory">库存端口。</param>
-    /// <param name="points">积分端口。</param>
-    /// <param name="coupons">券端口。</param>
-    /// <param name="logger">日志器。</param>
-    public CancelOrderHandler(
-        IOrderStore store, IInventoryPort inventory, IPointPort points,
-        ICouponPort coupons, ILogger<CancelOrderHandler> logger)
+    /// <param name="cancellation">取消服务（改状态 + 退占用）。</param>
+    public CancelOrderHandler(IOrderStore store, OrderCancellationService cancellation)
     {
         _store = store;
-        _inventory = inventory;
-        _points = points;
-        _coupons = coupons;
-        _logger = logger;
+        _cancellation = cancellation;
     }
 
     /// <summary>执行取消。</summary>
@@ -208,9 +193,9 @@ public sealed class CancelOrderHandler : MediatR.IRequestHandler<CancelOrderComm
     /// <returns>成功返回空响应。</returns>
     public async Task<ApiResponse> Handle(CancelOrderCommand request, CancellationToken ct)
     {
-        var orderNo = request.OrderNo.Trim();
-        var order = await _store.FindByOrderNoAsync(orderNo, ct).ConfigureAwait(false);
+        var order = await _store.FindByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
 
+        // 订单不存在与「不是你的订单」都回 404：回 403 等于告诉别人这个订单号真实存在
         if (order is null || order.CustomerId != request.CustomerId)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "订单不存在");
@@ -223,72 +208,16 @@ public sealed class CancelOrderHandler : MediatR.IRequestHandler<CancelOrderComm
                 $"当前订单状态是「{OrderStatusMachine.NameOf(order.Status)}」，只有待支付的订单可以取消");
         }
 
-        var affected = await _store
-            .TryTransitStatusAsync(order.Id, OrderStatuses.PendingPayment, OrderStatuses.Cancelled, ct)
-            .ConfigureAwait(false);
+        var result = await _cancellation.CancelAsync(order, "客户主动取消", ct).ConfigureAwait(false);
 
-        if (affected == 0)
+        if (!result.Changed)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
 
-        await ReleaseOccupationsAsync(order, ct).ConfigureAwait(false);
-
         return ApiResponseFactory.Ok("订单已取消");
     }
-
-    /// <summary>把该单占用的库存 / 积分 / 券都退回去。失败只记日志。</summary>
-    /// <param name="order">已取消的订单。</param>
-    /// <param name="ct">取消令牌。</param>
-    /// <returns>异步任务。</returns>
-    /// <remarks>
-    /// 这一段失败<b>绝不能</b>反过来把「已取消」改成「取消失败」——
-    /// 状态已经改掉了，订单对用户就是已取消；这时再抛错会让用户以为还能付款。
-    /// 退不掉的资源交给补偿任务兜底，日志里能查到订单号。
-    /// </remarks>
-    private async Task ReleaseOccupationsAsync(Order order, CancellationToken ct)
-    {
-        var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
-
-        foreach (var item in items)
-        {
-            try
-            {
-                await _inventory.ReleaseAsync(item.SkuId, item.Quantity, $"{order.OrderNo}:{item.SkuId}", ct)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "取消订单回退库存失败：{OrderNo} SKU {SkuId}", order.OrderNo, item.SkuId);
-            }
-        }
-
-        if (order.PointsUsed > 0)
-        {
-            try
-            {
-                await _points.UnfreezeAsync(order.CustomerId, order.OrderNo, ct).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "取消订单解冻积分失败：{OrderNo}", order.OrderNo);
-            }
-        }
-
-        if (order.CouponId > 0)
-        {
-            try
-            {
-                await _coupons.ReleaseAsync(order.CustomerId, order.OrderNo, ct).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "取消订单回退券失败：{OrderNo}", order.OrderNo);
-            }
-        }
-    }
 }
-
 /// <summary>确认收货处理器。</summary>
 public sealed class ConfirmReceiptHandler : MediatR.IRequestHandler<ConfirmReceiptCommand, ApiResponse>
 {

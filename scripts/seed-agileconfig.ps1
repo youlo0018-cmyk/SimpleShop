@@ -82,6 +82,9 @@ $dbMap = @{
     'MerchantPlatformService' = 'simpleshopmerchant'
     'PointService'            = 'simpleshoppoint'
     'EvaluateService'         = 'simpleshopevaluate'
+    # 定时任务目前只调别人接口、不读写自己的库：同样留空。
+    # 将来要落「补偿重试记录」表时再改成 simpleshopscheduled。
+    'ScheduledService'        = ''
     # 网关不连数据库：留空即可，脚本会跳过写 ConnectionStrings:Default。
     # 硬塞一个连不上的连接串只会误导后来排查的人。
     'Gateway'                 = ''
@@ -146,6 +149,12 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     if ($name -eq 'OrderService') {
         $cfg['PickupCode:RsaPrivateKeyPath'] = 'D:/学习/SimpleShop-new/deploy/keys/pickup-code-private.pem'
         $cfg['PickupCode:RsaPublicKeyPath']  = 'D:/学习/SimpleShop-new/deploy/keys/pickup-code-public.pem'
+
+        # 支付超时关单（BUSINESS.md 7.3）：超时 30 分钟。
+        # 阈值放配置而不是写死：不同业务等待时长不同，线上要临时调长时改配置比发版快得多。
+        $cfg['Orders:PaymentTimeoutMinutes'] = '30'
+        $cfg['Orders:ScanBatchSize']         = '200'
+        $cfg['Orders:MaxClosePerRun']        = '500'
     }
     if ($name -eq 'CustomerService') {
         $cfg['Jwt:Issuer']       = 'simpleshop'
@@ -212,25 +221,29 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
 # ---------- Redis 库号分配：每个服务独占一个库 ----------
 # 不能所有服务共用一个库：Redis 的 key 不带服务前缀，一旦同名 key（例如 "cache:home"）
 # 出现在两个服务里就会互相覆盖，排查起来极难发现。所以这里显式一号一服务。
-# Redis 默认 16 个库（0-15），14 个服务用 1..14，留 0 给运维/调试。
+# Redis 默认 16 个库（0-15），正好装下：15 个真正用 Redis 的服务占 1~15，
+# 0 号给目前不连 Redis 的网关。若后续再加服务，把 deploy/docker-compose 里
+# redis 的 --databases 调到 32，否则这份表里的号会开始互相撞车。
 $redisDbMap = [ordered]@{
     'CustomerService'         = 1
-    'PermissionService'       = 2
-    'UserService'             = 3
-    'ToolService'             = 4
-    'AuthService'             = 5
-    'ProductService'          = 6
-    'CartService'             = 7
-    'InventoryService'        = 8
-    'OrderService'            = 9
-    'PaymentService'          = 10
-    'MarketingService'        = 11
-    'MerchantPlatformService' = 12
-    'PointService'            = 13
-    'EvaluateService'         = 14
+    'ScheduledService'        = 2
+    'PermissionService'       = 3
+    'UserService'             = 4
+    'ToolService'             = 5
+    'AuthService'             = 6
+    'ProductService'          = 7
+    'CartService'             = 8
+    'InventoryService'        = 9
+    'OrderService'            = 10
+    'PaymentService'          = 11
+    'MarketingService'        = 12
+    'MerchantPlatformService' = 13
+    'PointService'            = 14
+    'EvaluateService'         = 15
     # 网关目前**不**真的用 Redis（不分配雪花 workerId，也不做 Redis 缓存）。
-    # 这里仍占一个号，是为了让「每个服务一号」这条校验保持统一，后续要加缓存时不用改脚本。
-    'Gateway'                 = 15
+    # 把 0 号给它而不是留作「调试库」：15 个真正用 Redis 的服务刚好占满 1~15，
+    # 而把一个用不上的号留给一个用不上的服务，是唯一不会浪费的分配方式。
+    'Gateway'                 = 0
 }
 
 if ($Service) {

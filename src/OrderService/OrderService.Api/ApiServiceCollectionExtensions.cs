@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OrderService.Application;
+using OrderService.Application.Features.Internal;
 using OrderService.Application.Features.OrderAdmin;
 using OrderService.Application.Features.Orders;
 using OrderService.Infrastructure;
@@ -27,6 +28,10 @@ public static class ApiServiceCollectionExtensions
 
         OrderValidators.AddOrderValidators(services);
         OrderAdminValidators.AddOrderAdminValidators(services);
+        CloseTimeoutValidators.AddCloseTimeoutValidators(services);
+
+        // 超时阈值是配置不是常量：不同业务等待时长不同，线上要临时调长时改配置比发版快
+        services.Configure<OrderTimeoutOptions>(configuration.GetSection(OrderTimeoutOptions.SectionName));
 
         // 编排器与支付收尾必须注册成 Scoped：它们的端口依赖 IOrderStore 是 Scoped
         // （FreeSql 虽是单例，但仓储按请求注册是全项目约定）。注册成单例会在
@@ -35,6 +40,7 @@ public static class ApiServiceCollectionExtensions
         services.AddScoped<OrderCreator>();
         services.AddScoped<OrderPaymentCompleter>();
         services.AddScoped<OrderCompletionReward>();
+        services.AddScoped<OrderCancellationService>();
 
         services.AddOrderInfrastructure(configuration);
         return services;

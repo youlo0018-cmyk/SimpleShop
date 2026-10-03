@@ -153,6 +153,18 @@ public interface IOrderStore
     /// <returns>订单行，按行 Id 升序。</returns>
     Task<List<OrderItem>> ListItemsAsync(long orderId, CancellationToken ct = default);
 
+    /// <summary>找出创建时间早于某时刻、且仍处于待支付的订单。</summary>
+    /// <param name="deadlineUtc">创建时间的上界（UTC）。传入「现在减去超时阈值」。</param>
+    /// <param name="limit">最多返回多少张。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>候选订单，按创建时间<b>升序</b>（先关最早的）。</returns>
+    /// <remarks>
+    /// 升序很重要：积压时如果随机取一批，可能出现「关了新的、留了更老的」，
+    /// 而老的那些正是用户等最久、最可能在投诉的。
+    /// </remarks>
+    Task<List<Order>> FindTimeoutCandidatesAsync(
+        DateTime deadlineUtc, int limit, CancellationToken ct = default);
+
     /// <summary>分页查某个客户的订单。</summary>
     /// <param name="customerId">客户 Id。</param>
     /// <param name="status">订单状态，0 表示不限。</param>

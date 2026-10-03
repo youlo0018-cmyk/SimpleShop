@@ -536,6 +536,10 @@ public class OrderCreatorTests
 
         // 必须真的返回订单行：支付收尾要靠它逐个 SKU 扣减库存，
         // 这里返回空集合的话「扣没扣库存」这条断言永远测不出问题。
+        public Task<List<Order>> FindTimeoutCandidatesAsync(
+            DateTime deadlineUtc, int limit, CancellationToken ct = default)
+            => Task.FromResult(new List<Order>());
+
         public Task<List<OrderItem>> ListItemsAsync(long orderId, CancellationToken ct = default)
             => Task.FromResult(SavedItems.Where(a => a.OrderId == orderId).ToList());
 

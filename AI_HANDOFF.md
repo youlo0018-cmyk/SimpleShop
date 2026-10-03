@@ -174,9 +174,10 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 + 按订单发放（实付每满 1 元 1 积分） |
 | Marketing | 5072 | 🔄 进行中（券全生命周期完成；满减/满折/满赠「活动」与限时抢购未开始） |
 | Order | 5064 | ✅ 下单四步补偿链路 + 客户级幂等锁 + 订单状态机 + 模拟支付 + 自提取货码（RSA）+ 退款回补 |
-| Payment / MerchantPlatform / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Scheduled | 无端口 | ✅ 独立定时进程：支付超时关单（每 30 秒，Redis `lock:job:*` 多实例互斥） |
+| Payment / MerchantPlatform / Evaluate / Log | 见 3.3 | ⬜ 未开始 |
 
-**S1、S2 已完成，S3（OrderService）已完成第一版。** 12 个服务在跑。
+**S1、S2 已完成，S3（交易闭环）已完成第一版。** 13 个进程在跑（12 个 HTTP 服务 + ScheduledService）。
 下一步按依赖顺序：**限时抢购**（复用已定型的库存划转记账）→ Marketing 满减/满折/满赠活动 → PaymentService → MerchantPlatform → Evaluate。
 
 **验证现状**
@@ -185,7 +186,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
 | `dotnet test`（单元测试） | **202/202** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **198/198**，9 个脚本全绿 |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **201/201**，9 个脚本全绿 |
 | └ `api-regression.ps1` | 15/15 |
 | └ `auth-regression.ps1` | 17/17 |
 | └ `gateway-regression.ps1` | 13/13 |
@@ -194,7 +195,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | └ `inventory-regression.ps1` | 21/21 |
 | └ `marketing-regression.ps1` | 18/18 |
 | └ `point-regression.ps1` | 23/23 |
-| └ `order-regression.ps1` | 47/47 |
+| └ `order-regression.ps1` | 50/50 |
 
 ### 4.2 已确定的关键决策
 
@@ -266,6 +267,88 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+### 2026-10-03：S3 — ScheduledService 落地，支付超时关单打通
+
+没有超时关单的直接后果是：库存一直被锁着、积分一直被冻着、券一直被占着。
+用户不付款，那些资源就再也回不来——热门商品会被「幽灵订单」占死库存，
+最后变成「有货但所有人都买不了」。
+
+#### 一条硬边界：定时任务只回答「什么时候做」
+
+`ScheduledService` **不查任何业务库、不写任何业务表**，只调别人暴露的接口。
+所以它只引用 `Collaboration`，不引用 `OrderService` 之类——
+一旦允许它引用，迟早会有人在定时任务里写一段 SQL 直接改订单表，
+那些业务规则就有了第二份实现，改的时候只改一处。
+
+于是分工是：
+
+| 归属 | 内容 | 为什么归它 |
+|---|---|---|
+| 订单服务 | 「哪些单超时了」（查自己的表、判 `status=10` 且 `created_at < now-30min`） | 订单表只有它能查；这是业务规则 |
+| ScheduledService | 「什么时候扫」（每 30 秒一次） | 这是基础设施，不是业务 |
+
+接口是 `POST /internal/orders/close-timeout`，网关不路由 `/internal` 前缀。
+
+#### 关单与主动取消是同一件事，抽成一个服务
+
+C 端「取消」与定时任务的「超时关单」要退的是**完全相同**的三样东西：库存、积分、券。
+写成两套实现的话，迟早有一边的回滚漏掉某一项（比如只退库存忘了退券），
+而那种单会一直占着用户的券，直到他手动去找客服。
+
+抽成 `OrderCancellationService`，两边共用。两条设计要点都写在那个类的注释里：
+**先改状态再退占用**（反过来会退掉别人那单的库存），以及
+**退占用失败绝不把「已取消」改成「取消失败」**。
+
+#### 多实例互斥：`lock:job:{jobName}`
+
+生产通常起两个 Scheduled 实例。不加锁的话两个会同时扫同一批单——
+订单服务侧有条件更新兜底（只有一个能把 10 改成 91），所以不会重复关单，
+但每个实例都要把整批订单拉一遍再对每张失败单做无用功，下游要吃双倍请求。
+
+锁的 **TTL 必须大于单轮耗时**：TTL 到期后锁自动消失，此时原实例还在跑就会出现两个实例重叠。
+所以 TTL 取间隔的 3 倍（30s 间隔 → 90s TTL）。释放用 Lua 比对 value，
+与下单锁同一套道理——直接 `DEL` 会在超时释放后删掉别人的锁。
+
+Redis 挂了就跳过本轮，而不是降级执行：宁可不关单，也不能在没有互斥的情况下并发跑。
+
+#### 踩到的坑：改库拨时间被时区反过来推
+
+回归里要把订单创建时间往前拨 40 分钟，直接写 `now() - interval '40 minutes'`：
+
+```sql
+UPDATE "order" SET created_at = now() - interval '40 minutes' ...
+```
+
+结果时间被**往前推了 8 小时**。原因是容器会话时区是 `Asia/Shanghai`，
+`now()` 是 `timestamptz`，赋给 `timestamp` 列时会按会话时区折算，
+于是「往前拨 40 分钟」变成了「现在是 19 点」。
+
+正确写法是 `now() AT TIME ZONE 'UTC' - interval '40 minutes'`——
+先剥掉时区得到 `timestamp`，不再发生折算。SQL 本身看不出任何问题，只有断言会红。
+
+#### 本轮新增
+
+| 项 | 说明 |
+|---|---|
+| `src/ScheduledService/` | **单项目** Worker（不是四层）：无业务逻辑，不需要 Domain/Application 分层 |
+| 无端口进程支持 | 注册表端口写 `0`，启停脚本改用 pid 文件判断存活（没有 `/health` 可探活） |
+| Redis 库号重排 | 15 个真正用 Redis 的服务占 1~15，0 号给不连 Redis 的网关；Redis 默认只有 16 个库，不重排就会撞号 |
+| 关单批量上限 | 积压到几千张时不限张数会把三个下游一起打挂然后整体超时，进入「越处理越堵」死循环。每轮限 200 张、单轮总量上限 500 |
+
+**验证**：单元测试 **202/202**，端到端 **201/201**（9 个脚本），全量构建 **0 warning 0 error**，13 个进程在跑。
+
+启动后第一轮就扫出并关掉了 11 张此前回归遗留的未支付订单——那些单已经占着库存超过半小时，
+正好印证了这件事不做会一直漏资源。
+
+#### 还没做（诚实清单）
+
+- **满减 / 满折 / 满赠「活动」**：Marketing 只有券这条腿，结算页「到手价」和「券优先 / 活动优先」只有一半
+- **限时抢购**：库存已有 `seckill_reserve` / `seckill_release` 两个动作位，但场次模型未建
+- **Elasticsearch + IK 分词搜索**：ProductService 未做
+- **PaymentService**：支付单、支付回调、审批式退款未做（模拟支付先顶上）
+- **补偿重试 / 孤儿预留对账 / 积分过期 / 评价重算**：ScheduledService 的其它任务都还没写
+- **后台 / 小程序前端**：一行 UI 都没有，全部只有接口
+
 
 ### 2026-10-03：S3 — OrderService 落地（5064），下单链路打通
 
@@ -984,3 +1067,4 @@ FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET �
 - 状态：build 0 error 0 warning；单测 29/29；API 回归 15/15（CustomerService）。
 - **S1 剩余**：UserService（后台账号）、AuthService（OpenIddict RS256 令牌）、ToolService（统一上传）、
   以及 Gateway 的双令牌验签与 RBAC（这些都还没写，是 S1 的最后一块）。
+
