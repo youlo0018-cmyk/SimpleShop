@@ -76,7 +76,7 @@
     {
       "name": "MerchantPlatformService",
       "port": 5070,
-      "implemented": false,
+      "implemented": true,
       "project": "src/MerchantPlatformService/MerchantPlatformService.Api/MerchantPlatformService.Api.csproj"
     },
     {

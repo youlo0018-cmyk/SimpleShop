@@ -212,6 +212,57 @@
       ]
     },
     {
+      "UpstreamPathTemplate": "/gateway/platforms/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/platforms/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5070
+        }
+      ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/merchants/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/merchants/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5070
+        }
+      ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/regions/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/regions/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5070
+        }
+      ]
+    },
+    {
       "UpstreamPathTemplate": "/gateway/coupons/{everything}",
       "UpstreamHttpMethod": [
         "GET",
