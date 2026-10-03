@@ -134,6 +134,19 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     $cfg['Services:AuthServiceBaseUrl']        = $serviceUrls['AuthService']
     $cfg['Services:InventoryServiceBaseUrl']   = $serviceUrls['InventoryService']
     $cfg['Services:ProductServiceBaseUrl']    = $serviceUrls['ProductService']
+    $cfg['Services:MarketingServiceBaseUrl']  = $serviceUrls['MarketingService']
+    $cfg['Services:PointServiceBaseUrl']       = $serviceUrls['PointService']
+    $cfg['Services:CartServiceBaseUrl']        = $serviceUrls['CartService']
+    $cfg['Services:OrderServiceBaseUrl']       = $serviceUrls['OrderService']
+    $cfg['Services:PaymentServiceBaseUrl']     = $serviceUrls['PaymentService']
+
+    # 自提取货码的 RSA 私钥路径。密钥文件由 ./scripts/generate-pickup-rsa.ps1 生成，
+    # 不入库、不进发布包；这里只给路径。取货码 = 公钥加密后的订单号，
+    # 加解密全在服务端（用户明确要求私钥不放前端）。
+    if ($name -eq 'OrderService') {
+        $cfg['PickupCode:RsaPrivateKeyPath'] = 'D:/学习/SimpleShop-new/deploy/keys/pickup-code-private.pem'
+        $cfg['PickupCode:RsaPublicKeyPath']  = 'D:/学习/SimpleShop-new/deploy/keys/pickup-code-public.pem'
+    }
     if ($name -eq 'CustomerService') {
         $cfg['Jwt:Issuer']       = 'simpleshop'
         $cfg['Jwt:Audience']     = 'simpleshop-customer'

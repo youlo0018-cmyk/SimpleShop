@@ -173,22 +173,29 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
 | Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 |
 | Marketing | 5072 | 🔄 进行中（券全生命周期完成；满减/满折/满赠「活动」与限时抢购未开始） |
-| Cart | 5060 | ✅ 累加语义购物车 + SKU 快照 + 上限 99 + 勾选状态 |\n| Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Order | 5064 | ✅ 下单四步补偿链路 + 客户级幂等锁 + 订单状态机 + 模拟支付 + 自提取货码（RSA）+ 退款回补 |
+| Payment / MerchantPlatform / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
 
-**S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService、InventoryService、PointService 完成；9 个服务在跑。下一步 Marketing，然后才是 OrderService。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
+**S1、S2 已完成，S3（OrderService）已完成第一版。** 12 个服务在跑。
+下一步按依赖顺序：**限时抢购**（复用已定型的库存划转记账）→ Marketing 满减/满折/满赠活动 → PaymentService → MerchantPlatform → Evaluate。
 
 **验证现状**
 
 | 套件 | 结果 |
 |---|---|
-| `dotnet test` | 64/64 |
-| `tests/e2e/api-regression.ps1` | 15/15 |
-| `tests/e2e/auth-regression.ps1` | 17/17 |
-| `tests/e2e/gateway-regression.ps1` | 13/13 |\n| `tests/e2e/product-regression.ps1` | 31/31 |
-| `tests/e2e/inventory-regression.ps1` | 21/21 |
-| `tests/e2e/point-regression.ps1` | 23/23 |
-| `tests/e2e/marketing-regression.ps1` | 18/18 |
-| `tests/e2e/cart-regression.ps1` | 13/13 |
+| `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
+| `dotnet test`（单元测试） | **202/202** |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **195/195**，9 个脚本全绿 |
+| └ `api-regression.ps1` | 15/15 |
+| └ `auth-regression.ps1` | 17/17 |
+| └ `gateway-regression.ps1` | 13/13 |
+| └ `product-regression.ps1` | 31/31 |
+| └ `cart-regression.ps1` | 13/13 |
+| └ `inventory-regression.ps1` | 21/21 |
+| └ `marketing-regression.ps1` | 18/18 |
+| └ `point-regression.ps1` | 23/23 |
+| └ `order-regression.ps1` | 44/44 |
+
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -259,6 +266,84 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-03：S3 — OrderService 落地（5064），下单链路打通
+
+下单是全系统最复杂的补偿链路（BUSINESS.md 8.1 链路 7）。落地过程中查出并修了 **4 个真缺陷**，
+其中 1 个是 P0。逐条记在这里，因为它们都属于「代码看起来完全没问题」的那一类。
+
+#### P0：实付 0 元的单，积分与券永远悬空
+
+0 元单在创建时直接跳到 20 待发货，**没有支付这一步**，于是也就没有任何人会去跑支付收尾：
+库存永远锁着、积分永远冻着、券永远占着——而用户在订单列表里看到的是「待发货」，一切正常。
+
+修法不是「等支付」，而是**在下单当场结清**（`OrderCreator` → `OrderPaymentCompleter`）：
+0 元单落库成功后立刻扣库存、实扣积分、核销券，与真实支付走**同一个方法**，
+不会出现「模拟能过、真支付走不通」这种事。收尾失败只记 Error 日志，**绝不回给用户**——
+订单已经落库，回「下单失败」只会让他以为没下成、于是再下一张，那才是真的资损。
+
+#### P0：客户锁拿不到时也会先占资源
+
+原先只在端口层查幂等键。两个并发请求查库那一刻都还查不到对方刚写的单，
+于是双双通过检查，各自去锁一遍库存。幂等键的唯一索引只能保证**一张单**落库，
+拦不住另一张单执行过的副作用。
+
+修法：`lock:order:create:{customerId}`，Redis `SET NX EX` + Lua 比对 value 后释放
+（不能用 `DEL`，否则 A 超时释放后 B 拿到锁，A 醒来把 B 的锁删了，两人同时以为自己持锁）。
+锁包住**整条链路含幂等查询**，`await using` 保证异常路径也释放。
+
+#### P0：`couponId = 0` 会被服务端自动挑一张券
+
+这与用户需求 K9 冲突。K9 写的是「结算页先默认选择最优惠的券并展示其他可用券，
+如果用户选择其他券就使用其他券」——**选择权在客户端**。服务端再自动挑一次的后果：
+用户点了「不使用券」，下单时又被占上一张，到手价和页面显示不一致；
+用户选了临期那张 A，服务端换成同额但有效期长的 B，面额没差但没法解释。
+
+修法：`0 = 不使用券`，直接跳过占券调用。「哪张券最优」由 `/coupons/Settle` 在结算页算好。
+指定了券却没占到（被别人用掉 / 过期）按没券继续下单，不把整单判失败。
+
+#### P1：库存不足与「库存记录不存在」混成一个码
+
+两者都回 `4000`，订单服务只能把「商品没初始化库存」也报成「库存不足」，
+用户看到一句误导性提示，排查时也看不出真正的毛病。
+
+修法：`StockApplyFailure` 分类 → 不足回 `4001 StockNotEnough`，其余回 `4000`。
+订单端口只把 `4001` 当成「货不够」，其余一律抛出去让人去查。
+
+#### 顺带修的：营销时间时区错位
+
+`DateTime` 从 `"2026-10-03T19:00:00+08:00"` 反序列化得到的是 **Kind=Local 且时钟值已是本地 19:00**，
+直接存进 UTC 列就是错的，服务器按 UTC 一比差整整 8 小时。
+症状是「刚建的活动立刻提示不在领取时间内」，代码看起来完全没问题。
+已在 `CouponAdminController` 统一归一到 UTC（Local 转换、Unspecified 按 UTC 处理）。
+
+#### 本轮新增
+
+| 项 | 说明 |
+|---|---|
+| 订单状态机 | `OrderStatusMachine`：迁移白名单 10 条、终态、取消 / 确认收货 / 退款的准入判定，纯函数可穷举测试 |
+| 状态迁移 | 条件更新（`WHERE status = 读到的值`），受影响行数为 0 即「状态已被改过」 |
+| 自提取货码 | `RsaPickupCodeCodec`：取货码 = RSA 公钥加密后的订单号，**私钥只在服务端**，前端只显示与回传 |
+| 密钥脚本 | `./scripts/generate-pickup-rsa.ps1`，默认不覆盖已有密钥（换了会让已发出的码全失效） |
+| 模拟支付 | 后台订单列表按钮，可选成功 / 失败；**失败分支刻意什么都不做**，与真实支付失败行为一致 |
+| 退款 | 未发货走 release、已发货走 replenish；虚拟商品整单禁退 |
+| 租户归属 | 平台 / 商户**以令牌为准**，请求里伪造的值不采信 |
+| 越权 | 查他人订单回 404 而不是 403（403 等于告诉别人这个订单号真实存在） |
+| 重复发货 | 按幂等处理，回「已发货」而不是报错（运营误点两下是常事） |
+| 回归入口 | `./tests/e2e/run-all.ps1` 跑全部 9 个脚本并汇总成一张表 |
+
+**验证**：单元测试 **202/202**，端到端 **195/195**（9 个脚本），全量构建 **0 warning 0 error**，12 个服务在跑。
+
+#### 还没做（诚实清单）
+
+- **满减 / 满折 / 满赠「活动」**：Marketing 只有券这条腿，所以结算页的「到手价」和「券优先 / 活动优先」只有一半
+- **限时抢购**：库存已有 `seckill_reserve` / `seckill_release` 两个动作位，但场次模型未建
+- **Elasticsearch + IK 分词搜索**：ProductService 未做
+- **PaymentService**：支付单、支付回调、审批式退款未做（模拟支付先顶上）
+- **超时关单**：需要 Scheduled 定时任务
+- **订单完成发放积分**：`EarnByOrder` 未做，规则还没落到 PointService
+- **后台 / 小程序前端**：一行 UI 都没有，全部只有接口
+
 
 ### 2026-10-03（实现阶段）：S2 — CartService 落地（5060），S2 收官
 
@@ -874,7 +959,6 @@ FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET �
 | 8 | 本机服务进程可能被会话回收：冒烟前先 `/health` 检查网关 5008 与 Inventory 5062 |
 | 9 | 秒杀异步落单需轮询 `GrabResult`；体验问题记为 P2 风险 21，不要在实现期擅自改成同步 |
 | 10 | 评价均分每日更新是**产品决策不是 bug**，被提出时对照 P1 风险 12 解释，不要「顺手修好」 |
-
 
 ### 2026-10-03（实现阶段）：权限点增删改 + 角色 CRUD + 内置角色种子
 

@@ -36,7 +36,14 @@ public sealed class ApplyStockHandler : IRequestHandler<ApplyStockCommand, ApiRe
 
         if (!outcome.Succeeded)
         {
-            return ApiResults.Fail<StockChangeResult>(BaseApiResponseCode.BusinessError, outcome.Error);
+            // 库存不足单独用 4001，调用方（尤其下单链路）要能把「货不够」与
+            // 「库存记录不存在 / 请求不合法」区分开：前者是正常业务提示，
+            // 后者是数据或程序问题，混成一个码会让下单把两种故障都报成「库存不足」。
+            var code = outcome.Failure == StockApplyFailure.Shortage
+                ? BaseApiResponseCode.StockNotEnough
+                : BaseApiResponseCode.BusinessError;
+
+            return ApiResults.Fail<StockChangeResult>(code, outcome.Error);
         }
 
         var result = new StockChangeResult(
@@ -117,7 +124,14 @@ public sealed class AdjustStockHandler : IRequestHandler<AdjustStockCommand, Api
 
         if (!outcome.Succeeded)
         {
-            return ApiResults.Fail<StockChangeResult>(BaseApiResponseCode.BusinessError, outcome.Error);
+            // 库存不足单独用 4001，调用方（尤其下单链路）要能把「货不够」与
+            // 「库存记录不存在 / 请求不合法」区分开：前者是正常业务提示，
+            // 后者是数据或程序问题，混成一个码会让下单把两种故障都报成「库存不足」。
+            var code = outcome.Failure == StockApplyFailure.Shortage
+                ? BaseApiResponseCode.StockNotEnough
+                : BaseApiResponseCode.BusinessError;
+
+            return ApiResults.Fail<StockChangeResult>(code, outcome.Error);
         }
 
         var result = new StockChangeResult(

@@ -19,6 +19,28 @@ public sealed record StockOperation(
     long PlatformId = 0,
     long MerchantId = 0);
 
+/// <summary>库存变更失败的分类。</summary>
+/// <remarks>
+/// 存在的理由：调用方（尤其是下单链路）必须能区分「货不够」与「系统/数据有问题」。
+/// 两者都回 4000 的话，订单服务只能把「库存记录不存在」也当成「库存不足」，
+/// 用户看到的是一句误导性的提示，排查时也看不出真正的毛病。
+/// 映射到统一响应码：不足 → <c>4001 StockNotEnough</c>，其余 → <c>4000 BusinessError</c>。
+/// </remarks>
+public enum StockApplyFailure
+{
+    /// <summary>没有失败（成功或幂等命中）。</summary>
+    None = 0,
+
+    /// <summary>库存不足：变更后某个计数会变成负数。</summary>
+    Shortage = 1,
+
+    /// <summary>该 SKU 还没有库存记录，需要先初始化。</summary>
+    NotInitialized = 2,
+
+    /// <summary>请求本身不合法（数量为 0、动作未知、符号不对）。</summary>
+    InvalidOperation = 3
+}
+
 /// <summary>库存变更结果。</summary>
 /// <param name="Succeeded">是否已生效。</param>
 /// <param name="AlreadyApplied">是否为重复请求（命中幂等，本次未真正变更）。</param>
@@ -26,13 +48,15 @@ public sealed record StockOperation(
 /// <param name="Locked">变更后锁定。</param>
 /// <param name="Deducted">变更后已扣减。</param>
 /// <param name="Error">失败原因。</param>
+/// <param name="Failure">失败分类，决定对外的响应码。</param>
 public sealed record StockApplyOutcome(
     bool Succeeded,
     bool AlreadyApplied,
     int Available,
     int Locked,
     int Deducted,
-    string Error = "");
+    string Error = "",
+    StockApplyFailure Failure = StockApplyFailure.None);
 
 /// <summary>库存仓储。</summary>
 public interface IStockRepository

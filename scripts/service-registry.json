@@ -58,7 +58,7 @@
     {
       "name": "OrderService",
       "port": 5064,
-      "implemented": false,
+      "implemented": true,
       "project": "src/OrderService/OrderService.Api/OrderService.Api.csproj"
     },
     {

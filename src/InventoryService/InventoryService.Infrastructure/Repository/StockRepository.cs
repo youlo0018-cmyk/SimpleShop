@@ -41,17 +41,17 @@ public sealed class StockRepository : CrudRepository<Stock>, IStockRepository
         // 不允许用负数量表达「反向操作」，否则同一个流水会同时表达两件事。
         if (operation.Quantity == 0)
         {
-            return new StockApplyOutcome(false, false, 0, 0, 0, "库存数量必须为正数");
+            return new StockApplyOutcome(false, false, 0, 0, 0, "库存数量必须为正数", StockApplyFailure.InvalidOperation);
         }
 
         var deltas = ResolveDeltas(operation.Action, operation.Quantity);
         if (deltas is null || (operation.Action != StockActions.Adjust && operation.Quantity < 0))
         {
-            return new StockApplyOutcome(false, false, 0, 0, 0, $"未知的库存动作: {operation.Action}");
+            return new StockApplyOutcome(false, false, 0, 0, 0, $"未知的库存动作: {operation.Action}", StockApplyFailure.InvalidOperation);
         }
 
         // Db.Transaction 的委托返回 void，结果只能在外面接
-        var outcome = new StockApplyOutcome(false, false, 0, 0, 0, "未执行");
+        var outcome = new StockApplyOutcome(false, false, 0, 0, 0, "未执行", StockApplyFailure.None);
 
         try
         {
@@ -60,7 +60,7 @@ public sealed class StockRepository : CrudRepository<Stock>, IStockRepository
                 var stock = _db.Select<Stock>().Where(a => a.SkuId == operation.SkuId).First();
                 if (stock is null)
                 {
-                    outcome = new StockApplyOutcome(false, false, 0, 0, 0, "库存记录不存在，请先初始化");
+                    outcome = new StockApplyOutcome(false, false, 0, 0, 0, "库存记录不存在，请先初始化", StockApplyFailure.NotInitialized);
                     return;
                 }
 
@@ -89,7 +89,7 @@ public sealed class StockRepository : CrudRepository<Stock>, IStockRepository
                             ? $"锁定库存不足（现有 {stock.Locked}，需要 {operation.Quantity}）"
                             : $"已扣减库存不足（现有 {stock.Deducted}，需要 {operation.Quantity}）";
 
-                    outcome = new StockApplyOutcome(false, false, stock.Available, stock.Locked, stock.Deducted, reason);
+                    outcome = new StockApplyOutcome(false, false, stock.Available, stock.Locked, stock.Deducted, reason, StockApplyFailure.Shortage);
                     return;
                 }
 

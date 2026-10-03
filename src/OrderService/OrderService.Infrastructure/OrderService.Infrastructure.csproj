@@ -12,4 +12,10 @@
   <ItemGroup>
     <ProjectReference Include="..\OrderService.Application\OrderService.Application.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- AddHttpClient 扩展方法定义在 Microsoft.Extensions.Http 里（与 AuthService.Infrastructure 同版本）。
+         不显式引用的话编译报 CS1061：IServiceCollection 上找不到 AddHttpClient。 -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+  </ItemGroup>
 </Project>

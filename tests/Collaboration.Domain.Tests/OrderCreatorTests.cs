@@ -17,8 +17,10 @@ public class OrderCreatorTests
 {
     private const long CustomerId = 5550001L;
 
+    // 默认带一张券（couponId 77）：大多数用例要断言 ① 之后的回滚行为，
+    // 不给券的话 ① 整个被跳过，「① 的券有没有被退掉」就没得测了。
     private static CreateOrderRequest Request(
-        string key = "idem-1", long couponId = 0, long points = 0, int lineCount = 2)
+        string key = "idem-1", long couponId = 77, long points = 0, int lineCount = 2)
     {
         var lines = new List<OrderLineRequest>();
         for (var i = 0; i < lineCount; i++)
@@ -34,9 +36,19 @@ public class OrderCreatorTests
             ReceiverAddress: "某地", Lines: lines, CouponId: couponId, PointsToUse: points);
     }
 
+    // 收尾服务用**真实**对象配假端口：它只有几十行、且正是要测的逻辑，
+    // 换成假实现就等于把「0 元单有没有结清占用」这件事从测试里抹掉了。
     private static OrderCreator Build(
-        FakeCouponPort coupons, FakePointPort points, FakeInventoryPort inventory, FakeOrderStore store)
-        => new(coupons, points, inventory, store, NullLogger<OrderCreator>.Instance);
+        FakeCouponPort coupons, FakePointPort points, FakeInventoryPort inventory, FakeOrderStore store,
+        FakeOrderCreateLock? createLock = null)
+    {
+        var completer = new OrderPaymentCompleter(
+            store, inventory, points, coupons, NullLogger<OrderPaymentCompleter>.Instance);
+
+        return new OrderCreator(
+            coupons, points, inventory, store, createLock ?? new FakeOrderCreateLock(),
+            completer, NullLogger<OrderCreator>.Instance);
+    }
 
     [Fact]
     public async Task 正常下单四步都执行并落单()
@@ -218,24 +230,196 @@ public class OrderCreatorTests
         Assert.Contains("没有任何商品行", result.Error);
     }
 
+    [Fact]
+    public async Task 占券时带上SPU与行金额供券判定适用范围()
+    {
+        var coupons = new FakeCouponPort { Discount = 5m, CouponId = 77 };
+        var inventory = new FakeInventoryPort();
+        var store = new FakeOrderStore();
+
+        await Build(coupons, new FakePointPort(), inventory, store).CreateAsync(Request());
+
+        // 少传 SpuId 或金额算错，营销侧就判不出这张券能不能用于这些商品——
+        // 结果是「有券但没优惠」，用户看到的现象就是券没用上，而且很难查。
+        Assert.Equal(2, coupons.LastLines.Count);
+        Assert.Equal(100, coupons.LastLines[0].SpuId);
+        Assert.Equal(1000, coupons.LastLines[0].SkuId);
+        Assert.Equal(51.00m, coupons.LastLines[0].Amount);   // 25.50 × 2
+    }
+
+    [Fact]
+    public async Task 拿不到客户锁时直接拒绝且不占用任何资源()
+    {
+        var coupons = new FakeCouponPort { Discount = 5m, CouponId = 77 };
+        var points = new FakePointPort();
+        var inventory = new FakeInventoryPort();
+        var store = new FakeOrderStore();
+        var createLock = new FakeOrderCreateLock { AcquireSucceeds = false };
+
+        var result = await Build(coupons, points, inventory, store, createLock)
+            .CreateAsync(Request(points: 100));
+
+        // 拿不到锁说明另一个下单正在跑。这时**一个资源都不能占**——
+        // 否则两个请求各占一份，幂等键唯一索引只能保证一张单落库，拦不住多占的副作用。
+        Assert.False(result.Succeeded);
+        Assert.Equal(1, createLock.AcquireCount);
+        Assert.Equal(0, coupons.OccupyCount);
+        Assert.Equal(0, points.LockCount);
+        Assert.Equal(0, inventory.LockCount);
+        Assert.Empty(store.SavedOrders);
+        Assert.Contains("正在提交中", result.Error);
+    }
+
+    [Fact]
+    public async Task 下单结束时客户锁一定被释放()
+    {
+        var createLock = new FakeOrderCreateLock();
+
+        await Build(new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), new FakeOrderStore(), createLock)
+            .CreateAsync(Request());
+
+        Assert.Equal(1, createLock.ReleaseCount);
+
+        // 失败路径也必须释放，否则这个客户之后所有下单都会被卡住
+        await Build(new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(),
+                new FakeOrderStore { ThrowOnSave = true }, createLock)
+            .CreateAsync(Request(key: "idem-2"));
+
+        Assert.Equal(2, createLock.ReleaseCount);
+    }
+
+    [Fact]
+    public async Task 并发下已有同一张单时回退本次占用并返回已存在的订单()
+    {
+        var coupons = new FakeCouponPort { Discount = 5m, CouponId = 77 };
+        var points = new FakePointPort();
+        var inventory = new FakeInventoryPort();
+        var store = new FakeOrderStore();
+        var existing = new Order
+        {
+            Id = 111, OrderNo = "20260101000000123456", CustomerId = CustomerId,
+            IdempotencyKey = "idem-1", Status = OrderStatuses.PendingPayment,
+            GoodsTotal = 50m, PayableAmount = 50m
+        };
+        store.ExistingOnSave = existing;
+
+        var result = await Build(coupons, points, inventory, store).CreateAsync(Request(points: 100));
+
+        // 落库的是先到的那张单，返回的必须是它的订单号，不能是本次生成的废号
+        Assert.True(result.Succeeded);
+        Assert.True(result.AlreadyCreated);
+        Assert.Equal("20260101000000123456", result.OrderNo);
+
+        // 本次占的券 / 积分 / 库存都必须退回去，否则先到那张单的额度被白白吃掉
+        Assert.Equal(2, inventory.ReleaseCount);
+        Assert.Equal(1, points.UnfreezeCount);
+        Assert.Equal(1, coupons.ReleaseCount);
+    }
+    [Fact]
+    public async Task 券Id为0时完全不调用占券因为选不选券是客户端的事()
+    {
+        var coupons = new FakeCouponPort { Discount = 5m, CouponId = 77 };
+        var store = new FakeOrderStore();
+
+        var result = await Build(coupons, new FakePointPort(), new FakeInventoryPort(), store)
+            .CreateAsync(Request(couponId: 0));
+
+        // 结算页已经把「最优券」算好交给客户端了，用户点「不使用券」时传 0。
+        // 服务端要是再自动挑一张，到手价就跟页面上显示的不一致——用户投诉的是这个。
+        Assert.True(result.Succeeded);
+        Assert.Equal(0, coupons.OccupyCount);
+        Assert.Equal(0, store.Saved!.CouponId);
+        Assert.Equal(0m, store.Saved.CouponDiscount);
+    }
+
+    [Fact]
+    public async Task 指定了券却没占到时按没券继续下单而不是整单失败()
+    {
+        // 券可能在这几秒里被别人领走或过期。这属于正常业务，不该把整单判失败。
+        var coupons = new FakeCouponPort { CouponId = 0, Discount = 0m };
+        var store = new FakeOrderStore();
+
+        var result = await Build(coupons, new FakePointPort(), new FakeInventoryPort(), store)
+            .CreateAsync(Request(couponId: 77));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, coupons.OccupyCount);
+        Assert.Equal(0, coupons.ReleaseCount);      // 本来就没占上，不必退
+        Assert.Equal(0, store.Saved!.CouponId);
+    }
+    [Fact]
+    public async Task 实付0元的单在下单当场就结清占用而不是留着等支付()
+    {
+        // 0 元单没有支付这一步，也就没有任何人会来跑支付收尾。
+        // 不当场结清的话：库存一直锁着、积分一直冻着、券一直占着，
+        // 而用户在订单列表里看到的是「待发货」——看起来一切正常，实际全是悬空占用。
+        var coupons = new FakeCouponPort { Discount = 5m, CouponId = 77 };
+        var points = new FakePointPort();
+        var inventory = new FakeInventoryPort();
+        var store = new FakeOrderStore();
+
+        // 默认 2 个 SKU × 25.50 × 2 件 = 102.00；券减 5.00 → 97.00；
+        // 9700 积分抵 97.00 → 实付 0.00
+        var result = await Build(coupons, points, inventory, store)
+            .CreateAsync(Request(couponId: 77, points: 9700));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(OrderStatuses.PendingShipment, store.Saved!.Status);
+
+        // 冻结 → 实扣、占用 → 核销、锁定 → 扣减，三样都要发生
+        Assert.Equal(1, points.ConsumeCount);
+        Assert.Equal(0, points.Frozen);
+        Assert.Equal(1, coupons.ConsumeCount);
+        Assert.Equal(2, inventory.DeductCount);
+        Assert.Equal(0, inventory.ReleaseCount);
+    }
     // ---------------- 假端口 ----------------
+
+    private sealed class FakeOrderCreateLock : IOrderCreateLock
+    {
+        public bool AcquireSucceeds = true;
+        public int AcquireCount;
+        public int ReleaseCount;
+
+        public Task<IOrderCreateLockHandle?> TryAcquireAsync(
+            long customerId, TimeSpan waitFor, TimeSpan ttl, CancellationToken ct = default)
+        {
+            AcquireCount++;
+            if (!AcquireSucceeds) return Task.FromResult<IOrderCreateLockHandle?>(null);
+            return Task.FromResult<IOrderCreateLockHandle?>(new FakeHandle(this));
+        }
+
+        private sealed class FakeHandle : IOrderCreateLockHandle
+        {
+            private readonly FakeOrderCreateLock _owner;
+            public FakeHandle(FakeOrderCreateLock owner) => _owner = owner;
+            public ValueTask DisposeAsync()
+            {
+                _owner.ReleaseCount++;
+                return ValueTask.CompletedTask;
+            }
+        }
+    }
 
     private sealed class FakeCouponPort : ICouponPort
     {
         public int OccupyCount;
         public int ReleaseCount;
+        public int ConsumeCount;
         public long CouponId;
         public decimal Discount;
         public bool ThrowOnOccupy;
         public bool ThrowOnRelease;
+        public List<CouponPortLine> LastLines = new();
 
-        public async Task<(long CouponId, decimal Discount)> OccupyAsync(
+        public Task<(long CouponId, decimal Discount)> OccupyAsync(
             long customerId, string orderNo, long couponId,
-            IReadOnlyList<OrderLineInput> lines, CancellationToken ct = default)
+            IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
         {
             OccupyCount++;
+            LastLines = lines.ToList();
             if (ThrowOnOccupy) throw new InvalidOperationException("营销服务不可用");
-            return (CouponId, Discount);
+            return Task.FromResult((CouponId, Discount));
         }
 
         public Task ReleaseAsync(long customerId, string orderNo, CancellationToken ct = default)
@@ -244,23 +428,42 @@ public class OrderCreatorTests
             if (ThrowOnRelease) throw new InvalidOperationException("回退券失败");
             return Task.CompletedTask;
         }
+
+        public Task ConsumeAsync(long customerId, string orderNo, CancellationToken ct = default)
+        {
+            ConsumeCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakePointPort : IPointPort
     {
         public int LockCount;
         public int UnfreezeCount;
+        public int ConsumeCount;
         public bool ReturnFalseOnLock;
+
+        /// <summary>还冻着的积分数。实扣后必须归零，否则就是一笔悬空占用。</summary>
+        public long Frozen;
 
         public Task<bool> LockAsync(long customerId, string orderNo, long points, CancellationToken ct = default)
         {
             LockCount++;
+            Frozen += points;
             return Task.FromResult(!ReturnFalseOnLock);
         }
 
         public Task UnfreezeAsync(long customerId, string orderNo, CancellationToken ct = default)
         {
             UnfreezeCount++;
+            Frozen = 0;
+            return Task.CompletedTask;
+        }
+
+        public Task ConsumeAsync(long customerId, string orderNo, CancellationToken ct = default)
+        {
+            ConsumeCount++;
+            Frozen = 0;
             return Task.CompletedTask;
         }
     }
@@ -269,6 +472,8 @@ public class OrderCreatorTests
     {
         public int LockCount;
         public int ReleaseCount;
+        public int DeductCount;
+        public int ReplenishCount;
         public long FailOnSkuId;
         public List<long> ReleasedSkus = new();
 
@@ -285,6 +490,18 @@ public class OrderCreatorTests
             ReleasedSkus.Add(skuId);
             return Task.CompletedTask;
         }
+
+        public Task DeductAsync(long skuId, int quantity, string bizNo, CancellationToken ct = default)
+        {
+            DeductCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task ReplenishAsync(long skuId, int quantity, string bizNo, CancellationToken ct = default)
+        {
+            ReplenishCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeOrderStore : IOrderStore
@@ -293,18 +510,64 @@ public class OrderCreatorTests
         public List<Order> SavedOrders = new();
         public bool ThrowOnSave;
 
+        /// <summary>模拟「并发下已有同一张单」：非空时 SaveAsync 直接返回它。</summary>
+        public Order? ExistingOnSave;
+
         public Task<Order?> FindByIdempotencyKeyAsync(
             long customerId, string idempotencyKey, CancellationToken ct = default)
             => Task.FromResult(SavedOrders.FirstOrDefault(
                 a => a.CustomerId == customerId && a.IdempotencyKey == idempotencyKey));
 
-        public Task<long> SaveAsync(Order order, IReadOnlyCollection<OrderItem> items, CancellationToken ct = default)
+        /// <summary>已保存的订单行。按订单 Id 存，模拟真实的订单行表。</summary>
+        public List<OrderItem> SavedItems = new();
+
+        public Task<Order?> FindByOrderNoAsync(string orderNo, CancellationToken ct = default)
+            => Task.FromResult(SavedOrders.FirstOrDefault(a => a.OrderNo == orderNo));
+
+        // 必须真的返回订单行：支付收尾要靠它逐个 SKU 扣减库存，
+        // 这里返回空集合的话「扣没扣库存」这条断言永远测不出问题。
+        public Task<List<OrderItem>> ListItemsAsync(long orderId, CancellationToken ct = default)
+            => Task.FromResult(SavedItems.Where(a => a.OrderId == orderId).ToList());
+
+        public Task<(List<Order> Orders, long Total)> ListByCustomerAsync(
+            long customerId, int status, int page, int pageSize, CancellationToken ct = default)
+            => Task.FromResult((SavedOrders, (long)SavedOrders.Count));
+
+        public Task<(List<Order> Orders, long Total)> ListAsync(
+            int status, string keyword, long platformId, long merchantId,
+            int page, int pageSize, CancellationToken ct = default)
+            => Task.FromResult((SavedOrders, (long)SavedOrders.Count));
+
+        public Task<Dictionary<long, OrderItemAggregate>> AggregateItemsAsync(
+            IReadOnlyCollection<long> orderIds, CancellationToken ct = default)
+            => Task.FromResult(new Dictionary<long, OrderItemAggregate>());
+
+        public Task<int> TryTransitStatusAsync(
+            long orderId, int fromStatus, int toStatus, CancellationToken ct = default)
+            => Task.FromResult(1);
+
+        public Task<Order> SaveAsync(Order order, IReadOnlyCollection<OrderItem> items, CancellationToken ct = default)
         {
             if (ThrowOnSave) throw new InvalidOperationException("落单失败");
+
+            if (ExistingOnSave is not null)
+            {
+                // 返回的是另一张单 → OrderCreator 必须认出「这不是我刚写的那张」并回退本次占用
+                return Task.FromResult(ExistingOnSave);
+            }
+
             order.Id = 999;
+            order.CreatedAt = DateTime.UtcNow;
             Saved = order;
             SavedOrders.Add(order);
-            return Task.FromResult(order.Id);
+
+            foreach (var item in items)
+            {
+                item.OrderId = order.Id;
+                SavedItems.Add(item);
+            }
+
+            return Task.FromResult(order);
         }
     }
 }

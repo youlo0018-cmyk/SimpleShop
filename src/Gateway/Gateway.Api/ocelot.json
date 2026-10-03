@@ -244,6 +244,41 @@
           "Port": 5060
         }
       ]
+    },
+    {
+      "//说明": "C 端订单。与后台刻意分成两个上游前缀：后台订单在 /admin/orders 下，这样权限点能只绑后台那几个操作，不会把「发货」「退款」也开放给小程序。",
+      "UpstreamPathTemplate": "/gateway/orders/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/orders/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5064
+        }
+      ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/admin/orders/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/admin/orders/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5064
+        }
+      ]
     }
   ]
 }

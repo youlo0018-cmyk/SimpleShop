@@ -31,6 +31,8 @@ deploy/.env
 
 # 密钥与证书（RS256 自签证书不入库）
 deploy/certs/
+# 自提取货码的 RSA 私钥：绝不入库
+deploy/keys/
 *.pfx
 *.key
 *.pem

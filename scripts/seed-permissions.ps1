@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    播种权限树：5 个业务大类 + 23 个功能模块 + 78 个权限点。
+    播种权限树：5 个业务大类 + 23 个功能模块 + 79 个权限点。
 .DESCRIPTION
     依据 BUSINESS.md 5.2 的权限点清单与 5.4 的 4 层树结构。
     幂等：已存在的 code 不重复插入，先删后插按 code 对齐。
@@ -37,7 +37,7 @@ $modules = [ordered]@{
              @{ Id = 2123; Name = '文件与日志' })
 }
 
-# ---- 第 3 层：权限点（78 个），Key 为模块 Id ----
+# ---- 第 3 层：权限点（79 个），Key 为模块 Id ----
 $leaves = [ordered]@{
     '2101' = @(@('user:read', '账号列表', '/gateway/users/List'), @('user:create', '新建账号', '/gateway/users/Create'),
              @('user:update', '编辑账号', '/gateway/users/Update'), @('user:status', '启停账号', '/gateway/users/UpdateStatus'))
@@ -57,9 +57,14 @@ $leaves = [ordered]@{
              @('product:update', '编辑商品', '/gateway/products/Save'), @('product:audit', '商品审核', '/gateway/products/Audit'),
              @('product:delete', '删除商品', '/gateway/products/Delete'))
     '2110' = @(@('inventory:read', '库存查询', '/gateway/inventory/List'), @('inventory:update', '库存调整', '/gateway/inventory/Adjust'))
-    '2111' = @(@('order:read', '订单列表', '/gateway/orders/List'), @('order:ship', '订单发货', '/gateway/orders/Ship'),
-             @('order:receive', '确认收货', '/gateway/orders/Receive'), @('order:cancel', '取消订单', '/gateway/orders/Cancel'),
-             @('order:pickup', '取货核销', '/gateway/orders/Pickup'), @('order:simulate', '模拟支付', '/gateway/payments/Simulate'),
+    # 后台订单一律走 /gateway/admin/orders/*，C 端订单走 /gateway/orders/*。
+    # 分成两个前缀是刻意的：后台的「发货 / 退款 / 取货核销 / 模拟支付」权限点不能被小程序命中。
+    '2111' = @(@('order:read', '订单列表', '/gateway/admin/orders/List'), @('order:ship', '订单发货', '/gateway/admin/orders/Ship'),
+             @('order:virtual-deliver', '虚拟发货', '/gateway/admin/orders/DeliverVirtual'),
+             @('order:pickup', '取货核销', '/gateway/admin/orders/VerifyPickupCode'),
+             @('order:pickup-ready', '备货完成', '/gateway/admin/orders/SelfPickupReady'),
+             @('order:simulate', '模拟支付', '/gateway/admin/orders/SimulatePayment'),
+             @('order:refund', '订单退款', '/gateway/admin/orders/Refund'),
              @('logistics:manage', '物流公司维护', '/gateway/logistics/*'))
     '2112' = ,@(@('payment:read', '支付单列表', '/gateway/payments/List'))
     '2113' = @(@('refund:read', '退款单列表', '/gateway/refunds/List'), @('refund:apply', '发起退款', '/gateway/payments/Refund'),

@@ -56,9 +56,15 @@ public sealed class CouponAdminController : ControllerBase
     /// <summary>新建券活动。</summary>
     /// <param name="request">券活动。</param>
     /// <returns>新活动 Id。</returns>
+    /// <remarks>
+    /// 时间先归一到 UTC 再落库，原因写在 <see cref="ToUtc"/>。
+    /// </remarks>
     [HttpPost("coupon-activities/Create")]
     public ActionResult<ApiResponse<long>> CreateActivity([FromBody] CouponActivity request)
     {
+        request.ClaimStartTime = ToUtc(request.ClaimStartTime);
+        request.ClaimEndTime = ToUtc(request.ClaimEndTime);
+
         if (request.ClaimEndTime <= request.ClaimStartTime)
         {
             return BadRequest(Envelope("领取结束时间必须晚于开始时间"));
@@ -71,6 +77,25 @@ public sealed class CouponAdminController : ControllerBase
         _db.Insert(request).ExecuteAffrows();
         return Ok(ApiResults.Ok(request.Id, "创建成功"));
     }
+
+    /// <summary>把客户端传来的时间归一到 UTC。</summary>
+    /// <param name="value">原始时间。</param>
+    /// <returns>UTC 时间。</returns>
+    /// <remarks>
+    /// <b>踩过的坑</b>：本项目所有时间列都是 UTC（实体注释里写死了），领取窗口也拿
+    /// <c>DateTime.UtcNow</c> 比。但 <see cref="DateTime"/> 从 JSON 反序列化时，
+    /// 带偏移量的字符串（<c>2026-10-03T19:00:00+08:00</c>）会得到
+    /// <b>Kind=Local 且时钟值已是本地 19:00</b>——直接存进 <c>timestamp</c> 列就是错的，
+    /// 服务器按 UTC 一比就差了一个时区（本项目所在时区是 +08，也就是整整 8 小时）。
+    /// 症状是「刚建的活动立刻提示不在领取时间内」，而代码看起来完全没问题。
+    /// <para>Kind 三种取值都要处理：Local 要转换；Utc 原样；Unspecified 按本项目约定当 UTC。</para>
+    /// </remarks>
+    private static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
 
     /// <summary>查询券活动。</summary>
     /// <param name="activityId">活动 Id。</param>
