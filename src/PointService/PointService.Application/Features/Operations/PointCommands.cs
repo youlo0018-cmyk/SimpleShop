@@ -64,6 +64,25 @@ public record EarnByOrderCommand(
     long CustomerId, string BizNo, decimal PaidAmount, string Remark = "")
     : IRequest<ApiResponse<PointBalance>>;
 
+/// <summary>过期扣减：把已到期批次的剩余积分清零并写流水。</summary>
+/// <param name="Limit">单次最多处理多少个批次，1 ~ 500。</param>
+/// <remarks>
+/// 由 ScheduledService 每天 02:00 调用（BUSINESS.md 13.5）。
+/// <para><b>幂等</b>靠批次 Id 拼出的业务号 <c>EXP-{lotId}</c>：重复扫到同一批次不会重复扣。
+/// 这条很重要——任务失败重跑、或多实例同时扫到，都不能再扣一次。</para>
+///
+/// <para>过期只从 <b>available</b> 扣，已冻结的积分不动：在途订单冻结的那部分属于
+/// 用户还没付掉的钱，凭空消失会让他下单时莫名其妙少积分。</para>
+/// </remarks>
+public record ExpirePointsCommand(int Limit = 200) : IRequest<ApiResponse<ExpireResult>>;
+
+/// <summary>过期处理结果。</summary>
+/// <param name="Scanned">扫到的到期批次数。</param>
+/// <param name="Expired">实际清零的批次数。</param>
+/// <param name="Skipped">跳过（已清空 / 重复）的批次数。</param>
+/// <param name="DeductedTotal">本轮从可用余额扣掉的积分总数。</param>
+public sealed record ExpireResult(int Scanned, int Expired, int Skipped, long DeductedTotal);
+
 /// <summary>每日签到。</summary>
 /// <param name="CustomerId">客户 Id。</param>
 public record SignInPointsCommand(long CustomerId) : IRequest<ApiResponse<PointSignInResult>>;
@@ -110,6 +129,7 @@ public static class PointValidators
         services.AddScoped<IValidator<LockPointsCommand>, LockPointsValidator>();
         services.AddScoped<IValidator<RefundPointsCommand>, RefundPointsValidator>();
         services.AddScoped<IValidator<EarnByOrderCommand>, EarnByOrderValidator>();
+        services.AddScoped<IValidator<ExpirePointsCommand>, ExpirePointsValidator>();
     }
 
     /// <summary>发放校验。</summary>
@@ -134,6 +154,16 @@ public static class PointValidators
             RuleFor(x => x.CustomerId).GreaterThan(0).WithMessage("客户 Id 必须为正数");
             RuleFor(x => x.Quantity).GreaterThan(0).WithMessage("冻结数量必须大于 0");
             RuleFor(x => x.BizNo).NotEmpty().MaximumLength(64).WithMessage("订单号必填且不超过 64 个字符");
+        }
+    }
+
+    /// <summary>过期处理校验。</summary>
+    private sealed class ExpirePointsValidator : AbstractValidator<ExpirePointsCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public ExpirePointsValidator()
+        {
+            RuleFor(x => x.Limit).InclusiveBetween(1, 500).WithMessage("单次处理上限在 1 ~ 500 之间");
         }
     }
 

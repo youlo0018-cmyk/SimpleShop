@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 233/233） | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 239/239） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -85,7 +85,7 @@
 | `cart-regression.ps1` | CartService 累加语义购物车 | 13 |
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
 | `marketing-regression.ps1` | MarketingService 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价 | 35 |
-| `point-regression.ps1` | PointService 积分冻结 / 消耗 / 过期 / 签到 | 23 |
+| `point-regression.ps1` | PointService 积分冻结 / 消耗 / **过期** / 签到 | 29 |
 | `order-regression.ps1` | OrderService 下单补偿链路、状态机、模拟支付、自提取货码、完成发积分、支付超时关单 | 50 |
 
 ### 0.6 视觉回归的稳定性前提

@@ -65,6 +65,17 @@ public sealed class InternalPointController : ControllerBase
     public Task<ApiResponse<PointBalance>> EarnByOrder([FromBody] EarnByOrderCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>过期扣减（每天 02:00 由 ScheduledService 调用）。</summary>
+    /// <param name="command">过期命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>扫描 / 过期 / 跳过批次数与扣减积分总数。</returns>
+    /// <remarks>
+    /// 幂等靠批次 Id 拼出的业务号 <c>EXP-{lotId}</c>，重复扫到同一批次不会重复扣。
+    /// </remarks>
+    [HttpPost("Expire")]
+    public Task<ApiResponse<ExpireResult>> Expire([FromBody] ExpirePointsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>退款按比例回收积分（向上取整），退回原发放批次。</summary>
     /// <param name="command">回收命令。</param>
     /// <param name="ct">取消令牌。</param>

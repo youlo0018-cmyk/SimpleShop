@@ -195,6 +195,75 @@ Invoke-Case 'API-PNT-062' '从没领过积分的客户查余额返回 0 而不�
     return $r.success -and $r.data.available -eq 0 -and $r.data.frozen -eq 0
 }
 
+Write-Host "`n=== PNT 过期扣减（Scheduled 每天调 /internal/points/Expire）===" -ForegroundColor Cyan
+
+$script:expiryCustomer = 730000000 + $script:suffix
+$script:expiryBiz = "EXPIRY-$($script:suffix)"
+
+# 把批次到期时间往前拨。
+#
+# 必须写 `now() AT TIME ZONE 'UTC'`：容器会话时区是 Asia/Shanghai，
+# 直接写 `now() - interval` 得到的是 timestamptz，赋给 timestamp 列时会按会话时区折算，
+# 结果是把「往前拨 2 天」变成「往前推 8 小时」——单看 SQL 完全看不出问题，只有断言会红。
+function Backdate-Lot([string]$Biz, [string]$Interval) {
+    docker exec simpleshop-postgres psql -U postgres -d simpleshoppoint -q -c `
+        "UPDATE point_lot SET expire_at = (now() AT TIME ZONE 'UTC') - interval '$Interval' WHERE biz_no = '$Biz';" | Out-Null
+}
+
+Invoke-Case 'API-PNT-070' '发放 800 积分并确认可用余额' {
+    $r = Send 'Earn' @{ customerId = $script:expiryCustomer; source = 'test'; quantity = 800; bizNo = $script:expiryBiz }
+    return $r.success -and (Get-Balance $script:expiryCustomer).available -eq 800
+}
+
+Invoke-Case 'API-PNT-071' '🔴 未到期时过期任务不动它（余额不变）' {
+    $r = Send 'Expire' @{ limit = 500 }
+    return $r.success -and (Get-Balance $script:expiryCustomer).available -eq 800
+}
+
+Invoke-Case 'API-PNT-072' '🔴 到期后过期任务把它从可用余额扣掉' {
+    Backdate-Lot $script:expiryBiz '2 days'
+
+    $r = Send 'Expire' @{ limit = 500 }
+    $after = Get-Balance $script:expiryCustomer
+
+    Write-Host ("        {0}" -f $r.message) -ForegroundColor DarkGray
+    return $r.success -and $r.data.expired -ge 1 `
+        -and $after.available -eq 0 `
+        -and $after.totalUsed -eq 800
+}
+
+Invoke-Case 'API-PNT-073' '🔴 过期流水可查（action = expire），不是凭空消失' {
+    $r = Invoke-RestMethod "$PointService/points/Records?customerId=$($script:expiryCustomer)&page=1&pageSize=50" -TimeoutSec 30
+    # 流水接口的 data 直接就是数组（不是 .items），与 API-PNT-060/061 的用法一致
+    $expire = @($r.data | Where-Object { $_.action -eq 'expire' })
+    # 积分必须留痕：用户余额少了 800，流水里要能查到少了什么、什么时候少的
+    return $expire.Count -ge 1 -and [long]$expire[0].quantity -eq -800
+}
+
+Invoke-Case 'API-PNT-074' '🔴 重复跑过期任务不重复扣（幂等）' {
+    $r = Send 'Expire' @{ limit = 500 }
+    $after = Get-Balance $script:expiryCustomer
+    # 业务号是 EXP-{lotId}，同一个批次被扫到多少次都只扣一次
+    return $after.available -eq 0 -and $after.totalUsed -eq 800
+}
+
+Invoke-Case 'API-PNT-075' '🔴 已冻结的积分不被过期扣掉（属于在途订单）' {
+    $cid = 731000000 + $script:suffix
+    $biz = "EXP-FROZEN-$($script:suffix)"
+    Send 'Earn' @{ customerId = $cid; source = 'test'; quantity = 500; bizNo = "FRZ-EARN-$($script:suffix)" } | Out-Null
+    Send 'Lock'  @{ customerId = $cid; bizNo = "FRZ-LOCK-$($script:suffix)"; quantity = 500 } | Out-Null
+
+    $before = Get-Balance $cid
+    # 只有冻结、没有可用；过期任务应该扫不到任何可扣的东西
+    Send 'Expire' @{ limit = 500 } | Out-Null
+    $after = Get-Balance $cid
+
+    # 过期逻辑只从 available 扣：用户下单冻结的那部分积分还在 frozen 里，
+    # 凭空消失会让他支付时莫名其妙少积分
+    return $before.available -eq 0 -and $before.frozen -eq 500 `
+        -and $after.frozen -eq 500 -and $after.available -eq 0
+}
+
 Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan
 Write-Host ("  通过: " + $script:pass + "  失败: " + $script:fail)
 

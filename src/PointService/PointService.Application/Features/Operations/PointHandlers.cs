@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using MediatR;
+using Microsoft.Extensions.Logging;
 using PointService.Domain.Entities;
 using PointService.Domain.IRepository;
 
@@ -322,5 +323,79 @@ public static class TimeZoneHelper
         {
             return DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
         }
+    }
+}
+/// <summary>过期扣减处理器。</summary>
+public sealed class ExpirePointsHandler : IRequestHandler<ExpirePointsCommand, ApiResponse<ExpireResult>>
+{
+    private readonly IPointRepository _points;
+    private readonly ILogger<ExpirePointsHandler> _logger;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    /// <param name="logger">日志器。</param>
+    public ExpirePointsHandler(IPointRepository points, ILogger<ExpirePointsHandler> logger)
+    {
+        _points = points;
+        _logger = logger;
+    }
+
+    /// <summary>执行过期处理。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>处理统计。</returns>
+    /// <remarks>
+    /// <para><b>单个批次失败不中断整批</b>：一个客户的账户异常不该让后面几千个批次都过期不了。
+    /// 失败的记下来继续，下轮还会扫到它（批次没清零就一直会被扫到），所以不会丢。</para>
+    ///
+    /// <para>没有扫到东西时返回成功而不是失败：每天 02:00 大多数时候本来就没什么可过期的，
+    /// 把它算成失败会让监控上天天飘红，久而久之就没人看这个告警了。</para>
+    /// </remarks>
+    public async Task<ApiResponse<ExpireResult>> Handle(ExpirePointsCommand request, CancellationToken ct)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var lots = await _points.GetExpiredLotsAsync(nowUtc, request.Limit, ct);
+
+        if (lots.Count == 0)
+        {
+            return ApiResults.Ok(new ExpireResult(0, 0, 0, 0), "没有到期积分");
+        }
+
+        var expired = 0;
+        var skipped = 0;
+        long deducted = 0;
+
+        foreach (var lot in lots)
+        {
+            try
+            {
+                var outcome = await _points.ExpireLotAsync(lot.Id, ct);
+
+                if (!outcome.Succeeded)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (outcome.AlreadyApplied || lot.Remaining <= 0)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                expired++;
+                deducted += lot.Remaining;
+            }
+            catch (Exception ex)
+            {
+                // 单个批次异常不让整批中断：批次没清零，下轮还会扫到它
+                _logger.LogError(ex, "过期批次 {LotId}（客户 {CustomerId}）处理失败，本轮跳过", lot.Id, lot.CustomerId);
+                skipped++;
+            }
+        }
+
+        return ApiResults.Ok(
+            new ExpireResult(lots.Count, expired, skipped, deducted),
+            $"扫描 {lots.Count} 个批次，过期 {expired} 个，扣减 {deducted} 积分");
     }
 }

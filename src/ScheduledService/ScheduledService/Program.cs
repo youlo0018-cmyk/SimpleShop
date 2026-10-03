@@ -16,7 +16,7 @@ var loaded = await ServiceBootstrap.LoadConfigurationAsync(
     builder.Configuration,
     "ScheduledService",
     builder.Environment.EnvironmentName,
-    extraRequiredKeys: ["Services:OrderServiceBaseUrl"],
+    extraRequiredKeys: ["Services:OrderServiceBaseUrl", "Services:PointServiceBaseUrl"],
     exemptBaseKeys: [ConfigurationValidator.DatabaseConnectionKey]);
 
 builder.Configuration.AddConfiguration(
@@ -28,13 +28,28 @@ var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions.ConnectionStri
 builder.Services.AddSingleton(_ => redis.GetDatabase(redisOptions.Database));
 
 var orderUrl = builder.Configuration["Services:OrderServiceBaseUrl"]!;
-builder.Services.AddHttpClient<IJob, OrderTimeoutCloseJob>(client =>
+var pointUrl = builder.Configuration["Services:PointServiceBaseUrl"]!;
+builder.Services.AddHttpClient<OrderTimeoutCloseJob>(client =>
 {
     client.BaseAddress = new Uri(orderUrl.TrimEnd('/') + "/");
 
     // 超时要小于任务的互斥锁 TTL（90 秒），否则锁过期后下一轮会与本轮重叠
     client.Timeout = TimeSpan.FromSeconds(60);
 });
+
+builder.Services.AddHttpClient<PointExpireJob>(client =>
+{
+    client.BaseAddress = new Uri(pointUrl.TrimEnd('/') + "/");
+
+    // 过期要逐个批次处理，量大时比关单慢得多，给足时间
+    client.Timeout = TimeSpan.FromSeconds(120);
+});
+
+// 按**具体类型**注册成 IJob，而不是 AddHttpClient<IJob, TJob>()。
+// 后者会把两个任务都注册成同一个服务类型 IJob，行为依赖「同类型多注册」的实现细节；
+// 写成 IJob → 具体类型的显式映射，读代码的人一眼就知道有哪几个任务、各自指向谁。
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<OrderTimeoutCloseJob>());
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<PointExpireJob>());
 
 builder.Services.AddHostedService<JobRunner>();
 
