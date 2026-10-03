@@ -34,6 +34,8 @@
     <ProjectReference Include="..\..\src\ToolService\ToolService.Infrastructure\ToolService.Infrastructure.csproj" />
     <!-- 只引用 Domain：纯计算逻辑，不牵扯 EF Core / Npgsql 新版本 -->
     <ProjectReference Include="..\..\src\MarketingService\MarketingService.Domain\MarketingService.Domain.csproj" />
+    <!-- 只引用 Domain：纯计算逻辑 -->
+    <ProjectReference Include="..\..\src\OrderService\OrderService.Domain\OrderService.Domain.csproj" />
   </ItemGroup>
 
 </Project>

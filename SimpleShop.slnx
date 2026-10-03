@@ -37,6 +37,9 @@
     <Project Path="src/MarketingService/MarketingService.Domain/MarketingService.Domain.csproj" />
     <Project Path="src/MarketingService/MarketingService.Infrastructure/MarketingService.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/OrderService/">
+    <Project Path="src/OrderService/OrderService.Domain/OrderService.Domain.csproj" />
+  </Folder>
   <Folder Name="/src/PermissionService/">
     <Project Path="src/PermissionService/PermissionService.Api/PermissionService.Api.csproj" />
     <Project Path="src/PermissionService/PermissionService.Application/PermissionService.Application.csproj" />
