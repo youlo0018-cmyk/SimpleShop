@@ -9,6 +9,10 @@
 
     注意：脚本本身会向控制台打印明细（Write-Host 绕不过去），
     汇总表打在最后，CI 里看最后一段即可。
+
+    这里只收 `*-regression.ps1`。**`seckill-concurrency.ps1` 有意不纳入**：
+    它要起 200 个 `Start-ThreadJob` 线程，塞进日常回归会把 2 秒的脚本拖成一分钟。
+    真正验收并发防超卖时单独跑它（PLAN.md S7 验收步骤 1、2）。
 #>
 [CmdletBinding()]
 param(

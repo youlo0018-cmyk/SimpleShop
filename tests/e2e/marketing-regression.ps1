@@ -739,6 +739,112 @@ Invoke-Case 'API-SKL-029' '清理：结束抢购场次，剩余库存回补常�
     return $r.success
 }
 
+Invoke-Case 'API-SKL-030' '🔴 P0 30 个并发抢 10 件：成功**恰好** 10 个，一个都不能多' {
+    # 这是整套防超卖方案唯一的验收手段。单线程顺序请求就算逻辑写错也测不出来——
+    # 超卖只在并发下才发生。三层防线（Redis 原子预扣 / 限购唯一索引 / 条件更新记账）
+    # 少任何一层，这里都会出现成功数 > 10。
+    $sessionId = [long](New-SklSession)
+    $itemId = [long](Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $sessionId; skuId = $script:sklSkuId; seckillPrice = 66.00; seckillStock = 10; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20).data
+    if (-not (Publish-Skl $sessionId).success) { return $false }
+
+    # 30 个**不同**客户并发抢：限购唯一索引不生效的话不会拦，只能靠库存本身兜住
+    $jobs = 1..30 | ForEach-Object {
+        $cid = 920000000 + $script:suffix + $_
+        Start-ThreadJob -ScriptBlock {
+            param($url, $item, $customer)
+            try {
+                $r = Invoke-RestMethod -Uri $url -Method Post `
+                    -Body (@{
+                        itemId = $item; customerId = $customer
+                        receiverName = '并发测试'; receiverPhone = '13800138000'
+                        receiverAddress = '测试省测试市测试区 1 号'
+                    } | ConvertTo-Json) `
+                    -ContentType 'application/json' -TimeoutSec 40
+                [string]$r.data.resultStatus
+            } catch { 'ERR' }
+        } -ArgumentList 'http://127.0.0.1:5072/marketing/seckill/grab', $itemId, $cid
+    }
+
+    $done = $jobs | Wait-Job -Timeout 180 | Receive-Job
+    $jobs | Remove-Job -Force
+
+    # resultStatus：1 成功 / 2 已抢完 / 4 超限购
+    $ok = @($done | Where-Object { $_ -eq '1' }).Count
+    $soldOut = @($done | Where-Object { $_ -eq '2' }).Count
+    $err = @($done | Where-Object { $_ -eq 'ERR' }).Count
+    $other = @($done | Where-Object { $_ -notin @('1', '2') }).Count
+
+    $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $sessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $row = @($list.data | Where-Object { $_.itemId -eq "$itemId" })[0]
+
+    Write-Host ("        成功 {0} / 抢完 {1} / 异常 {2} / 其它 {3}；soldCount={4} remaining={5}" -f `
+        $ok, $soldOut, $err, $other, $row.soldCount, $row.remaining) -ForegroundColor DarkGray
+
+    Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `
+        -Body (@{ sessionId = $sessionId; cancel = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    return $ok -eq 10 -and $soldOut -eq 20 -and $err -eq 0 -and $other -eq 0 `
+        -and $row.soldCount -eq 10 -and $row.remaining -eq 0
+}
+
+Invoke-Case 'API-SKL-031' '🔴 P0 同一客户 10 个并发请求：只允许产生 1 张订单' {
+    # 限购额度是钱。Redis 预扣可能因为重试被消耗多次，但**数据库唯一索引**必须只放行一个，
+    # 其余 9 个都要拿到「超出限购」而不是 500。
+    $sessionId = [long](New-SklSession)
+    $itemId = [long](Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $sessionId; skuId = $script:sklSkuId; seckillPrice = 55.00; seckillStock = 20; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20).data
+    if (-not (Publish-Skl $sessionId).success) { return $false }
+
+    $cid = 930000000 + $script:suffix
+    $jobs = 1..10 | ForEach-Object {
+        Start-ThreadJob -ScriptBlock {
+            param($url, $item, $customer)
+            try {
+                $r = Invoke-RestMethod -Uri $url -Method Post `
+                    -Body (@{
+                        itemId = $item; customerId = $customer
+                        receiverName = '限购测试'; receiverPhone = '13800138000'
+                        receiverAddress = '测试省测试市测试区 1 号'
+                    } | ConvertTo-Json) `
+                    -ContentType 'application/json' -TimeoutSec 40
+                "$($r.data.resultStatus)|$($r.data.orderNo)"
+            } catch { 'ERR' }
+        } -ArgumentList 'http://127.0.0.1:5072/marketing/seckill/grab', $itemId, $cid
+    }
+
+    $done = $jobs | Wait-Job -Timeout 180 | Receive-Job
+    $jobs | Remove-Job -Force
+
+    $ok = @($done | Where-Object { $_ -like '1|*' }).Count
+    # 超限购的返回形如 "4|"（没下单所以订单号为空），
+    # 用 -eq '4' 匹配不到，会把 9 条全判成「没拦住」——用 -like '4|*' 才对
+    $limited = @($done | Where-Object { $_ -like '4|*' }).Count
+    $err = @($done | Where-Object { $_ -eq 'ERR' }).Count
+
+    # 不同的订单号数量必须为 1：两单并发都"成功"但拿到不同订单号，是最糟的情况
+    $distinctOrders = @($done | Where-Object { $_ -like '1|*' } | ForEach-Object { $_.Split('|')[1] } | Sort-Object -Unique).Count
+
+    $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $sessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $row = @($list.data | Where-Object { $_.itemId -eq "$itemId" })[0]
+
+    Write-Host ("        成功 {0} / 超限购 {1} / 异常 {2}；不同订单号 {3} 个；soldCount={4}" -f `
+        $ok, $limited, $err, $distinctOrders, $row.soldCount) -ForegroundColor DarkGray
+
+    Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `
+        -Body (@{ sessionId = $sessionId; cancel = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    return $ok -eq 1 -and $distinctOrders -eq 1 -and $limited -eq 9 -and $err -eq 0 -and $row.soldCount -eq 1
+}
+
 Invoke-Case 'API-SKL-018' '清理：删商品 → 删分类' {
     if ($script:sklProductId -gt 0) {
         Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
