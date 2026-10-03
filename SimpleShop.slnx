@@ -31,6 +31,12 @@
     <Project Path="src/PermissionService/PermissionService.Domain/PermissionService.Domain.csproj" />
     <Project Path="src/PermissionService/PermissionService.Infrastructure/PermissionService.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/PointService/">
+    <Project Path="src/PointService/PointService.Api/PointService.Api.csproj" />
+    <Project Path="src/PointService/PointService.Application/PointService.Application.csproj" />
+    <Project Path="src/PointService/PointService.Domain/PointService.Domain.csproj" />
+    <Project Path="src/PointService/PointService.Infrastructure/PointService.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/ProductService/">
     <Project Path="src/ProductService/ProductService.Api/ProductService.Api.csproj" />
     <Project Path="src/ProductService/ProductService.Application/ProductService.Application.csproj" />

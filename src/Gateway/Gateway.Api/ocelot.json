@@ -176,6 +176,23 @@
           "Port": 5062
         }
       ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/points/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/points/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5082
+        }
+      ]
     }
   ]
 }

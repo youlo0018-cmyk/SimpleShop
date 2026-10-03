@@ -170,9 +170,10 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Tool | 5080 | ✅ 统一文件上传（三步校验）+ 本地回源 |
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
 | Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU 完成；Elasticsearch 搜索、前台只读接口未开始） |
-| Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |\n| Cart / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
+| Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 |\n| Cart / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
 
-**S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService（分类 / 品牌 / 商品）与 InventoryService（三计数 / 幂等 / 防超卖）完成。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
+**S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService、InventoryService、PointService 完成；9 个服务在跑。下一步 Marketing，然后才是 OrderService。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
 
 **验证现状**
 
@@ -183,6 +184,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | `tests/e2e/auth-regression.ps1` | 17/17 |
 | `tests/e2e/gateway-regression.ps1` | 13/13 |\n| `tests/e2e/product-regression.ps1` | 31/31 |
 | `tests/e2e/inventory-regression.ps1` | 21/21 |
+| `tests/e2e/point-regression.ps1` | 23/23 |
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -254,6 +256,52 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S2 — PointService 落地（5082）
+
+订单链路的第二块。积分是下单抵扣的「最后一道」，算错就是订单金额算错或用户积分凭空消失。
+
+**为什么必须建「发放批次」表**
+
+文档有两条规则，单靠一个余额数字做不到：
+- 13.5「FIFO 先到期先用」
+- 13.4「退款回到**原冻结批次**，不重新计算有效期」
+
+所以积分记得到「是哪一批来的」：`point_lot`（发放批次，带到期时间）+
+`point_lock_lot`（这笔冻结从哪些批次各划走多少）。
+取消 / 超时解冻、退款按比例回收，都按这份明细**原路还回去**，不重新算有效期——
+否则用户晚几天收到退款、积分的到期日就被悄悄往后推了。
+
+**流水里的「变动前 / 变动后」不能从更新后的对象反推**
+
+第一版我写成 `BeforeAvailable = account.Available`（此时 account 已经被改成新值了），
+于是每条流水的「变动前」都等于「变动后」。流水是对账依据，这种错比没有流水更糟。
+现在用 `AccountSnapshot` 在事务里先拍下原值，算出新值后再分别写两列。
+
+**冻结模型四个动作（BUSINESS.md 13.4）**
+
+| 动作 | available | frozen | 说明 |
+|---|---|---|---|
+| 锁定（下单） | −q | +q | FIFO 先到期先用 |
+| 实扣（支付成功） | | −q | 钱已付出，积分消失 |
+| 解冻（取消 / 超时） | +q | −q | 退回原批次，不重置有效期 |
+| 回收（退款） | +q | | 按比例**向上取整**，退回原批次 |
+
+向上取整的方向要注意：退钱少退一点时，积分也多扣一点，对用户不利、对平台有利，
+所以同一笔订单多次退款的累计回收量要减掉已回收部分，否则退两次会退两倍。
+
+**余额上限 100000 仍然记流水**
+
+超额部分截断不入账（这是文档要求），但流水**照样记一条 qty=0** 的记录：
+运营在后台要能看出「这笔发放被截断了」，否则只能看到余额不动、猜不出原因。
+
+**签到日期用服务端本地时区，不能用 UtcNow.Date**
+
+直接用 UTC 日期会让东八区凌晨 0~8 点的用户「签到到昨天」，第二天早上再来点会提示已签到。
+统一转 Asia/Shanghai 再取日期；tzdata 缺失的精简镜像上退回 UTC+8 定长偏移
+（中国不实行夏令时，与 IANA 时区等价）。
+
+**验证**：`tests/e2e/point-regression.ps1` 23/23。
+实测一轮完整生命周期后余额对得上：150 − 60 实扣 − 40 冻结 + 20 回收 = 70。
 ### 2026-10-03（实现阶段）：S2 — InventoryService 落地（5062）
 
 订单链路的瓶颈。商品、秒杀、营销都要靠它算账，算错就是超卖或丢货。

@@ -1,0 +1,273 @@
+using Collaboration.Domain.Common;
+using MediatR;
+using PointService.Domain.Entities;
+using PointService.Domain.IRepository;
+
+namespace PointService.Application.Features.Operations;
+
+/// <summary>发放积分处理器。</summary>
+public sealed class EarnPointsHandler : IRequestHandler<EarnPointsCommand, ApiResponse<PointBalance>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public EarnPointsHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行发放。</summary>
+    /// <param name="request">发放命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额。</returns>
+    public async Task<ApiResponse<PointBalance>> Handle(EarnPointsCommand request, CancellationToken ct)
+    {
+        var outcome = await _points.EarnAsync(
+            request.CustomerId, request.Source, request.Quantity, request.BizNo,
+            request.Action, request.Remark, PointRules.ValidDays, ct);
+
+        if (!outcome.Succeeded)
+        {
+            return ApiResults.Fail<PointBalance>(BaseApiResponseCode.BusinessError, outcome.Error);
+        }
+
+        var message = outcome.AlreadyApplied ? "该业务单已发放过积分"
+            : outcome.Capped ? "发放成功，但超出余额上限的部分未入账"
+            : "发放成功";
+
+        return ApiResults.Ok(ToBalance(request.CustomerId, outcome), message);
+    }
+
+    internal static PointBalance ToBalance(long customerId, PointOutcome o)
+        => new(customerId, o.Available, o.Frozen, 0, 0, o.AlreadyApplied);
+}
+
+/// <summary>下单冻结积分处理器。</summary>
+public sealed class LockPointsHandler : IRequestHandler<LockPointsCommand, ApiResponse<PointBalance>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public LockPointsHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行冻结。</summary>
+    /// <param name="request">冻结命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额；积分不足返回业务错误。</returns>
+    public async Task<ApiResponse<PointBalance>> Handle(LockPointsCommand request, CancellationToken ct)
+    {
+        var outcome = await _points.LockAsync(
+            request.CustomerId, request.BizNo, request.Quantity, request.Remark, ct);
+
+        if (!outcome.Succeeded)
+        {
+            return ApiResults.Fail<PointBalance>(BaseApiResponseCode.BusinessError, outcome.Error);
+        }
+
+        return ApiResults.Ok(
+            EarnPointsHandler.ToBalance(request.CustomerId, outcome),
+            outcome.AlreadyApplied ? "该订单已冻结过积分" : "冻结成功");
+    }
+}
+
+/// <summary>解冻积分处理器。</summary>
+public sealed class UnfreezePointsHandler : IRequestHandler<UnfreezePointsCommand, ApiResponse<PointBalance>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public UnfreezePointsHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行解冻。</summary>
+    /// <param name="request">解冻命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额。</returns>
+    public async Task<ApiResponse<PointBalance>> Handle(UnfreezePointsCommand request, CancellationToken ct)
+    {
+        var outcome = await _points.UnfreezeAsync(request.CustomerId, request.BizNo, request.Remark, ct);
+
+        if (!outcome.Succeeded)
+        {
+            return ApiResults.Fail<PointBalance>(BaseApiResponseCode.BusinessError, outcome.Error);
+        }
+
+        return ApiResults.Ok(
+            EarnPointsHandler.ToBalance(request.CustomerId, outcome),
+            outcome.AlreadyApplied ? "该订单已解冻过" : "解冻成功");
+    }
+}
+
+/// <summary>实扣积分处理器。</summary>
+public sealed class ConsumePointsHandler : IRequestHandler<ConsumePointsCommand, ApiResponse<PointBalance>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public ConsumePointsHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行实扣。</summary>
+    /// <param name="request">实扣命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额。</returns>
+    public async Task<ApiResponse<PointBalance>> Handle(ConsumePointsCommand request, CancellationToken ct)
+    {
+        var outcome = await _points.ConsumeAsync(request.CustomerId, request.BizNo, request.Remark, ct);
+
+        if (!outcome.Succeeded)
+        {
+            return ApiResults.Fail<PointBalance>(BaseApiResponseCode.BusinessError, outcome.Error);
+        }
+
+        return ApiResults.Ok(
+            EarnPointsHandler.ToBalance(request.CustomerId, outcome),
+            outcome.AlreadyApplied ? "该订单已扣减过积分" : "扣减成功");
+    }
+}
+
+/// <summary>退款回收积分处理器。</summary>
+public sealed class RefundPointsHandler : IRequestHandler<RefundPointsCommand, ApiResponse<PointBalance>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public RefundPointsHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行回收。</summary>
+    /// <param name="request">回收命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额。</returns>
+    public async Task<ApiResponse<PointBalance>> Handle(RefundPointsCommand request, CancellationToken ct)
+    {
+        var outcome = await _points.RefundAsync(
+            request.CustomerId, request.BizNo, request.RefundRatio, request.Remark, ct);
+
+        if (!outcome.Succeeded)
+        {
+            return ApiResults.Fail<PointBalance>(BaseApiResponseCode.BusinessError, outcome.Error);
+        }
+
+        return ApiResults.Ok(
+            EarnPointsHandler.ToBalance(request.CustomerId, outcome),
+            outcome.AlreadyApplied ? "该订单已回收过积分" : "回收成功");
+    }
+}
+
+/// <summary>每日签到处理器。</summary>
+public sealed class SignInPointsHandler : IRequestHandler<SignInPointsCommand, ApiResponse<PointSignInResult>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public SignInPointsHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行签到。</summary>
+    /// <param name="request">签到命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回签到结果。</returns>
+    public async Task<ApiResponse<PointSignInResult>> Handle(SignInPointsCommand request, CancellationToken ct)
+    {
+        // 跨天判定以**服务端本地日期**为准，不做时区换算（BUSINESS.md 13.6）。
+        // 直接用 UtcNow.Date 会让东八区凌晨 0~8 点的用户「签到到昨天」，
+        // 必须先转成 Asia/Shanghai 再取日期。
+        var today = TimeZoneHelper.GetShanghaiToday();
+
+        var (outcome, streak, reward, already) =
+            await _points.SignInAsync(request.CustomerId, today, ct);
+
+        if (!outcome.Succeeded)
+        {
+            return ApiResults.Fail<PointSignInResult>(BaseApiResponseCode.BusinessError, outcome.Error);
+        }
+
+        var result = new PointSignInResult(
+            request.CustomerId, streak, reward, outcome.Available, already,
+            already ? "今日已签到" : $"签到成功，获得 {reward} 积分");
+
+        return ApiResults.Ok(result, result.Message);
+    }
+}
+
+/// <summary>查询积分账户处理器。</summary>
+public sealed class QueryPointAccountHandler : IRequestHandler<QueryPointAccountCommand, ApiResponse<PointBalance>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public QueryPointAccountHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>积分余额。没发放过也返回全 0，不报 404。</returns>
+    /// <remarks>
+    /// 从没领过积分的客户也要能看到「0 分」，而不是「查不到」。
+    /// 否则小程序积分中心对新用户会显示空白或报错。
+    /// </remarks>
+    public async Task<ApiResponse<PointBalance>> Handle(QueryPointAccountCommand request, CancellationToken ct)
+    {
+        var account = await _points.GetAccountAsync(request.CustomerId, ct);
+
+        var balance = account is null
+            ? new PointBalance(request.CustomerId, 0, 0, 0, 0, false)
+            : new PointBalance(
+                account.CustomerId, account.Available, account.Frozen,
+                account.TotalEarned, account.TotalUsed, false);
+
+        return ApiResults.Ok(balance);
+    }
+}
+
+/// <summary>分页查询积分流水处理器。</summary>
+public sealed class QueryPointRecordsHandler : IRequestHandler<QueryPointRecordsCommand, ApiResponse<List<PointRecordItem>>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public QueryPointRecordsHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>流水列表。</returns>
+    public async Task<ApiResponse<List<PointRecordItem>>> Handle(QueryPointRecordsCommand request, CancellationToken ct)
+    {
+        var (items, _) = await _points.QueryRecordsAsync(
+            request.CustomerId, Math.Max(1, request.Page), Math.Clamp(request.PageSize, 1, 100), ct);
+
+        var list = items.Select(a => new PointRecordItem(
+            a.Id.ToString(), a.BizNo, a.Action, a.Quantity,
+            a.BeforeAvailable, a.AfterAvailable, a.BeforeFrozen, a.AfterFrozen,
+            a.Remark, a.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"))).ToList();
+
+        return ApiResults.Ok(list);
+    }
+}
+
+/// <summary>时区辅助。</summary>
+public static class TimeZoneHelper
+{
+    /// <summary>签到等「按天」判定的时区。文档指定 Asia/Shanghai，不做配置化。</summary>
+    public static readonly TimeZoneInfo BusinessZone =
+        TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
+
+    /// <summary>取业务时区下的今天。</summary>
+    /// <returns>业务时区的当天日期。</returns>
+    public static DateOnly GetShanghaiToday()
+    {
+        // 兜底：某些精简 Linux 镜像没有 tzdata，会抛 TimeZoneNotFoundException。
+        // 这时退回 UTC+8 定长偏移——中国不实行夏令时，定长偏移与 IANA 时区等价。
+        try
+        {
+            return DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BusinessZone));
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        }
+    }
+}
