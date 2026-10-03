@@ -28,7 +28,7 @@ try {
     $code = $LASTEXITCODE
 
     # 锁文件是可恢复的失败：停掉在跑的服务再编译一次
-    $locked = $code -ne 0 -and ($log | Where-Object { $_ -match 'MSB3021|MSB3027' })
+    $locked = $code -ne 0 -and ($log | Where-Object { $_ -match 'MSB3021|MSB3027|MSB3026' })
     if ($locked -and -not $NoAutoStop) {
         Write-Host '    检测到 dll 被运行中的服务占用，自动停止服务后重试' -ForegroundColor Yellow
         & (Join-Path $PSScriptRoot 'stop-services.ps1') | Out-Null

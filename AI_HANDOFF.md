@@ -169,9 +169,10 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Permission | 5022 | ✅ 权限树（4 层 / 106 节点）、权限点增删改、角色 CRUD、内置角色种子 |
 | Tool | 5080 | ✅ 统一文件上传（三步校验）+ 本地回源 |
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
-| Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU 完成；Elasticsearch 搜索、前台只读接口未开始） |\n| Cart / Inventory / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU 完成；Elasticsearch 搜索、前台只读接口未开始） |
+| Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |\n| Cart / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
 
-**S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService 的分类 / 品牌 / 商品域完成。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
+**S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService（分类 / 品牌 / 商品）与 InventoryService（三计数 / 幂等 / 防超卖）完成。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
 
 **验证现状**
 
@@ -181,6 +182,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | `tests/e2e/api-regression.ps1` | 15/15 |
 | `tests/e2e/auth-regression.ps1` | 17/17 |
 | `tests/e2e/gateway-regression.ps1` | 13/13 |\n| `tests/e2e/product-regression.ps1` | 31/31 |
+| `tests/e2e/inventory-regression.ps1` | 21/21 |
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -252,6 +254,61 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S2 — InventoryService 落地（5062）
+
+订单链路的瓶颈。商品、秒杀、营销都要靠它算账，算错就是超卖或丢货。
+
+**三个计数不能合并成一个「库存」**
+
+`available`（可被锁定）/ `locked`（下单占用未支付）/ `deducted`（已支付）。
+合并之后就分不清「还没卖掉」和「卖掉但没发货」，退款回补与超时对账全都做不了。
+语义严格照 BUSINESS.md 9.2：
+
+| 动作 | available | locked | deducted |
+|---|---|---|---|
+| 锁定 | −q | +q | |
+| 扣减 | | −q | +q |
+| 释放 | +q | −q | |
+| 回补 | +q | | −q |
+
+**幂等靠数据库唯一索引，不是「先查再插」**
+
+`stock_flow` 上的 `(biz_no, sku_id, action)` 唯一索引。
+两个并发请求可能都查不到、然后都插进去——「先查再插」在并发下必然漏，唯一键才是真保证。
+撞唯一键时识别为「这个业务号已经处理过」，返回首次记下的结果，**回 200 而不是报错**：
+重复请求是正常业务（订单重试、消息重投），让上游以为失败反而会引发更多重试。
+
+**并发用条件更新，不依赖 ORM 的行锁 API**
+
+FreeSql 3.5 的 `ISelect` 没有暴露行锁（`AsRowLock` / `WithLock(LockType)` 都不存在）。
+改用 REVIEW.md 本来就要求的写法：`WHERE 三个计数都还是读到的值`（乐观版本校验）。
+不加这个条件，两个并发请求各自算新值、后写的覆盖先写的，
+就会出现 `available = 10 - 8 - 8 = -6` 这种超卖。
+
+实测：**20 个并发请求各锁 1 件、库存只有 10 → 成功恰好 10，失败 10，
+最终 available=0 / locked=10，流水恰好 10 条**。
+
+**一个真 bug：`Math.Abs` 把调整量的符号丢了**
+
+后台调库存写的是 `availableAdjust`（正增负减）。最初为了「数量必须为正」
+统一取了 `Math.Abs`，结果管理员想**盘亏 999**，实际执行的是**增加 999**。
+改成：数量本身带符号，只有 `adjust` 允许负数，其余动作（锁定/扣减/释放/回补）
+仍必须为正——方向由动作决定，不允许用负数量表达反向操作，否则一条流水同时表达两件事。
+
+**库存初始化失败要让商品保存失败**
+
+ProductService 建商品时调 `/internal/inventory/Init`。
+失败就整个保存失败：一个没有库存记录的 SKU 是**永远买不了**的，
+静默放过会留下一批「看着正常、实际缺货」的商品，事后极难排查。
+编辑商品**不**调初始化（编辑页本就不提供改库存的入口，DATA_SPEC 5.7.2）。
+
+**顺带修了 `build.ps1` 的一个漏洞**
+
+它只认 MSB3021/MSB3027，遇到 MSB3026（同样是 dll 被占用）不会自动停服务，
+构建会带着 3 个警告过去。已把 MSB3026 也纳入判定。
+
+**验证**：`tests/e2e/inventory-regression.ps1` 21/21，含并发不超卖、
+幂等（同一单号重复 5 次只锁 1 件）、三计数语义、拒绝路径、以及「建商品即建库存 / 编辑不重置库存」。
 ### 2026-10-03（实现阶段）：S2 — ProductService 商品域（SPU / 规格 / SKU）
 
 分类与品牌之上把商品本体做通了：一个 Save 入口同时管新建与编辑，

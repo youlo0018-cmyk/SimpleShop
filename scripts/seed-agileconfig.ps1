@@ -132,6 +132,7 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     $cfg['Services:PermissionServiceBaseUrl'] = $serviceUrls['PermissionService']
     $cfg['Services:UserServiceBaseUrl']        = $serviceUrls['UserService']
     $cfg['Services:AuthServiceBaseUrl']        = $serviceUrls['AuthService']
+    $cfg['Services:InventoryServiceBaseUrl']   = $serviceUrls['InventoryService']
     if ($name -eq 'CustomerService') {
         $cfg['Jwt:Issuer']       = 'simpleshop'
         $cfg['Jwt:Audience']     = 'simpleshop-customer'

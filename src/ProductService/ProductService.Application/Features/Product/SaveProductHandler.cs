@@ -3,6 +3,7 @@ using Collaboration.Domain.Infrastructure;
 using MediatR;
 // 本命名空间 Features.Product 会遮蔽同名实体 Product，枚举同样从别名命名空间取。
 using ProductEnums = ProductService.Domain.Entities;
+using ProductService.Application.Services;
 using ProductService.Domain.IRepository;
 using ProductService.Application.Features.Category;   // CategoryLevels 在这一层
 using ProductEntity = ProductService.Domain.Entities.Product;
@@ -24,19 +25,23 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
     private readonly IProductRepository _products;
     private readonly ICategoryRepository _categories;
     private readonly IBrandRepository _brands;
+    private readonly IInventoryClient _inventory;
 
     /// <summary>构造处理器。</summary>
     /// <param name="products">商品仓储。</param>
     /// <param name="categories">分类仓储。</param>
     /// <param name="brands">品牌仓储。</param>
+    /// <param name="inventory">库存服务客户端，用于建商品时初始化 SKU 库存。</param>
     public SaveProductHandler(
         IProductRepository products,
         ICategoryRepository categories,
-        IBrandRepository brands)
+        IBrandRepository brands,
+        IInventoryClient inventory)
     {
         _products = products;
         _categories = categories;
         _brands = brands;
+        _inventory = inventory;
     }
 
     /// <summary>执行保存。</summary>
@@ -113,6 +118,9 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
         // ---- 4. SKU 校验 ----
         var codes = new List<string>();
         var resolvedSkus = new List<Sku>();
+        // 请求的初始库存。<b>刻意不进 Sku 实体</b>：库存归 InventoryService 管，
+        // 商品这边存一份就成了两份真相。所以这里用平行数组带过去，下完单即弃。
+        var requestedStocks = new List<int>();
         var resolvedNames = new List<List<string>>();
 
         foreach (var input in skuInputs)
@@ -175,6 +183,7 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
 
             codes.Add(code);
             resolvedNames.Add(picked);
+            requestedStocks.Add(input.Stock);
             resolvedSkus.Add(new Sku
             {
                 Id = existing?.Id ?? 0,
@@ -328,6 +337,30 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
         await _products.UpsertSkusAsync(resolvedSkus, linksBySkuCode, ct);
         await _products.SoftDeleteSkusNotInAsync(product.Id, codes, ct);
         await _products.RefreshPriceRangeAsync(product.Id, ct);
+
+        // 🔴 只有**新建**才初始化库存：编辑页不提供改库存的入口（DATA_SPEC 5.7.2），
+        // 库存之后的增减只能走 InventoryService 的锁定 / 扣减 / 释放 / 回补。
+        // 库存初始化失败要让整个保存失败——一个没有库存记录的 SKU 是永远买不了的，
+        // 静默放过会留下一批「看着正常、实际缺货」的商品，事后极难排查。
+        if (isCreate)
+        {
+            for (var i = 0; i < resolvedSkus.Count; i++)
+            {
+                var sku = resolvedSkus[i];
+                var initialStock = requestedStocks[i];
+
+                // BizNo 用 SKU 编码：同一编码重复提交只会初始化一次，天然幂等
+                var ok = await _inventory.InitAsync(
+                    sku.Id, initialStock, request.SpuName.Trim(), sku.SkuSpecText, 0, sku.SkuCode, ct);
+
+                if (!ok)
+                {
+                    return ApiResults.Fail<long>(
+                        BaseApiResponseCode.BusinessError,
+                        $"SKU「{sku.SkuCode}」初始化库存失败，商品未保存。请确认库存服务可用后重试。");
+                }
+            }
+        }
 
         return ApiResults.Ok(product.Id, isCreate ? "创建成功" : "保存成功");
     }
