@@ -158,13 +158,15 @@ public interface IProductPort
 /// <param name="SkuSpecText">规格文本。</param>
 /// <param name="Image">SKU 图。</param>
 /// <param name="Price">售价。</param>
+/// <param name="DeliveryType">配送方式，秒杀下单要按它决定虚拟发货还是快递。</param>
 public sealed record SkuSnapshot(
     [property: JsonPropertyName("skuId")] long SkuId,
     [property: JsonPropertyName("productId")] long SpuId,
     [property: JsonPropertyName("skuName")] string ProductName,
     [property: JsonPropertyName("skuSpecText")] string SkuSpecText,
     [property: JsonPropertyName("image")] string Image,
-    [property: JsonPropertyName("price")] decimal Price);
+    [property: JsonPropertyName("price")] decimal Price,
+    [property: JsonPropertyName("deliveryType")] int DeliveryType = 1);
 
 /// <summary>走内网 HTTP 调商品服务的实现。</summary>
 public sealed class HttpProductPort : IProductPort

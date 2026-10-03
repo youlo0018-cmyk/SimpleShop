@@ -72,6 +72,7 @@ public sealed class AddSessionItemHandler : IRequestHandler<AddSessionItemComman
             PerUserLimit = request.PerUserLimit,
             SoldCount = 0,
             Status = SeckillItemStatuses.Enabled,
+            DeliveryType = sku.DeliveryType,
             SortOrder = request.SortOrder
         };
 

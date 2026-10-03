@@ -67,8 +67,17 @@ public sealed class InternalProductController : ControllerBase
 
         var skus = _db.Select<Sku>().Where(a => ids.Contains(a.Id) && a.Status == 1).ToList();
 
+        // 配送方式挂在 SPU 上不在 SKU 上，但下单时要的是「这个 SKU 怎么送」，
+        // 所以在这里 join 一次带出来，省得调用方自己再查一遍商品。
+        var spuIds = skus.Select(a => a.ProductId).Distinct().ToArray();
+        var deliveryBySpu = _db.Select<Product>()
+            .Where(a => spuIds.Contains(a.Id))
+            .ToList(a => new { a.Id, a.DeliveryType })
+            .ToDictionary(a => a.Id, a => a.DeliveryType);
+
         var list = skus.Select(a => new SkuSnapshot(
-            a.Id, a.ProductId, a.SkuCode, a.SkuName, a.SkuSpecText, a.Price, a.OriginalPrice, a.Image, a.Status))
+            a.Id, a.ProductId, a.SkuCode, a.SkuName, a.SkuSpecText, a.Price, a.OriginalPrice, a.Image, a.Status,
+            deliveryBySpu.GetValueOrDefault(a.ProductId, DeliveryTypes.PhysicalExpress)))
             .ToList();
 
         return Ok(ApiResults.Ok(list));
@@ -85,6 +94,7 @@ public sealed class InternalProductController : ControllerBase
 /// <param name="OriginalPrice">划线原价。</param>
 /// <param name="Image">SKU 图。</param>
 /// <param name="Status">1 启用 / 2 停用。</param>
+/// <param name="DeliveryType">配送方式，挂在 SPU 上。见 <see cref="DeliveryTypes"/>。</param>
 public sealed record SkuSnapshot(
     long SkuId, long ProductId, string SkuCode, string SkuName, string SkuSpecText,
-    decimal Price, decimal OriginalPrice, string Image, int Status);
+    decimal Price, decimal OriginalPrice, string Image, int Status, int DeliveryType);

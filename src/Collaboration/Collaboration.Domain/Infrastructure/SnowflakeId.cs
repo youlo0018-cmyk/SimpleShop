@@ -8,7 +8,7 @@ namespace Collaboration.Domain.Infrastructure;
 /// <remarks>
 /// 链路位置：服务启动阶段 S4/S5（DATA_SPEC 1.2）先分配 workerId，再调用 Configure，
 /// 之后所有插入都由 FreeSql AOP 自动调用 NewId 填主键（DATA_SPEC 3.3）。
-/// workerId 来源：Redis INCR 原子自增（DATA_SPEC 3.4），**不用配置写死**。
+/// workerId 来源：Redis 租约槽位（DATA_SPEC 3.4），**不用配置写死**。
 /// 依据：DATA_SPEC.md 3.3、3.4。
 /// </remarks>
 public static class SnowflakeId

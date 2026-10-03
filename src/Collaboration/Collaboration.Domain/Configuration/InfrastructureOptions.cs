@@ -58,16 +58,19 @@ public sealed class RabbitMqOptions
     public string VirtualHost { get; set; } = "/";
 }
 
-/// <summary>雪花 Id 配置。workerId 由 Redis INCR 原子自增分配（DATA_SPEC 3.4）。</summary>
+/// <summary>雪花 Id 配置。workerId 由 Redis 租约槽位分配（DATA_SPEC 3.4）。</summary>
 public sealed class SnowflakeOptions
 {
     /// <summary>配置文件节名。</summary>
     public const string SectionName = "Snowflake";
 
-    /// <summary>Redis 中分配 workerId 的 key 前缀，最终 key 为 {前缀}:{服务名}。</summary>
+    /// <summary>Redis 中分配 workerId 的 key 前缀，最终 key 为 {前缀}:{服务名}:{槽位}。</summary>
     public string WorkerIdKeyPrefix { get; set; } = "snowflake:worker";
 
-    /// <summary>workerId 上限（不含）。超过则启动失败并打印已分配到的最大值，不做回绕复用。</summary>
+    /// <summary>
+    /// 槽位总数（不含上界），即 workerId 可用范围。全部槽位都被未过期的租约占满时启动失败，
+    /// 并打印每个槽位的占用情况。
+    /// </summary>
     public ushort WorkerIdUpperBound { get; set; } = 64;
 }
 

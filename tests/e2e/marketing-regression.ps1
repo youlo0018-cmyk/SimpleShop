@@ -474,6 +474,14 @@ $script:sklInitStock = 50
 $script:sklSessionId = 0
 $script:sklItemId = 0
 $script:sklQty = 10
+# 抢购要三个互不相同的客户：第一个抢到，第二个抢到，第三个撞「已抢完」
+$script:grabSessionId = 0
+$script:grabItemId = 0
+$script:grabOrderNo = ''
+$script:grabRequestId = ''
+$script:grabCustomer1 = 910000001 + $script:suffix
+$script:grabCustomer2 = 910000002 + $script:suffix
+$script:grabCustomer3 = 910000003 + $script:suffix
 
 function Get-SkuStock([long]$SkuId) {
     $r = Invoke-RestMethod "$Inventory/internal/inventory/Snapshot?skuIds=$SkuId" -TimeoutSec 20
@@ -493,6 +501,18 @@ function New-SklSession([int]$Hours = 1) {
 function Publish-Skl([long]$Id, [bool]$Force = $false) {
     return Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Publish' -Method Post `
         -Body (@{ sessionId = $Id; force = $Force } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+}
+
+# 抢购用例统一走这里：测试商品是实物快递（deliveryType=1），
+# 实物必填收货信息，少传会被下单校验挡掉、返回「请填写收货人姓名」。
+function Invoke-Grab([long]$ItemId, [long]$CustomerId) {
+    return Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/grab' -Method Post `
+        -Body (@{
+            itemId = $ItemId; customerId = $CustomerId
+            receiverName = '抢购测试'; receiverPhone = '13800138000'
+            receiverAddress = '测试省测试市测试区 1 号'
+        } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
 }
 
@@ -628,6 +648,95 @@ Invoke-Case 'API-SKL-017' '🔴 数量上限被校验挡住（0 件不是有效�
     } catch {
         return [int]$_.Exception.Response.StatusCode -eq 400
     }
+}
+
+Invoke-Case 'API-SKL-020' '准备抢购：再建一个场次，2 件秒杀库存' {
+    # 抢购用例需要**进行中**的场次，而上面那个已经被中止了，所以另建一个。
+    $script:grabSessionId = [long](New-SklSession)
+    $script:grabItemId = [long](Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $script:grabSessionId; skuId = $script:sklSkuId; seckillPrice = 77.00; seckillStock = 2; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20).data
+    $r = Publish-Skl $script:grabSessionId
+    return $script:grabItemId -gt 0 -and $r.success
+}
+
+Invoke-Case 'API-SKL-021' '🔴 游客抢购被拒（限购要挂在人身上，否则一个人能买走整场）' {
+    # 校验失败返回 HTTP 400，Invoke-RestMethod 见到 400 直接抛异常，
+    # 所以这里把异常当成「被拒绝」——要断言的正是「游客进不来」这个事实
+    try {
+        Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/grab' -Method Post `
+            -Body (@{ itemId = $script:grabItemId; customerId = 0 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+        return $false
+    } catch {
+        return [int]$_.Exception.Response.StatusCode -eq 400
+    }
+}
+
+Invoke-Case 'API-SKL-022' '🔴 P0 抢购成功：生成订单，金额=秒杀价，且**不再锁常规库存**' {
+    # 抢一件之后常规库存必须纹丝不动：发布时已经划走了，抢购再扣一次就是双倍扣减，
+    # 等于凭空少一批货。这条是秒杀与普通下单最大的区别。
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $r = Invoke-Grab $script:grabItemId $script:grabCustomer1
+    $after = (Get-SkuStock $script:sklSkuId).available
+
+    $script:grabOrderNo = $r.data.orderNo
+    $script:grabRequestId = $r.data.requestId
+    Write-Host ("        常规库存 {0} → {1}；订单 {2}" -f $before, $after, $script:grabOrderNo) -ForegroundColor DarkGray
+
+    return $r.success -and $r.data.resultStatus -eq 1 -and $script:grabOrderNo `
+        -and $before -eq $after -and $script:grabOrderNo.Length -gt 0
+}
+
+Invoke-Case 'API-SKL-023' '🔴 P0 秒杀单按秒杀价成交，且订单行标记为秒杀来源' {
+    $det = Invoke-RestMethod "http://127.0.0.1:5064/orders/Detail?orderNo=$($script:grabOrderNo)&customerId=$($script:grabCustomer1)" `
+        -TimeoutSec 30
+    $line = $det.data.items[0]
+    return $det.success -and $line.price -eq 77.00 -and $det.data.payableAmount -eq 77.00 `
+        -and $line.sourceType -eq 2 -and $line.skuId -eq "$($script:sklSkuId)"
+}
+
+Invoke-Case 'API-SKL-024' '🔴 P0 同一客户重复抢购被限购拦下，且不产生第二张单' {
+    $r = Invoke-Grab $script:grabItemId $script:grabCustomer1
+    return $r.data.resultStatus -eq 4 -and $r.data.orderId -eq 0
+}
+
+Invoke-Case 'API-SKL-025' '🔴 P0 第三个客户抢到后，第四个客户拿到「已抢完」' {
+    $r2 = Invoke-Grab $script:grabItemId $script:grabCustomer2
+    $r3 = Invoke-Grab $script:grabItemId $script:grabCustomer3
+    return $r2.data.resultStatus -eq 1 -and $r3.data.resultStatus -eq 2 -and $r3.data.message -match '抢完'
+}
+
+Invoke-Case 'API-SKL-026' 'sold_count 累计到 2，秒杀池库存正好卖完' {
+    $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $script:grabSessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $row = @($list.data | Where-Object { $_.itemId -eq "$($script:grabItemId)" })[0]
+    return $row.soldCount -eq 2 -and $row.remaining -eq 0
+}
+
+Invoke-Case 'API-SKL-027' '轮询结果接口返回抢购结果' {
+    # 用一条**真正落了抢购记录**的请求来轮询。
+    # 被 Redis 预扣当场拒掉的请求（抢完 / 不在抢购中）压根不写 seckill_grab，
+    # 轮询它们必然是「不存在」——那是设计如此，不是缺陷。
+    $q = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/grab/result' -Method Post `
+        -Body (@{ requestId = $script:grabRequestId; customerId = $script:grabCustomer1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    return $q.success -and $q.data.resultStatus -eq 1 -and $q.data.orderNo -eq $script:grabOrderNo
+}
+
+Invoke-Case 'API-SKL-028' '🔴 别人的 requestId 查不到（不泄露该 ID 是否存在）' {
+    $q = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/grab/result' -Method Post `
+        -Body (@{ requestId = $script:grabRequestId; customerId = $script:grabCustomer2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    return $q.success -eq $false -and $q.message -match '不存在'
+}
+
+Invoke-Case 'API-SKL-029' '清理：结束抢购场次，剩余库存回补常规池' {
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `
+        -Body (@{ sessionId = $script:grabSessionId; cancel = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    return $r.success
 }
 
 Invoke-Case 'API-SKL-018' '清理：删商品 → 删分类' {

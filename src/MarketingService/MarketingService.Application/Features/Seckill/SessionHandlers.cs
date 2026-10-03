@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using MediatR;
+using StackExchange.Redis;
 using MarketingService.Application.Services;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
@@ -154,16 +155,21 @@ public sealed class PublishSessionHandler : IRequestHandler<PublishSessionComman
 {
     private readonly ISeckillRepository _seckill;
     private readonly IInventoryPort _inventory;
+    private readonly IDatabase _redis;
     private readonly ILogger<PublishSessionHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="seckill">秒杀仓储。</param>
     /// <param name="inventory">库存端口。</param>
     /// <param name="logger">日志器。</param>
-    public PublishSessionHandler(ISeckillRepository seckill, IInventoryPort inventory, ILogger<PublishSessionHandler> logger)
+    /// <param name="redis">Redis，用于初始化抢购的余量计数。</param>
+    public PublishSessionHandler(
+        ISeckillRepository seckill, IInventoryPort inventory,
+        IDatabase redis, ILogger<PublishSessionHandler> logger)
     {
         _seckill = seckill;
         _inventory = inventory;
+        _redis = redis;
         _logger = logger;
     }
 
@@ -230,6 +236,19 @@ public sealed class PublishSessionHandler : IRequestHandler<PublishSessionComman
             }
         }
 
+        // 初始化 Redis 余量：抢购时靠 DECBY 原子预扣。
+        // 只在**首次**发布时写入（Force 重跑不覆盖），否则重跑会把已经在抢的余量重置一遍，
+        // 正在进行的场次会被凭空多出库存。
+        foreach (var item in items)
+        {
+            var key = $"{SeckillStockKeys.Stock}{item.Id}";
+            if (!await _redis.KeyExistsAsync(key).ConfigureAwait(false))
+            {
+                await _redis.StringSetAsync(key, item.SeckillStock).ConfigureAwait(false);
+                _logger.LogInformation("已初始化秒杀余量 {Key} = {Qty}", key, item.SeckillStock);
+            }
+        }
+
         await _seckill.SetStockTransferredAsync(session.Id, true, ct).ConfigureAwait(false);
         await _seckill.TrySetSessionStatusAsync(
             session.Id, SeckillSessionStatuses.NotStarted, SeckillSessionStatuses.Running, ct).ConfigureAwait(false);
@@ -249,16 +268,21 @@ public sealed class FinishSessionHandler : IRequestHandler<FinishSessionCommand,
 {
     private readonly ISeckillRepository _seckill;
     private readonly IInventoryPort _inventory;
+    private readonly IDatabase _redis;
     private readonly ILogger<FinishSessionHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="seckill">秒杀仓储。</param>
     /// <param name="inventory">库存端口。</param>
+    /// <param name="redis">Redis，用于清掉本场次残留的秒杀余量键。</param>
     /// <param name="logger">日志器。</param>
-    public FinishSessionHandler(ISeckillRepository seckill, IInventoryPort inventory, ILogger<FinishSessionHandler> logger)
+    public FinishSessionHandler(
+        ISeckillRepository seckill, IInventoryPort inventory,
+        IDatabase redis, ILogger<FinishSessionHandler> logger)
     {
         _seckill = seckill;
         _inventory = inventory;
+        _redis = redis;
         _logger = logger;
     }
 
@@ -344,6 +368,13 @@ public sealed class FinishSessionHandler : IRequestHandler<FinishSessionCommand,
         }
 
         // 回补完成后才清标志：中途挂掉时标志还在，重跑会继续回补（幂等），不会漏
+        // 清掉余量键：场次已经结束，这个数字不能再被谁读到。
+        // 不清的话下次重建同名场次时 KeyExists 会判定「已初始化」，余量就停留在旧值上。
+        foreach (var item in items)
+        {
+            await _redis.KeyDeleteAsync($"{SeckillStockKeys.Stock}{item.Id}").ConfigureAwait(false);
+        }
+
         await _seckill.SetStockTransferredAsync(session.Id, false, ct).ConfigureAwait(false);
 
         // 注意：不能用 $"...{'中止' if ...}" —— '中止' 是两个字符，不是合法的 char 字面量。

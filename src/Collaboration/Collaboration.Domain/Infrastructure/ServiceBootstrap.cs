@@ -51,30 +51,29 @@ public static partial class ServiceBootstrap
     }
 
     /// <summary>
-    /// 用 Redis INCR 原子自增分配雪花 workerId（S4）。
+    /// 分配雪花 workerId（S4）：抢占一个带 TTL 的空闲槽位，并后台续租。
     /// </summary>
     /// <param name="redis">Redis 连接。</param>
     /// <param name="keyPrefix">key 前缀，最终 key 为 {前缀}:{服务名}。</param>
     /// <param name="appName">服务名。</param>
-    /// <param name="upperBound">workerId 上限（不含），超过则失败且不回收。</param>
+    /// <param name="upperBound">槽位总数（不含上界），即 workerId 可用范围。</param>
+    /// <param name="ct">取消令牌。</param>
     /// <returns>分配到的 workerId。</returns>
+    /// <remarks>
+    /// 租约由 <see cref="WorkerIdLease"/> 的静态定时器持有，不会被 GC 回收，
+    /// 所以这里<b>不返回租约对象</b>——12 个 Program.cs 的调用点保持一致。
+    /// 进程退出时来不及释放租约也没关系：90 秒后 key 自动过期，槽位回到池子里。
+    /// </remarks>
     public static async Task<ushort> AllocateWorkerIdAsync(
         IDatabase redis,
         string keyPrefix,
         string appName,
-        ushort upperBound)
+        ushort upperBound,
+        CancellationToken ct = default)
     {
-        var key = $"{keyPrefix}:{appName}";
-        var value = await redis.StringIncrementAsync(key);
-        Console.WriteLine($"[bootstrap] {appName} 分配 workerId={value}（key={key}）");
-
-        if (value > upperBound)
-        {
-            throw new InvalidOperationException(
-                $"雪花 workerId 超出上限：已分配到 {value}，上限 {upperBound}（不含）。不做回绕复用，请检查 {key}。");
-        }
-
-        return (ushort)value;
+        var lease = await WorkerIdLease.AcquireAsync(redis, keyPrefix, appName, upperBound, ct);
+        Console.WriteLine($"[bootstrap] {appName} 分配 workerId={lease.WorkerId}（租约 key={lease.Key}，90 秒自动续租）");
+        return lease.WorkerId;
     }
 }
 

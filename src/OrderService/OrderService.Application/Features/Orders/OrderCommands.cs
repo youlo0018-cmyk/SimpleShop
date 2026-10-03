@@ -113,10 +113,23 @@ public sealed record OrderDetailDto(
     string Remark, string CreatedAt, IReadOnlyList<OrderItemDto> Items);
 
 /// <summary>订单行。</summary>
+/// <param name="SkuId">SKU Id。</param>
+/// <param name="SpuId">SPU Id。</param>
+/// <param name="ProductName">商品名快照。</param>
+/// <param name="SkuSpecText">规格文本快照。</param>
+/// <param name="Price">成交单价，秒杀单这里是秒杀价。</param>
+/// <param name="Quantity">数量。</param>
+/// <param name="OriginalAmount">原价金额 = 单价 × 数量（秒杀单按**秒杀价**算，不是原价）。</param>
+/// <param name="ActivityDiscount">活动优惠额。</param>
+/// <param name="CouponDiscount">券优惠额。</param>
+/// <param name="PayableAmount">本行实付金额。</param>
+/// <param name="DeliveryType">配送方式。</param>
+/// <param name="SourceType">订单来源，见 <see cref="Entities.OrderSourceTypes"/>。后台订单列表要靠它区分秒杀单。</param>
 public sealed record OrderItemDto(
     long SkuId, long SpuId, string ProductName, string SkuSpecText,
     decimal Price, int Quantity, decimal OriginalAmount,
-    decimal ActivityDiscount, decimal CouponDiscount, decimal PayableAmount, int DeliveryType);
+    decimal ActivityDiscount, decimal CouponDiscount, decimal PayableAmount, int DeliveryType,
+    int SourceType = 1);
 
 /// <summary>分页结果。</summary>
 /// <typeparam name="T">行类型。</typeparam>

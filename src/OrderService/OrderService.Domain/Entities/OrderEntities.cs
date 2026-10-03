@@ -139,6 +139,25 @@ public class OrderItem : EntityBase
     /// <summary>配送方式，1 实物快递 / 2 虚拟商品 / 3 实物自提。</summary>
     [Column(Name = "delivery_type")]
     public int DeliveryType { get; set; } = 1;
+
+    /// <summary>来源类型，见 <see cref="OrderSourceTypes"/>。</summary>
+    /// <remarks>
+    /// 秒杀订单必须标出来：它的库存<b>在发布场次时就从常规池划走了</b>，
+    /// 下单与支付时都不能再动常规库存。这个标记就是那两处的判断依据——
+    /// 没有它，秒杀单会在下单时再锁一次常规库存，直接超卖。
+    /// </remarks>
+    [Column(Name = "source_type")]
+    public int SourceType { get; set; } = OrderSourceTypes.Normal;
+}
+
+/// <summary>订单行来源。</summary>
+public static class OrderSourceTypes
+{
+    /// <summary>普通下单。</summary>
+    public const int Normal = 1;
+
+    /// <summary>限时抢购。库存已在场次发布时划出，下单 / 支付都不再动常规库存。</summary>
+    public const int Seckill = 2;
 }
 
 /// <summary>订单状态机（BUSINESS.md 7.1）。</summary>

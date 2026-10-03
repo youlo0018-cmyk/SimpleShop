@@ -339,10 +339,12 @@ S0 基础设施
 | 场次 | `seckill_session`，**模型与接口按 `SessionId` 寻址**（本期单场次，预留多场次） |
 | 秒杀商品 | `seckill_item`，**必须指定 SKU** |
 | 库存划出 | 创建时从常规库存划出；结束/中止**立即回补** |
-| 抢购 | Redis 原子预扣 → MQ 异步落单 → 轮询 `GrabResult` |
+| 抢购 | Redis 原子预扣 → 限购唯一索引 → 落单记账；接口保留 requestId + 轮询形状，**同步下单**（接 MQ 时只需换实现，前端不动） |
 | 限购 | 每人每场次 1 件 |
 
-**文件清单**：`MarketingService.Application/Features/Seckill/*`；`Infrastructure/Services/SeckillStockService.cs`；`deploy/sql/Marketing/` 追加两表。
+**文件清单**：`MarketingService.Application/Features/Seckill/*`（含 `GrabHandler` / `GrabResultHandler`）；
+`MarketingService.Application/Services/IOrderPort.cs`；`OrderService` 侧 `SeckillOrderHandler` + `POST /internal/orders/seckill-create`；
+`deploy/sql/marketing/03-create-seckill-tables.sql`。
 
 **验收步骤**
 
@@ -469,10 +471,10 @@ S0 基础设施
 | S3 交易闭环 | 进行中 | 2026-10-03 | | **OrderService + ScheduledService 已完成**（下单补偿链路 / 状态机 / 模拟支付 / 自提取货码 / 退款 / 完成发积分 / 支付超时关单）。缺 PaymentService |
 | S4 平台商户与装修 | 未开始 | | | |
 | S5 积分与评价 | 进行中 | 2026-10-03 | | Point 已完成（含过期扣减）；Evaluate 未开始 |
-| S6 限时抢购 | 进行中 | 2026-10-04 | | **场次 + 库存划出/回补（S-1）已落地**；抢购链路待 OrderService 加「秒杀订单」入口 + 建 MQ |
+| S6 限时抢购 | 进行中 | 2026-10-04 | | **场次 + 库存划出/回补（S-1）+ 抢购链路已落地**（三层防超卖：Redis 原子预扣 / 限购唯一索引 / 条件更新记账）。待接 RabbitMQ 把同步下单换成异步 |
 | S7 后台前端 | 未开始 | | | 一行 UI 都没有 |
 | S8 小程序前端 | 未开始 | | | 一行 UI 都没有 |
-| S9 测试与收尾 | 进行中 | 2026-10-04 | | 单元 220 / 端到端 268 全绿，`run-all.ps1` 汇总。缺 UI 与视觉回归 |
+| S9 测试与收尾 | 进行中 | 2026-10-04 | | 单元 229 / 端到端 278 全绿，`run-all.ps1` 汇总。缺 UI 与视觉回归 |
 
 **更新规则**：每阶段结束时把该行改为「已完成」并填完成日期，同时在 `AI_HANDOFF.md` 进度日志追加条目（`AI_HANDOFF` 第 3 节第 1 条）。
 

@@ -63,6 +63,15 @@ public sealed class OrderPaymentCompleter
         // ---- ① 扣减库存：locked → deducted ----
         foreach (var item in items)
         {
+            // 🔴 秒杀行跳过：它的库存在**发布场次时**就从常规池划走了，
+            // 下单时也没锁（见 CreateOrderRequest.InventoryPreDeducted）。
+            // 这里再扣一次 = 扣走第三份，秒杀直接超卖。
+            if (item.SourceType == OrderSourceTypes.Seckill)
+            {
+                _logger.LogInformation("① 跳过秒杀行扣减库存：订单 {OrderNo} SKU {SkuId}", order.OrderNo, item.SkuId);
+                continue;
+            }
+
             try
             {
                 // 幂等键与下单锁定共用同一个 bizNo，只靠 action 区分，

@@ -72,6 +72,11 @@ CREATE INDEX IF NOT EXISTS idx_order_item_no ON order_item (order_no);
 -- 找出「下单后还没释放库存」的孤儿预留对账用
 CREATE INDEX IF NOT EXISTS idx_order_item_sku ON order_item (sku_id);
 
+-- 订单行来源：1 普通 / 2 秒杀。
+-- 秒杀行的库存在**发布场次时**就从常规池划走了，下单与支付都不能再动常规库存；
+-- 没有这个标记，秒杀单会在下单时再锁一次常规库存，直接超卖。
+ALTER TABLE order_item ADD COLUMN IF NOT EXISTS source_type int NOT NULL DEFAULT 1;
+
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO simpleshop_app;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO simpleshop_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO simpleshop_app;

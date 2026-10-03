@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS seckill_item (
     -- 已抢数量。<seckill_stock 才是还有货
     sold_count        int           NOT NULL DEFAULT 0,
     status            int           NOT NULL DEFAULT 1,
+    -- 配送方式，加商品时从 SPU 快照下来（加商品到发布之间商品可能改配送方式，
+    -- 但抢购下单必须和场次里展示的一致，所以按下发时刻的值定死）
+    delivery_type     int           NOT NULL DEFAULT 1,
     sort_order        int           NOT NULL DEFAULT 0,
     CONSTRAINT pk_seckill_item PRIMARY KEY (id),
     -- 同一场次内同一个 SKU 只能有一条，否则限购与库存都会被算两遍
@@ -98,6 +101,10 @@ CREATE TABLE IF NOT EXISTS seckill_grab (
     updated_at        timestamp     NULL,
     is_deleted        boolean       NOT NULL DEFAULT false,
     deleted_at        timestamp     NULL,
+    created_by_id     bigint        NOT NULL DEFAULT 0,
+    created_by_name   varchar(64)   NOT NULL DEFAULT '',
+    operation_id      bigint        NOT NULL DEFAULT 0,
+    operation_name    varchar(64)   NOT NULL DEFAULT '',
     platform_id       bigint        NOT NULL DEFAULT 0,
     merchant_id       bigint        NOT NULL DEFAULT 0,
     request_id        varchar(64)   NOT NULL,
@@ -130,6 +137,15 @@ CREATE INDEX IF NOT EXISTS idx_seckill_grab_customer
 -- 建表已存在的库（如本文件首次执行前就建过）补列，保证幂等可重跑
 ALTER TABLE seckill_session ADD COLUMN IF NOT EXISTS stock_transferred boolean NOT NULL DEFAULT false;
 ALTER TABLE seckill_item   ADD COLUMN IF NOT EXISTS original_price    numeric(18,2) NOT NULL DEFAULT 0;
+-- 配送方式在加商品时从 SPU 快照下来。抢购下单要靠它判断虚拟发货还是快递，
+-- 没有它就只能默认成快递，虚拟商品会被寄出一个不存在的快递单号。
+ALTER TABLE seckill_item   ADD COLUMN IF NOT EXISTS delivery_type     int          NOT NULL DEFAULT 1;
+-- SeckillGrab 继承 AdminEntityBase，这 4 列是基类字段，漏建会直接 42703。
+-- 建表时漏掉、运行时才炸，所以这里补列让已建库也能自愈。
+ALTER TABLE seckill_grab   ADD COLUMN IF NOT EXISTS created_by_id     bigint      NOT NULL DEFAULT 0;
+ALTER TABLE seckill_grab   ADD COLUMN IF NOT EXISTS created_by_name   varchar(64) NOT NULL DEFAULT '';
+ALTER TABLE seckill_grab   ADD COLUMN IF NOT EXISTS operation_id      bigint      NOT NULL DEFAULT 0;
+ALTER TABLE seckill_grab   ADD COLUMN IF NOT EXISTS operation_name    varchar(64) NOT NULL DEFAULT '';
 
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO simpleshop_app;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO simpleshop_app;

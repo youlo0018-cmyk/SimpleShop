@@ -5,7 +5,7 @@ namespace MarketingService.Domain.Entities;
 
 /// <summary>秒杀场次。</summary>
 /// <remarks>
-/// 本期只做单场次，但**所有实体与接口都按 <see cref="Id"/>（SessionId）寻址**，
+/// 本期只做单场次，但**所有实体与接口都按场次 Id 寻址**，
 /// 「当前场次」只是查询条件之一。要加多场次（每天一场、每两小时一场）时不用改表。
 /// </remarks>
 [Table(Name = "seckill_session")]
@@ -122,6 +122,15 @@ public class SeckillItem : AdminEntityBase
     /// <summary>状态。1 启用 / 2 停用。</summary>
     [Column(Name = "status")]
     public int Status { get; set; } = 1;
+
+    /// <summary>配送方式快照，1 实物快递 / 2 虚拟商品 / 3 实物自提。</summary>
+    /// <remarks>
+    /// 从商品服务取快照存下来。抢购时不再回查商品：秒杀的并发很高，
+    /// 每单多一次跨服务调用会把下单链路拖垮；而且场次是提前建好的，
+    /// 用「建场次那一刻」的配送方式才与场次里展示的一致。
+    /// </remarks>
+    [Column(Name = "delivery_type")]
+    public int DeliveryType { get; set; } = 1;
 
     /// <summary>排序，小的在前。</summary>
     [Column(Name = "sort_order")]

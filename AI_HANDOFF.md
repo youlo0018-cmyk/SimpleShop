@@ -172,13 +172,13 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Product | 5058 | ✅ 分类 / 品牌 / SPU/规格/SKU / 前台只读（匿名、到手价）/ Elasticsearch + IK 搜索 / **索引对账补偿** 全部完成 |
 | Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
 | Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 + 按订单发放（实付每满 1 元 1 积分）+ **过期扣减** |
-| Marketing | 5072 | ✅ 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价试算 + **秒杀场次与库存划转**。秒杀抢购链路未做 |
+| Marketing | 5072 | ✅ 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价试算 + **秒杀场次 / 库存划转 / 抢购链路**（三层防超卖）。待接 RabbitMQ 把同步下单换成异步 |
 | Order | 5064 | ✅ 下单四步补偿链路 + 客户级幂等锁 + 订单状态机 + 模拟支付 + 自提取货码（RSA）+ 退款回补 |
 | Scheduled | 无端口 | ✅ 独立定时进程：**支付超时关单**（30 秒）+ **积分过期扣减**（每小时）+ **商品索引对账**（10 分钟）。Redis `lock:job:*` 多实例互斥 |
 | Payment / MerchantPlatform / Evaluate / Log | 见 3.3 | ⬜ 未开始 |
 
 **S1、S2 已完成，S3（交易闭环）已完成第一版。** 13 个进程在跑（12 个 HTTP 服务 + ScheduledService）。
-下一步按依赖顺序：**限时抢购**（复用已定型的库存划转记账）→ Marketing 满减/满折/满赠活动 → PaymentService → MerchantPlatform → Evaluate。
+下一步按依赖顺序：**PaymentService** → MerchantPlatform → Evaluate → ScheduledService 补偿重试 / 孤儿预留对账。
 
 **验证现状**
 
@@ -267,6 +267,41 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-04：S6 — 秒杀抢购链路 + 雪花 workerId 租约化
+
+**① 抢购链路打通（BUSINESS.md 12.5）**
+
+- `MarketingService`：`GrabHandler`（Redis 原子预扣 → 限购唯一索引 → 落单记账）、
+  `GrabResultHandler`（轮询）、`GrabController`（`POST /marketing/seckill/grab`、`/grab/result`）、
+  `IOrderPort` → `HttpOrderPort`。
+- `OrderService`：新增 `POST /internal/orders/seckill-create`。
+  秒杀单**复用 `OrderCreator` 的完整编排**（占券 → 锁积分 → 落单），只把 ③ 锁库存整步跳过
+  （`InventoryPreDeducted = true`）——库存发布场次时已划走，再锁一次就是双倍扣减 = 凭空少货。
+- `OrderItem.SourceType` 区分普通单与秒杀单，后台订单列表要靠它显示来源。
+- **与规格的已知偏离**：规格要求「requestId → MQ 异步下单 → 轮询」，但本项目**没有任何服务真正收发
+  RabbitMQ**（只有配置项），从零建消息中间件是另一个独立任务。因此改成同步下单，
+  但**保留了 requestId 与轮询接口的形状**，接 MQ 时只需换实现。
+
+**② 顺手修掉 4 个真缺陷**
+
+- **雪花 workerId 用 `INCR` 自增**：重启满 64 次后**该服务永久无法启动**
+  （实测 UserService 拿到 64 直接起不来），唯一修复是手工删 Redis key。
+  改为 `WorkerIdLease` **租约槽位**：`SET NX EX 90` 抢占 + 每 30 秒比对令牌续租。
+  槽位随进程消失回收，同时保住「存活不撞号」与「重启多少次都能起」。
+- **`catch (PostgresException)` 抓不到唯一索引冲突**：FreeSql 会把驱动异常**包进普通 `Exception`**，
+  限购冲突没被识别 → 重复抢购返回 **500** 而不是「超出限购」。
+  新增 `PostgresErrors` 沿 `InnerException` 链解包（10 层上限防异常环死循环）。
+- **`seckill_grab` 建表漏 4 个审计列**：FreeSql **不看建表脚本**，第一次读写就 `42703`
+  → 整条抢购链路 500。补列，并新增 `scripts/check-table-columns.ps1`：
+  解析源码拿「表名 → 基类」再核对实际列，防同类问题复发。
+- **秒杀下单无条件校验收货信息**：虚拟商品没有收货人，用户在小程序上也没机会填
+  → 虚拟秒杀 100% 下单失败。用 `When(DeliveryType != Virtual)` 包起来。
+
+**验证**：构建 0 warning 0 error；单元 **229/229**；端到端 **278/278**（9 脚本，营销 58 条含新增抢购 10 条）；
+租约实测 TTL 从 74 → 69（而非掉到 39），确认续租生效；13 个进程全绿。
+新增 10 条抢购用例覆盖：游客被拒、抢购成功且常规库存纹丝不动、按秒杀价成交且标记来源、
+重复限购、抢完、`sold_count` 记账、轮询、越权查 requestId。
 
 ### 2026-10-04：S2 — 商品搜索索引对账（补偿任务）
 
@@ -1243,7 +1278,7 @@ FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET �
 - **配置源抽象**（`Collaboration.Domain/Configuration/`）：`IConfigSource` + `ConfigSourceUnavailableException`、`LocalFileConfigSource`、`ConfigurationValidator`、`BootstrapOptions`、`InfrastructureOptions`。
   - 按 PLAN.md 2.6 选项 (a) 推进：S1 起用 `appsettings` 作为配置源。**它只改来源不改语义**——没有给任何配置项提供默认值，缺项照样 fail-fast。
   - AgileConfig 分支**显式抛 NotSupportedException** 而不是静默回退到本地文件，避免「以为连着配置中心其实没有」。网络可达后只需补一个 `IConfigSource` 实现。
-- **启动时序 S0~S4**（`ServiceBootstrap`）：引导配置绑定 → 选配置源 → 指数退避重试拉取 → 校验必填键 → Redis INCR 分配雪花 workerId（超上限失败不回收）。
+- **启动时序 S0~S4**（`ServiceBootstrap`）：引导配置绑定 → 选配置源 → 指数退避重试拉取 → 校验必填键 → Redis 抢占空闲租约槽位分配雪花 workerId（`WorkerIdLease`，90 秒 TTL + 30 秒续租，槽位用尽才失败）。
 - **单元测试**：`tests/Collaboration.Domain.Tests`，14 条全绿。覆盖 `SqlLiteral`（含注入片段转义、类型白名单抛异常）、`ConfigurationValidator`（缺失/空白/重复/大小写）、`SnowflakeId` 生命周期。
 - **测试暴露并修掉一个真实缺陷**：`ConfigurationValidator` 原先依赖调用方字典的 comparer，配置源若返回不同大小写的键会误判缺失。改为内部自建 OrdinalIgnoreCase 视图。
 - `InternalsVisibleTo` 只开放给测试项目，`SqlLiteral` 仍不对外公开。
@@ -1358,7 +1393,7 @@ FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET �
 - **新增 `DATA_SPEC.md`**（6 章，29 个后台表单小节）：
   - 第 1 节 启动与配置加载时序：S0~S12 十二阶段、**先读 AgileConfig 再连 DB/Redis**、fail-fast、热更新边界（仅业务开关与限额）。
   - 第 2 节 模型基类：`EntityBase` / `AdminEntityBase`（**创建人固定不变 + 只记最后操作人**）/ `CustomerEntityBase`（含 CustomerId + 用户名快照）；`User` 与 `Customer` 独立定义；时间统一 UTC；默认软删；snake_case 命名。
-  - 第 3 节 FreeSql AOP 与仓储：**行级多租户隔离 + AOP 自动注入软删/租户/客户过滤**（解决「某 Handler 忘了加租户条件」的越权）；**workerId 用 Redis `INCR` 原子自增**；仓储方法集；排序白名单。
+  - 第 3 节 FreeSql AOP 与仓储：**行级多租户隔离 + AOP 自动注入软删/租户/客户过滤**（解决「某 Handler 忘了加租户条件」的越权）；**workerId 用 Redis 租约槽位**（原文写的是 `INCR` 自增，实现时发现它跑满 64 次重启后会让服务永久无法启动，已改为租约抢占，理由见 DATA_SPEC 3.4）；仓储方法集；排序白名单。
   - 第 4 节 展示与下拉：`OptionDto { Id(字符串), Name }`、10 个下拉接口清单、必须冗余返回的名称字段、枚举文案由后端下发。
   - 第 5 节 后台表单字段规格：29 个表单（平台/商户/审核/分类/品牌/商品/SKU 规格/审核/上下架/库存/活动/券模板/券活动/营销配置/秒杀场次/秒杀商品/结束中止/建号/改号/重置密码/角色/发货/取货核销/退款审批/代客退款/评价管理/模拟支付/装修/地区地址）。
 - 本轮确认的关键决策：**多租户走行级隔离（A）而非物理隔离**；SKU 规格在 SPU 下动态定义、**不建全局规格字典表**；**券模板改动不影响已发出的券**（发放时快照）；发货物流公司用**字典表 + 可搜索下拉**；退款金额可按行自定义；隐藏评价**必填原因**；地区地址用 JSON 文本域 + iframe postMessage 预览。

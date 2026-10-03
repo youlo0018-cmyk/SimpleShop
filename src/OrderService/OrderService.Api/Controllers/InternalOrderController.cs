@@ -2,6 +2,7 @@ using Collaboration.Domain.Common;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using OrderService.Application.Features.Internal;
+using OrderService.Application.Features.Orders;
 
 namespace OrderService.Api.Controllers;
 
@@ -15,6 +16,20 @@ public sealed class InternalOrderController : ControllerBase
     /// <summary>构造控制器。</summary>
     /// <param name="mediator">MediatR 入口。</param>
     public InternalOrderController(IMediator mediator) => _mediator = mediator;
+
+    /// <summary>秒杀下单（供 MarketingService 调用）。</summary>
+    /// <param name="command">秒杀下单命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回订单号与实付金额。</returns>
+    /// <remarks>
+    /// 🔴 与普通下单的唯一区别：<b>库存已在下单前被预扣走</b>。
+    /// 秒杀的货在发布场次时就从常规库存划走了，这里再走一次「锁常规库存」
+    /// 等于锁走第二份，秒杀直接超卖。
+    /// </remarks>
+    [HttpPost("seckill-create")]
+    public Task<ApiResponse<OrderCreatedDto>> SeckillCreate(
+        [FromBody] CreateSeckillOrderCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 
     /// <summary>扫描并关闭支付超时的订单（BUSINESS.md 7.3：超时 30 分钟、每 30 秒扫一次）。</summary>
     /// <param name="command">关单命令；不传 <c>OrderNo</c> 就是扫全量，传了只关这一张。</param>

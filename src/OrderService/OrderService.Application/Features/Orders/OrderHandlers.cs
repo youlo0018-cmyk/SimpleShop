@@ -166,7 +166,8 @@ public sealed class QueryOrderDetailHandler
             items.Select(a => new OrderItemDto(
                 a.SkuId, a.SpuId, a.ProductName, a.SkuSpecText,
                 a.Price, a.Quantity, a.OriginalAmount,
-                a.ActivityDiscount, a.CouponDiscount, a.PayableAmount, a.DeliveryType)).ToList());
+                a.ActivityDiscount, a.CouponDiscount, a.PayableAmount, a.DeliveryType,
+                a.SourceType)).ToList());
 
         return ApiResults.Ok(dto);
     }

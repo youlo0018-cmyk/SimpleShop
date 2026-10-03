@@ -77,16 +77,6 @@ public record DeleteSessionItemCommand(long ItemId) : IRequest<ApiResponse>;
 public record QueryPublicSessionsCommand(long PlatformId = 0, long SessionId = 0)
     : IRequest<ApiResponse<List<PublicSessionDto>>>;
 
-/// <summary>抢购。</summary>
-/// <param name="ItemId">场次商品 Id。</param>
-/// <param name="CustomerId">客户 Id。</param>
-public record GrabSeckillCommand(long ItemId, long CustomerId) : IRequest<ApiResponse<GrabResultDto>>;
-
-/// <summary>轮询抢购结果。</summary>
-/// <param name="RequestId">请求 Id。</param>
-/// <param name="CustomerId">客户 Id，用于校验归属。</param>
-public record QueryGrabResultCommand(string RequestId, long CustomerId)
-    : IRequest<ApiResponse<GrabResultDto>>;
 
 /// <summary>发布结果。</summary>
 /// <param name="SessionId">场次 Id。</param>
@@ -169,14 +159,6 @@ public sealed record PublicSeckillItemDto(
     string ItemId, string SpuId, string SkuId, string ProductName, string SkuSpecText,
     string Image, decimal OriginalPrice, decimal SeckillPrice, int Remaining, int PerUserLimit);
 
-/// <summary>抢购结果。</summary>
-/// <param name="RequestId">请求 Id，客户端拿它轮询。</param>
-/// <param name="ResultStatus">结果码，见 <see cref="SeckillGrabResults"/>。</param>
-/// <param name="Message">结果说明（中文）。</param>
-/// <param name="OrderId">下单成功的订单 Id，0 表示没下单。</param>
-/// <param name="OrderNo">订单号。</param>
-public sealed record GrabResultDto(
-    string RequestId, int ResultStatus, string Message, long OrderId, string OrderNo);
 
 /// <summary>秒杀命令的校验器注册。</summary>
 public static class SeckillValidators

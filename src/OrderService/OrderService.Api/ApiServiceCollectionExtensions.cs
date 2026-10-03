@@ -27,6 +27,7 @@ public static class ApiServiceCollectionExtensions
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         OrderValidators.AddOrderValidators(services);
+        SeckillOrderValidators.AddSeckillOrderValidators(services);
         OrderAdminValidators.AddOrderAdminValidators(services);
         CloseTimeoutValidators.AddCloseTimeoutValidators(services);
 

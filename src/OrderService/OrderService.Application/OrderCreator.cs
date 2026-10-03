@@ -14,17 +14,47 @@ namespace OrderService.Application;
 /// <param name="ProductName">商品名快照。</param>
 /// <param name="SkuSpecText">规格文本快照。</param>
 /// <param name="DeliveryType">配送方式。</param>
+/// <param name="SourceType">
+/// 来源类型，见 <see cref="OrderSourceTypes"/>。秒杀行传 <see cref="OrderSourceTypes.Seckill"/>，
+/// 支付收尾据此跳过库存扣减（它的库存在发布场次时已划走）。
+/// </param>
 public readonly record struct OrderLineRequest(
     long SpuId, long SkuId, int Quantity, decimal UnitPrice,
-    string ProductName, string SkuSpecText, int DeliveryType);
+    string ProductName, string SkuSpecText, int DeliveryType,
+    int SourceType = OrderSourceTypes.Normal);
 
 /// <summary>下单请求。</summary>
+/// <param name="CustomerId">客户 Id。</param>
+/// <param name="PlatformId">平台 Id。</param>
+/// <param name="MerchantId">商户 Id，0 表示平台自营。</param>
+/// <param name="IdempotencyKey">幂等键。同一个客户 + 同一个键只会产出一张订单。</param>
+/// <param name="ReceiverName">收货人姓名。</param>
+/// <param name="ReceiverPhone">收货电话。</param>
+/// <param name="ReceiverAddress">收货地址。</param>
+/// <param name="Lines">订单行。</param>
+/// <param name="CouponId">使用的用户券 Id，0 表示不使用券。</param>
+/// <param name="PointsToUse">抵扣积分数，0 表示不用积分。</param>
+/// <param name="Remark">备注。</param>
+/// <param name="Freight">运费规则。</param>
+/// <param name="InventoryPreDeducted">
+/// <b>库存是否已在别处预扣走。</b>秒杀单必须传 true。
+/// </param>
+/// <remarks>
+/// 🔴 这是秒杀单唯一的关键开关：秒杀的货在**发布场次时**就从常规库存划走了，
+/// 再走一次「锁常规库存」等于锁走第二份，直接超卖。
+/// 所以秒杀单传 true 时，③ 整步跳过、支付收尾也跳过扣减。
+///
+/// 代价是：**幂等责任落到调用方**——既然下单这步不校验库存，
+/// 调用方必须自己保证「扣减库存」与「下单」之间不会重复扣（靠限购的幂等键）。
+/// 这一点在秒杀侧靠 `{itemId}:{customerId}` 唯一索引保证。
+/// </remarks>
 public readonly record struct CreateOrderRequest(
     long CustomerId, long PlatformId, long MerchantId,
     string IdempotencyKey, string ReceiverName, string ReceiverPhone, string ReceiverAddress,
     IReadOnlyList<OrderLineRequest> Lines,
     long CouponId = 0, long PointsToUse = 0, string Remark = "",
-    FreightRule Freight = default);
+    FreightRule Freight = default,
+    bool InventoryPreDeducted = false);
 
 /// <summary>下单编排：加客户锁 → ①占券 → ②锁积分 → ③锁库存 → ④落单，失败逆序回滚。</summary>
 /// <remarks>
@@ -195,6 +225,14 @@ public sealed class OrderCreator
 
         // ---------- ③ 锁定库存（逐个 SKU） ----------
         var lockedSkus = new List<(long SkuId, int Quantity)>();
+
+        // 秒杀单：库存已在发布场次时划走，这里**必须整步跳过**。
+        // 再锁一次常规库存等于锁走第二份，秒杀就会超卖——而秒杀超卖是直接的钱。
+        if (request.InventoryPreDeducted)
+        {
+            _logger.LogInformation("③ 跳过锁库存：该单的库存在下单前已被预扣走（秒杀），订单 {OrderNo}", orderNo);
+        }
+        else
         try
         {
             foreach (var line in request.Lines)
@@ -272,7 +310,8 @@ public sealed class OrderCreator
                     ActivityDiscount = amount.Lines[i].ActivityDiscount,
                     CouponDiscount = amount.Lines[i].CouponDiscount,
                     PayableAmount = amount.Lines[i].PayableAmount,
-                    DeliveryType = line.DeliveryType
+                    DeliveryType = line.DeliveryType,
+                    SourceType = line.SourceType
                 })
                 .ToList();
 

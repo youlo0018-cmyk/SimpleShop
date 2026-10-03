@@ -211,10 +211,13 @@ public sealed class SeckillRepository : ISeckillRepository
             await _db.Insert(grab).ExecuteAffrowsAsync(ct);
             return grab.Id;
         }
-        catch (PostgresException ex) when (ex.SqlState == "23505")
+        catch (Exception ex) when (PostgresErrors.IsUniqueViolationOn(ex, "uk_seckill_grab"))
         {
             // 撞 uk_seckill_grab_biz → 同一客户重复抢同一商品。
             // 这是限购的最后防线，Redis 与应用层判断已经挡掉绝大多数。
+            // 这里判的是「异常链里有没有唯一约束冲突」而不是按类型 catch：
+            // FreeSql 会把 PostgresException 包进普通 Exception，
+            // 直接 catch (PostgresException) 会漏掉这一分支（已真实踩过，返回 500 而不是「超出限购」）。
             throw new DuplicateGrabException(grab.BizNo);
         }
     }

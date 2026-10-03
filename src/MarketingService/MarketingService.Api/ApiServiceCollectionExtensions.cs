@@ -31,10 +31,12 @@ public static class ApiServiceCollectionExtensions
         CouponValidators.AddCouponValidators(services);
         PromotionValidators.AddPromotionValidators(services);
         SeckillValidators.AddSeckillValidators(services);
+        GrabValidators.AddGrabValidators(services);
 
         // 私有静态方法不能用扩展方法语法（扩展方法要求方法可被外部访问），所以直接调用
         AddInventoryPort(services, configuration);
         AddProductPort(services, configuration);
+        AddOrderPort(services, configuration);
 
         services.AddInfrastructure();
         return services;
@@ -75,6 +77,27 @@ public static class ApiServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
+        });
+    }
+
+    /// <summary>注册订单端口：抢购要真的调订单服务建单。</summary>
+    /// <param name="services">服务集合。</param>
+    /// <param name="configuration">应用配置。</param>
+    private static void AddOrderPort(IServiceCollection services, IConfiguration configuration)
+    {
+        var url = configuration["Services:OrderServiceBaseUrl"];
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException(
+                "缺少配置 Services:OrderServiceBaseUrl。抢购要调订单服务建单，没有它抢中了也落不了单。");
+        }
+
+        // 超时给得比库存/商品端口宽：秒杀高峰期订单服务可能被别的流量压住，
+        // 超时一收紧就是「明明抢中了却提示下单失败」，用户会直接投诉。
+        services.AddHttpClient<IOrderPort, HttpOrderPort>(client =>
+        {
+            client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(15);
         });
     }
 }
