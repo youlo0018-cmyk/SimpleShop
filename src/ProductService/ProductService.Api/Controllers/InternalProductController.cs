@@ -1,6 +1,8 @@
 using Collaboration.Domain.Common;
 using FreeSql;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using ProductService.Application.Features.Shop;
 using ProductService.Domain.Entities;
 
 namespace ProductService.Api.Controllers;
@@ -16,10 +18,29 @@ namespace ProductService.Api.Controllers;
 public sealed class InternalProductController : ControllerBase
 {
     private readonly IFreeSql _db;
+    private readonly IMediator _mediator;
 
     /// <summary>构造控制器。</summary>
     /// <param name="db">FreeSql 实例。</param>
-    public InternalProductController(IFreeSql db) => _db = db;
+    /// <param name="mediator">MediatR 入口。</param>
+    public InternalProductController(IFreeSql db, IMediator mediator)
+    {
+        _db = db;
+        _mediator = mediator;
+    }
+
+    /// <summary>商品搜索索引对账（补偿任务调用）。</summary>
+    /// <param name="command">对账命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>对账统计。</returns>
+    /// <remarks>
+    /// 索引写失败时商品保存仍会成功（ES 只是加速手段），代价是索引会慢慢和库不一致。
+    /// 这个接口就是那条代价的兜底：**差集补写 + 清孤儿**，全程索引可搜，不做「删了重建」。
+    /// </remarks>
+    [HttpPost("search-index/sync")]
+    public Task<ApiResponse<SearchIndexSyncResult>> SyncSearchIndex(
+        [FromBody] SyncSearchIndexCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 
     /// <summary>按 SKU Id 集合取快照信息。</summary>
     /// <param name="skuIds">SKU Id 集合，逗号分隔，最多 200 个。</param>

@@ -29,6 +29,7 @@ builder.Services.AddSingleton(_ => redis.GetDatabase(redisOptions.Database));
 
 var orderUrl = builder.Configuration["Services:OrderServiceBaseUrl"]!;
 var pointUrl = builder.Configuration["Services:PointServiceBaseUrl"]!;
+var productUrl = builder.Configuration["Services:ProductServiceBaseUrl"]!;
 builder.Services.AddHttpClient<OrderTimeoutCloseJob>(client =>
 {
     client.BaseAddress = new Uri(orderUrl.TrimEnd('/') + "/");
@@ -50,6 +51,15 @@ builder.Services.AddHttpClient<PointExpireJob>(client =>
 // 写成 IJob → 具体类型的显式映射，读代码的人一眼就知道有哪几个任务、各自指向谁。
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<OrderTimeoutCloseJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<PointExpireJob>());
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<ProductSearchIndexSyncJob>());
+
+builder.Services.AddHttpClient<ProductSearchIndexSyncJob>(client =>
+{
+    client.BaseAddress = new Uri(productUrl.TrimEnd('/') + "/");
+
+    // 对账要扫全表并逐个补写，比关单慢得多，给足时间
+    client.Timeout = TimeSpan.FromSeconds(180);
+});
 
 builder.Services.AddHostedService<JobRunner>();
 

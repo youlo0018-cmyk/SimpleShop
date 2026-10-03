@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 263/263） | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 268/268） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -81,7 +81,7 @@
 | `api-regression.ps1` | CustomerService 健康 / 注册 / 登录 | 15 |
 | `auth-regression.ps1` | AuthService 令牌签发与内容 | 17 |
 | `gateway-regression.ps1` | 网关鉴权、租户头剥离、RBAC | 13 |
-| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU + 前台只读 + **ES/IK 搜索** | 57 |
+| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU + 前台只读 + ES/IK 搜索 + **索引对账** | 62 |
 | `cart-regression.ps1` | CartService 累加语义购物车 | 13 |
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
 | `marketing-regression.ps1` | MarketingService 券全生命周期 + 活动引擎 + 到手价 + **秒杀场次与库存划转** | 48 |
@@ -581,7 +581,19 @@
 | API-SRC-007 | **P0** | 下架后立刻搜不到 | 「有问题先下架」是运营的最后手段，搜不到才算生效 |
 | API-SRC-008 | P0 | 重新上架后又能搜到 | |
 | API-SRC-009 | **P0** | 删除后搜不到 | 删掉的商品还能被搜到、点进去空白，比搜不到更糟 |
-| API-SRC-010 | P0 | 关键词含引号不会拼出非法 JSON | 用户可能搜 `50" 寸`；转义不到位会让 ES 返回 400 解析错误，而报错指不到「是用户输入的问题」 |
+| API-SRC-010 | P0 | 关键词含引号不会拼出非法 JSON | 用户可能搜 `50" 寸`；转义不到位会让 ES 返回 400 解析错误，而报错指不到「是用户输入的问题」
+
+#### 2.3.3 SYNC 搜索索引对账（补偿任务）
+
+索引写失败是**只记日志不阻塞业务**的（商品保存是主链路，ES 只是加速），代价是索引会慢慢漂移。
+这个对账任务就是那条代价的兜底，做**差集**而不是「删索引重建」。
+
+| 编号 | 优先级 | 用例 | 期望与断言 |
+|---|---|---|---|
+| API-SYNC-001 | P1 | 准备一个上架商品并确认它进了索引 | 先对账一次再取基线，不假设「刚建的商品已在索引里」 |
+| API-SYNC-002 | **P0** | 索引漂移（文档被删）后能补回 | `missing == 1`，且索引计数回到删除前 |
+| API-SYNC-003 | **P0** | 孤儿文档（索引有、库里没有）被清掉 | `orphansRemoved == 1`，计数回到注入前。留着的话用户能搜到一个点进去 404 的商品 |
+| API-SYNC-004 | P0 | 无漂移时对账是空操作 | `missing == 0` 且 `orphansRemoved == 0`，不重复写、不误删 |
 
 ### 2.6 PNT / EVL 积分、评价
 

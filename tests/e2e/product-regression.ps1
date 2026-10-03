@@ -630,6 +630,8 @@ Write-Host "`n=== SRC 商品搜索（Elasticsearch + IK 中文分词）===" -For
 # 就是 IK 与 smartcn 的分水岭——smartcn 会把整个词当成一个 token，搜子词必然搜不到。
 $script:searchProductId = 0
 $script:searchCategoryId = 0
+$script:syncProductId = 0
+$script:syncCategoryId = 0
 
 function Search-Shop([string]$keyword) {
     return Invoke-RestMethod "$Product/shop/products/Search" -Method Post `
@@ -748,6 +750,145 @@ Invoke-Case 'API-SRC-011' '清理：删搜索分类' {
                 -Body (@{ categoryId = $id } | ConvertTo-Json) `
                 -ContentType 'application/json' -TimeoutSec 30 | Out-Null
         }
+    }
+    return $true
+}
+
+Write-Host "`n=== SYNC 搜索索引对账（补偿任务）===" -ForegroundColor Cyan
+
+# 索引写失败是**只记日志不阻塞业务**的（商品保存是主链路，ES 只是加速手段），
+# 代价就是索引会慢慢和库不一致。这个对账任务就是那条代价的兜底。
+#
+# 手工制造漂移：直接调 ES 的 REST API（9200 已映射到宿主机）。
+# 刻意**不用** `docker exec ... curl -d '{...}'`：
+# JSON 里的双引号要穿过 PowerShell → cmd → curl 三层转义，
+# 实测写出来的引号会被吃掉，解析错误又指不到真正原因。这里直接用 Invoke-RestMethod，没有中间层。
+$script:esUrl = 'http://127.0.0.1:9200'
+$script:esIndex = 'simpleshop_product'
+
+function Get-IndexCount {
+    return [int](Invoke-RestMethod "$($script:esUrl)/$($script:esIndex)/_count" -TimeoutSec 15).count
+}
+
+# 显式用 $($id) 而不是 $id：
+# 写成 `_doc/$id?refresh=true` 时，`?` 紧跟变量名，字符串里那段的解析结果不符合预期，
+# 请求打到别的路径上、DELETE 静默无效，而计数看起来「就是没变」，排查方向会被带偏。
+function Remove-IndexDoc([long]$id) {
+    $url = "$($script:esUrl)/$($script:esIndex)/_doc/$($id)?refresh=true"
+    $r = Invoke-WebRequest $url -Method Delete -TimeoutSec 15 -SkipHttpErrorCheck
+    if ($r.StatusCode -ne 200) { throw "删除索引文档失败：$url 返回 HTTP $($r.StatusCode)" }
+}
+
+function Add-GhostDoc([long]$id) {
+    # 库里不存在的商品：等价于「商品被物理删除，但索引没清干净」
+    $body = @{ productId = $id; spuName = '幽灵商品'; auditStatus = 20; status = 1; sales = 0 } |
+            ConvertTo-Json -Compress
+    $url = "$($script:esUrl)/$($script:esIndex)/_doc/$($id)?refresh=true"
+    $r = Invoke-WebRequest $url -Method Put -Body $body -ContentType 'application/json' `
+        -TimeoutSec 15 -SkipHttpErrorCheck
+    if ($r.StatusCode -ne 200 -and $r.StatusCode -ne 201) {
+        throw "写入幽灵文档失败：$url 返回 HTTP $($r.StatusCode)"
+    }
+}
+
+function Sync-Index {
+    $r = Invoke-RestMethod "$Product/internal/products/search-index/sync" -Method Post `
+        -Body (@{ pageSize = 200; deleteOrphans = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 120
+
+    # 🔴 refresh 必须在 sync **之后**。
+    # 对账里的补写用 refresh=false（批量写不该每条都刷一次，否则大批量补写会慢到不可接受），
+    # 所以 sync 返回的那一刻索引还没可见，此刻取 _count 拿到的是**陈旧值**。
+    # 之前把 refresh 放在 sync 之前，于是「补完 → 立刻计数」永远看不到刚补的文档，
+    # 看起来像对账没生效。
+    Invoke-RestMethod "$($script:esUrl)/$($script:esIndex)/_refresh" -Method Post -TimeoutSec 15 | Out-Null
+    return $r
+}
+Invoke-Case 'API-SYNC-001' '准备：一个上架商品并确认它进了索引' {
+    # 自建分类：SRC 段的分类已被 API-SRC-011 清理掉了，复用它必然建不出商品
+    $b1 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = 0; categoryName = "对账$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $b2 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = $b1; categoryName = "对账$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $script:syncCategoryId = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = $b2; categoryName = "对账$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+
+    $body = @{
+        productId = 0; spuName = "对账测试商品$($script:suffix)"
+        categoryId = $script:syncCategoryId; deliveryType = 1
+        mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '版本'; specValues = @('标准') })
+        skus = @(@{ skuCode = "SYNC$($script:suffix)"; specValues = @('标准'); price = 66; stock = 5; status = 1 })
+    }
+    $script:syncProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:headers `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    Invoke-RestMethod "$Gateway/gateway/products/SubmitAudit" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:syncProductId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:syncProductId; auditStatus = 20; remark = 'ok' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:syncProductId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    # 先对账一次，让索引与库**确定一致**，再取基线。
+    # 🔴 不能假设「刚建的商品已经在索引里」：索引写入用 refresh=false（批量写不该每条都刷一次），
+    # 此刻它可能还不可见；万一写入本身失败过，那就更不在了。
+    # 拿一个不确定的起点去断言「删 1 个 → 计数减 1」，失败时根本分不清是对账的问题还是起点的问题。
+    Sync-Index | Out-Null
+    $script:indexCountBefore = Get-IndexCount
+
+    return $script:syncProductId -gt 0 -and $script:indexCountBefore -gt 0
+}
+
+Invoke-Case 'API-SYNC-002' '🔴 P0 索引漂移（文档被删）后，对账能补回' {
+    # 直接从 ES 删掉这份文档，等价于「当初保存商品时索引写失败」
+    Remove-IndexDoc $script:syncProductId
+    $afterDelete = Get-IndexCount
+
+    # 先确认漂移真的造成了，否则这条用例的失败原因会被掩盖
+    if ($afterDelete -ge $script:indexCountBefore) { return $false }
+
+    $r = Sync-Index
+    $afterSync = Get-IndexCount
+
+    # 补写数必须正好等于漂移数（1），且计数回到删除前
+    return $r.data.missing -eq 1 -and $afterSync -eq $script:indexCountBefore
+}
+
+Invoke-Case 'API-SYNC-003' '🔴 孤儿文档（索引有、库里没有）被对账清掉' {
+    Add-GhostDoc 987654321098
+    $withGhost = Get-IndexCount
+    if ($withGhost -le $script:indexCountBefore) { return $false }   # 先确认幽灵真的进去了
+
+    $r = Sync-Index
+    $afterSync = Get-IndexCount
+
+    return $r.data.orphansRemoved -eq 1 -and $afterSync -eq $script:indexCountBefore
+}
+Invoke-Case 'API-SYNC-004' '没有漂移时对账是空操作（不重复写、不误删）' {
+    $r = Sync-Index
+    # 幂等：已经一致时补 0 清 0，而不是把每份文档都重写一遍
+    return $r.success -and $r.data.missing -eq 0 -and $r.data.orphansRemoved -eq 0
+}
+
+Invoke-Case 'API-SYNC-005' '清理：删对账测试商品与分类' {
+    if ($script:syncProductId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:headers `
+            -Body (@{ productId = $script:syncProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    Sync-Index | Out-Null   # 删完再对账一次，把索引里的残留清掉
+
+    if ($script:syncCategoryId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:headers `
+            -Body (@{ categoryId = $script:syncCategoryId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
     }
     return $true
 }

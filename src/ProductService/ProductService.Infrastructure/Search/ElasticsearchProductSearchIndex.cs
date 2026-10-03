@@ -230,6 +230,53 @@ public sealed class ElasticsearchProductSearchIndex : IProductSearchIndex
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyCollection<long>> GetIndexedIdsAsync(CancellationToken ct = default)
+    {
+        // 只要 _id，不要 _source。补偿对账只关心「哪些商品在索引里」，
+        // 把整份文档拉回来纯属浪费带宽和内存。
+        var body = JsonContent.Create(new Dictionary<string, object?>
+        {
+            ["size"] = MaxIndexedIdsProbe,
+            ["_source"] = false,
+            ["query"] = new Dictionary<string, object?>
+            {
+                ["match_all"] = new Dictionary<string, object?>()
+            },
+            // 用 _doc 排序拿全量，不排序时 ES 只保证前 size 条是「某 10000 条里最相关的前 10000 条」，
+            // 而我们没有 query 概念，相关度排序毫无意义，结果会是随机的一批。
+            ["sort"] = new object[] { Sort("_doc", "asc") }
+        }, options: JsonOptions);
+
+        try
+        {
+            var response = await _http
+                .PostAsync($"{_index}/_search", body, ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("读取索引商品 Id 失败：HTTP {Code}", (int)response.StatusCode);
+                return Array.Empty<long>();
+            }
+
+            var result = await response.Content
+                .ReadFromJsonAsync<IdOnlySearchResponse>(JsonOptions, ct).ConfigureAwait(false);
+
+            var ids = new List<long>();
+            foreach (var hit in result?.Hits?.Hits ?? Array.Empty<IdOnlyHit>())
+            {
+                if (long.TryParse(hit.Id, out var id) && id > 0) ids.Add(id);
+            }
+
+            return ids;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "读取索引商品 Id 异常");
+            return Array.Empty<long>();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> RecreateIndexAsync(CancellationToken ct = default)
     {
         // 切分词器必须删了重建：ES 的 analyzer 固化在索引里，改 mapping 不会作用到存量文档
@@ -341,6 +388,9 @@ public sealed class ElasticsearchProductSearchIndex : IProductSearchIndex
         };
 
 
+    /// <summary>一次最多探测多少个索引 Id（ES 的 size 上限就是 1 万）。</summary>
+    private const int MaxIndexedIdsProbe = 10_000;
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>索引文档。</summary>
@@ -375,6 +425,21 @@ public sealed class ElasticsearchProductSearchIndex : IProductSearchIndex
     /// <param name="Hits">命中条目。</param>
     private sealed record SearchHits(
         [property: JsonPropertyName("hits")] SearchHit[] Hits);
+
+    /// <summary>只含 _id 的搜索响应（补偿对账用）。</summary>
+    /// <param name="Hits">命中集合。</param>
+    private sealed record IdOnlySearchResponse(
+        [property: JsonPropertyName("hits")] IdOnlyHits? Hits);
+
+    /// <summary>只含 _id 的命中集合。</summary>
+    /// <param name="Hits">命中条目。</param>
+    private sealed record IdOnlyHits(
+        [property: JsonPropertyName("hits")] IdOnlyHit[] Hits);
+
+    /// <summary>只含 _id 的命中条目。</summary>
+    /// <param name="Id">文档 Id（我们用商品 Id 作 _id）。</param>
+    private sealed record IdOnlyHit(
+        [property: JsonPropertyName("_id")] string Id);
 
     /// <summary>单条命中。</summary>
     /// <param name="Source">命中的文档。</param>

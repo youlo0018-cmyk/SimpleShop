@@ -68,6 +68,18 @@ public interface IProductSearchIndex
     Task<IReadOnlyList<long>> SearchIdsAsync(
         string keyword, long categoryId, long brandId, int from, int size, CancellationToken ct = default);
 
+    /// <summary>取索引里当前存在的全部商品 Id。</summary>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>商品 Id 集合；索引不存在时返回空集合。</returns>
+    /// <remarks>
+    /// 补偿任务用它和数据库做<b>差集对账</b>：库里有而索引没有 → 补写，
+    /// 索引有而库里没有（已删）→ 从索引删掉。
+    ///
+    /// <para>上限 1 万条（用 <c>_search</c> 的 size 上限实现）。超过这个量级
+    /// 应改用 scroll 或 PIT——否则一次要拉回全部 Id，内存与响应体都会失控。</para>
+    /// </remarks>
+    Task<IReadOnlyCollection<long>> GetIndexedIdsAsync(CancellationToken ct = default);
+
     /// <summary>删除并重建索引（切分词器时用）。</summary>
     /// <param name="ct">取消令牌。</param>
     /// <returns>是否成功。</returns>
