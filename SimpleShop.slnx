@@ -25,6 +25,12 @@
     <Project Path="src/InventoryService/InventoryService.Domain/InventoryService.Domain.csproj" />
     <Project Path="src/InventoryService/InventoryService.Infrastructure/InventoryService.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/src/MarketingService/">
+    <Project Path="src/MarketingService/MarketingService.Api/MarketingService.Api.csproj" />
+    <Project Path="src/MarketingService/MarketingService.Application/MarketingService.Application.csproj" />
+    <Project Path="src/MarketingService/MarketingService.Domain/MarketingService.Domain.csproj" />
+    <Project Path="src/MarketingService/MarketingService.Infrastructure/MarketingService.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/PermissionService/">
     <Project Path="src/PermissionService/PermissionService.Api/PermissionService.Api.csproj" />
     <Project Path="src/PermissionService/PermissionService.Application/PermissionService.Application.csproj" />
