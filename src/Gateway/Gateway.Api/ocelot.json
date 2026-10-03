@@ -193,6 +193,40 @@
           "Port": 5082
         }
       ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/coupons/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/coupons/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5072
+        }
+      ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/marketing/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/marketing/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5072
+        }
+      ]
     }
   ]
 }

@@ -171,7 +171,8 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
 | Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU 完成；Elasticsearch 搜索、前台只读接口未开始） |
 | Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
-| Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 |\n| Cart / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
+| Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 |
+| Marketing | 5072 | 🔄 进行中（券全生命周期完成；满减/满折/满赠「活动」与限时抢购未开始） |\n| Cart / Order / Payment / Marketing / MerchantPlatform / Point / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
 
 **S1（一期·地基）已完成并通过端到端验证。** S2 进行中：ProductService、InventoryService、PointService 完成；9 个服务在跑。下一步 Marketing，然后才是 OrderService。\n下一步是 ProductService 的品牌与 SPU / 规格 / SKU，然后 Cart 与 Inventory。
 
@@ -185,6 +186,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | `tests/e2e/gateway-regression.ps1` | 13/13 |\n| `tests/e2e/product-regression.ps1` | 31/31 |
 | `tests/e2e/inventory-regression.ps1` | 21/21 |
 | `tests/e2e/point-regression.ps1` | 23/23 |
+| `tests/e2e/marketing-regression.ps1` | 18/18 |
 ### 4.2 已确定的关键决策
 
 | 决策 | 结论 |
@@ -256,6 +258,40 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-03（实现阶段）：S2 — MarketingService 券全生命周期（5072）
+
+订单链路的 ① 占券落地。这轮把「券」这条线从模板一直走到核销。
+
+**发券时的快照是这一整块的地基**
+
+`user_coupon` 上单独存了券型 / 门槛 / 优惠额 / 折扣率 / 有效天数五列，
+发放时从模板复制一份，之后模板怎么改都不影响已发出的券。
+
+不这么做的话：运营改一次模板面额，全站已发出的券**全部跟着变价**——
+这是资损级别的事故，而且要等到用户核销那天才会暴露出来。
+回归用例 API-MKT-013 专门锁这条：建完券后直接把库里的模板面额改成 999，
+再试算，优惠额仍然是快照里的 20。
+
+**几处「拒绝」与「不优惠」必须分清**
+
+| 场景 | 应该是 | 原因 |
+|---|---|---|
+| 没占到券（客户没券 / 券都够不着门槛） | **成功，优惠 0** | 返回 400 会让订单服务把「没券」当成「券系统故障」而中断下单 |
+| 超额占券 / 券不属于该客户 | 失败 | 这是真异常 |
+| 重复占同一订单 | 成功 + `AlreadyApplied` | 下单重试是正常业务 |
+| 已核销的券再回退 | **失败** | 钱已经收了，应走退款而不是取消 |
+
+**三条测试失败都是我的测试写错，实现是对的**——顺手确认了行为：
+
+1. 限领用例以为「第 2 张就该被拒」，实际上限是 2，第 2 张合法、第 3 张才拒。
+2. 领取窗口超期时接口返回的是业务失败，不是「成功 + 0 张券」。
+3. 回退后可用券数我断言 `>= 2`，实际恰好 1（第 1 张已被核销作废）。
+
+**池子扣减与发券必须在同一事务里，且顺序是先扣池子再发券**——
+反过来会先发完券才发现池子不够，还得回滚已发的券。
+
+**验证**：`tests/e2e/marketing-regression.ps1` 18/18。
+全量：单测 86/86（新增 22 个券计算单测），e2e 138/138。
 ### 2026-10-03（实现阶段）：S2 — PointService 落地（5082）
 
 订单链路的第二块。积分是下单抵扣的「最后一道」，算错就是订单金额算错或用户积分凭空消失。

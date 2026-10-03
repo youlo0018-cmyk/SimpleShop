@@ -1,0 +1,381 @@
+using Collaboration.Domain.Infrastructure;
+using Collaboration.Domain.Repository;
+using FreeSql;
+using MarketingService.Domain.Entities;
+using MarketingService.Domain.IRepository;
+using MarketingService.Domain.Services;
+
+namespace MarketingService.Infrastructure.Repository;
+
+/// <summary>券仓储实现。</summary>
+/// <remarks>
+/// 并发控制靠<b>条件更新</b>：领券要同时推进模板池子与活动池子，
+/// 占券要把券从「未使用」改成「已占用」，两处都必须带上「值仍等于读到的值」这个条件。
+/// 不加的话，两个并发下单可能各自算出同一张券可用，然后都占用它。
+/// </remarks>
+public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponRepository
+{
+    private readonly IFreeSql _db;
+
+    /// <summary>构造仓储。</summary>
+    /// <param name="freeSql">已注册全局过滤的 FreeSql 单例。</param>
+    public CouponRepository(IFreeSql freeSql) : base(freeSql)
+    {
+        _db = freeSql;
+    }
+
+    /// <inheritdoc />
+    public async Task<ClaimResult> ClaimAsync(
+        long customerId, long activityId, int quantity, DateTime nowUtc, CancellationToken ct = default)
+    {
+        if (quantity <= 0)
+        {
+            return new ClaimResult(
+                new CouponOutcome(false, false, 0, 0m, "领取张数必须为正"), Array.Empty<string>());
+        }
+
+        var result = new CouponOutcome(false, false, 0, 0m, "未执行");
+        var codes = new List<string>();
+
+        await Task.Run(() => _db.Transaction(() =>
+        {
+            codes.Clear();
+
+            var activity = _db.Select<CouponActivity>().Where(a => a.Id == activityId).First();
+            if (activity is null)
+            {
+                result = new CouponOutcome(false, false, 0, 0m, "券活动不存在");
+                return;
+            }
+
+            if (activity.Status != 1)
+            {
+                result = new CouponOutcome(false, false, 0, 0m, "券活动已停用");
+                return;
+            }
+
+            // 时间窗：领取时间与券有效期是两个不同概念，这里判的是**领取窗口**
+            if (nowUtc < activity.ClaimStartTime || nowUtc > activity.ClaimEndTime)
+            {
+                result = new CouponOutcome(false, false, 0, 0m, "不在领取时间内");
+                return;
+            }
+
+            var template = _db.Select<CouponTemplate>().Where(a => a.Id == activity.TemplateId).First();
+            if (template is null || template.Status != 1)
+            {
+                result = new CouponOutcome(false, false, 0, 0m, "券模板不存在或已停用");
+                return;
+            }
+
+            // 活动池子：本次发放量不能超过剩余
+            if (activity.ClaimQuantity - activity.ClaimedQuantity < quantity)
+            {
+                result = new CouponOutcome(false, false, 0, 0m,
+                    $"券活动剩余不足（剩余 {activity.ClaimQuantity - activity.ClaimedQuantity} 张，需要 {quantity} 张）");
+                return;
+            }
+
+            // 模板池子：TotalQuantity = 0 表示不限量
+            if (template.TotalQuantity > 0 && template.TotalQuantity - template.IssuedQuantity < quantity)
+            {
+                result = new CouponOutcome(false, false, 0, 0m,
+                    $"券模板剩余不足（剩余 {template.TotalQuantity - template.IssuedQuantity} 张，需要 {quantity} 张）");
+                return;
+            }
+
+            // 每人限领：取本值与模板值的**较小者**
+            var limit = Math.Min(activity.PerUserLimit, template.PerUserLimit);
+            // 同步 Count()：这里在事务的同步委托里，不能用 await。限领上限是个位数，转换安全。
+            var claimed = (int)_db.Select<UserCoupon>()
+                .Where(a => a.CustomerId == customerId && a.ActivityId == activityId)
+                .Count();
+            if (claimed + quantity > limit)
+            {
+                result = new CouponOutcome(false, false, 0, 0m, $"已达每人限领（{limit} 张）");
+                return;
+            }
+
+            // 先扣池子再发券，顺序不能反：反过来的话发完券发现池子不够，还得回滚已发的券
+            var activityAffected = _db.Update<CouponActivity>()
+                .Where(a => a.Id == activity.Id && a.ClaimedQuantity == activity.ClaimedQuantity)
+                .Set(a => new CouponActivity { ClaimedQuantity = activity.ClaimedQuantity + quantity })
+                .ExecuteAffrows();
+
+            var templateAffected = template.TotalQuantity > 0
+                ? _db.Update<CouponTemplate>()
+                    .Where(a => a.Id == template.Id && a.IssuedQuantity == template.IssuedQuantity)
+                    .Set(a => new CouponTemplate { IssuedQuantity = template.IssuedQuantity + quantity })
+                    .ExecuteAffrows()
+                : 1;
+
+            if (activityAffected == 0 || templateAffected == 0)
+            {
+                throw new InvalidOperationException("券池子在本次事务期间被其它请求改动，事务回滚。");
+            }
+
+            // 有效期从**领取时刻**起算，不从活动开始时间算
+            var expireAt = nowUtc.AddDays(template.ValidDays);
+
+            for (var i = 0; i < quantity; i++)
+            {
+                var coupon = new UserCoupon
+                {
+                    Id = SnowflakeId.NewId(),
+                    CreatedAt = nowUtc,
+                    CustomerId = customerId,
+                    TemplateId = template.Id,
+                    ActivityId = activity.Id,
+                    CouponCode = NewCouponCode(nowUtc, i),
+                    // ↓ 快照：模板改多少次都不影响这张券
+                    CouponType = template.CouponType,
+                    ThresholdAmount = template.ThresholdAmount,
+                    DiscountAmount = template.DiscountAmount,
+                    DiscountRate = template.DiscountRate,
+                    ValidDays = template.ValidDays,
+                    // ↑ 快照结束
+                    TargetType = activity.TargetType,
+                    Targets = activity.Targets,
+                    Status = CouponStatuses.Unused,
+                    ExpireAt = expireAt,
+                    ReceiveAt = nowUtc,
+                    OrderNo = string.Empty
+                };
+
+                _db.Insert(coupon).ExecuteAffrows();
+                codes.Add(coupon.CouponCode);
+            }
+
+            result = new CouponOutcome(true, false, 0, 0m);
+        }), ct);
+
+        return new ClaimResult(result, codes);
+    }
+
+    /// <inheritdoc />
+    public async Task<CouponOutcome> OccupyAsync(
+        long customerId, string orderNo, long couponId,
+        IReadOnlyList<CouponOrderLine> lines, DateTime nowUtc, CancellationToken ct = default)
+    {
+        var result = new CouponOutcome(false, false, 0, 0m, "未执行");
+
+        try
+        {
+            await Task.Run(() => _db.Transaction(() =>
+            {
+                // 同一订单只占一张。重复调用返回首次结果而不是报错——
+                // 下单重试是正常业务，报错会让上游以为要重新下单。
+                var existingOccupancy = _db.Select<CouponOccupancy>()
+                    .Where(a => a.OrderNo == orderNo).First();
+
+                if (existingOccupancy is not null)
+                {
+                    var alreadyCoupon = _db.Select<UserCoupon>().Where(a => a.Id == existingOccupancy.CouponId).First();
+                    result = new CouponOutcome(true, true, existingOccupancy.CouponId, existingOccupancy.DiscountAmount);
+                    return;
+                }
+
+                UserCoupon coupon;
+
+                if (couponId > 0)
+                {
+                    coupon = _db.Select<UserCoupon>().Where(a => a.Id == couponId).First()
+                        ?? throw new InvalidOperationException($"券 {couponId} 不存在。");
+                }
+                else
+                {
+                    // 自动选最优券
+                    var available = _db.Select<UserCoupon>()
+                        .Where(a => a.CustomerId == customerId
+                                    && a.Status == CouponStatuses.Unused
+                                    && a.ExpireAt > nowUtc)
+                        .ToList();
+
+                    if (!CouponCalculator.TryPickBest(available, lines, out var best))
+                    {
+                        result = new CouponOutcome(true, false, 0, 0m);
+                        return;
+                    }
+
+                    coupon = available.First(a => a.Id == best!.Value.CouponId);
+                }
+
+                var quote = CouponCalculator.Quote(coupon, lines);
+
+                if (coupon.CustomerId != customerId)
+                {
+                    result = new CouponOutcome(false, false, 0, 0m, "券不属于该客户");
+                    return;
+                }
+
+                if (!quote.ReachedThreshold || quote.DiscountAmount <= 0m)
+                {
+                    result = new CouponOutcome(false, false, coupon.Id, 0m,
+                        string.IsNullOrEmpty(quote.Reason) ? "该券在当前订单下不可用" : quote.Reason);
+                    return;
+                }
+
+                // 条件更新：只有仍是「未使用」才能占用，防止同一张券被两个并发订单占用
+                var affected = _db.Update<UserCoupon>()
+                    .Where(a => a.Id == coupon.Id && a.Status == CouponStatuses.Unused)
+                    .Set(a => new UserCoupon { Status = CouponStatuses.Occupied, OrderNo = orderNo, UpdatedAt = nowUtc })
+                    .ExecuteAffrows();
+
+                if (affected == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"券 {coupon.Id} 在本次事务期间已被其它订单占用，事务回滚。");
+                }
+
+                _db.Insert(new CouponOccupancy
+                {
+                    Id = SnowflakeId.NewId(),
+                    CreatedAt = nowUtc,
+                    CustomerId = customerId,
+                    OrderNo = orderNo,
+                    CouponId = coupon.Id,
+                    DiscountAmount = quote.DiscountAmount,
+                    Status = OccupancyStatuses.Occupied
+                }).ExecuteAffrows();
+
+                result = new CouponOutcome(true, false, coupon.Id, quote.DiscountAmount);
+            }), ct);
+        }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
+        {
+            // 唯一索引挡住了重复占同一订单
+            var existing = await _db.Select<CouponOccupancy>().Where(a => a.OrderNo == orderNo).FirstAsync(ct);
+            if (existing is null) throw;
+            return new CouponOutcome(true, true, existing.CouponId, existing.DiscountAmount);
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<CouponOutcome> ConsumeAsync(long customerId, string orderNo, CancellationToken ct = default)
+    {
+        var result = new CouponOutcome(false, false, 0, 0m, "未执行");
+
+        await Task.Run(() => _db.Transaction(() =>
+        {
+            var occupancy = _db.Select<CouponOccupancy>().Where(a => a.OrderNo == orderNo).First();
+            if (occupancy is null)
+            {
+                result = new CouponOutcome(true, false, 0, 0m);
+                return;
+            }
+
+            if (occupancy.Status == OccupancyStatuses.Consumed)
+            {
+                result = new CouponOutcome(true, true, occupancy.CouponId, occupancy.DiscountAmount);
+                return;
+            }
+
+            if (occupancy.Status != OccupancyStatuses.Occupied)
+            {
+                result = new CouponOutcome(false, false, occupancy.CouponId, occupancy.DiscountAmount,
+                    "该券已被回退，无法核销");
+                return;
+            }
+
+            _db.Update<UserCoupon>().Where(a => a.Id == occupancy.CouponId && a.Status == CouponStatuses.Occupied)
+                .Set(a => new UserCoupon { Status = CouponStatuses.Consumed, ConsumeAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow })
+                .ExecuteAffrows();
+
+            _db.Update<CouponOccupancy>().Where(a => a.Id == occupancy.Id)
+                .Set(a => new CouponOccupancy { Status = OccupancyStatuses.Consumed, UpdatedAt = DateTime.UtcNow })
+                .ExecuteAffrows();
+
+            result = new CouponOutcome(true, false, occupancy.CouponId, occupancy.DiscountAmount);
+        }), ct);
+
+        return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<CouponOutcome> ReleaseAsync(long customerId, string orderNo, CancellationToken ct = default)
+    {
+        var result = new CouponOutcome(false, false, 0, 0m, "未执行");
+
+        await Task.Run(() => _db.Transaction(() =>
+        {
+            var occupancy = _db.Select<CouponOccupancy>().Where(a => a.OrderNo == orderNo).First();
+            if (occupancy is null)
+            {
+                result = new CouponOutcome(true, false, 0, 0m);
+                return;
+            }
+
+            if (occupancy.Status == OccupancyStatuses.Released)
+            {
+                result = new CouponOutcome(true, true, occupancy.CouponId, 0m);
+                return;
+            }
+
+            if (occupancy.Status == OccupancyStatuses.Consumed)
+            {
+                // 已核销的券不能回退：钱已经收了，券也作废了。
+                // 这种情况应该走退款流程，而不是取消。
+                result = new CouponOutcome(false, false, occupancy.CouponId, occupancy.DiscountAmount,
+                    "该券已核销，不能回退占用");
+                return;
+            }
+
+            // 券回到可用，清掉订单号
+            _db.Update<UserCoupon>().Where(a => a.Id == occupancy.CouponId && a.Status == CouponStatuses.Occupied)
+                .Set(a => new UserCoupon { Status = CouponStatuses.Unused, OrderNo = string.Empty, UpdatedAt = DateTime.UtcNow })
+                .ExecuteAffrows();
+
+            _db.Update<CouponOccupancy>().Where(a => a.Id == occupancy.Id)
+                .Set(a => new CouponOccupancy { Status = OccupancyStatuses.Released, UpdatedAt = DateTime.UtcNow })
+                .ExecuteAffrows();
+
+            result = new CouponOutcome(true, false, occupancy.CouponId, 0m);
+        }), ct);
+
+        return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<List<UserCoupon>> ListAvailableAsync(long customerId, DateTime nowUtc, CancellationToken ct = default)
+        => await _db.Select<UserCoupon>()
+            .Where(a => a.CustomerId == customerId
+                        && a.Status == CouponStatuses.Unused
+                        && a.ExpireAt > nowUtc)
+            .OrderBy(a => a.ExpireAt)
+            .ToListAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<UserCoupon?> GetCouponAsync(long couponId, CancellationToken ct = default)
+        => await _db.Select<UserCoupon>().Where(a => a.Id == couponId).FirstAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<int> CountClaimedAsync(long customerId, long activityId, CancellationToken ct = default)
+    {
+        // FreeSql 的 CountAsync 返回 long，契约用 int：限领上限本来就是个位数，转换安全
+        var count = await _db.Select<UserCoupon>()
+            .Where(a => a.CustomerId == customerId && a.ActivityId == activityId)
+            .CountAsync(ct);
+        return (int)count;
+    }
+
+    /// <inheritdoc />
+    public async Task<CouponTemplate?> GetTemplateAsync(long templateId, CancellationToken ct = default)
+        => await _db.Select<CouponTemplate>().Where(a => a.Id == templateId).FirstAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<CouponActivity?> GetActivityAsync(long activityId, CancellationToken ct = default)
+        => await _db.Select<CouponActivity>().Where(a => a.Id == activityId).FirstAsync(ct);
+
+    /// <summary>
+    /// 生成券码：日期 + 活动 + 客户 + 序号，肉眼可读且便于客服定位。
+    /// </summary>
+    /// <remarks>
+    /// 不含随机段：同一活动同一客户同一天领的券，靠序号区分就够了；
+    /// 真正的唯一性由数据库的 uk_user_coupon_code 兜底——万一重复了会报唯一键冲突，
+    /// 而不是悄悄发两张一样的券。
+    /// </remarks>
+    private static string NewCouponCode(DateTime nowUtc, int index)
+        => $"{nowUtc:yyyyMMddHHmmss}{index:D2}{Random.Shared.Next(100000, 999999)}";
+}

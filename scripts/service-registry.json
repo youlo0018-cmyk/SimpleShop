@@ -70,7 +70,7 @@
     {
       "name": "MarketingService",
       "port": 5072,
-      "implemented": false,
+      "implemented": true,
       "project": "src/MarketingService/MarketingService.Api/MarketingService.Api.csproj"
     },
     {
