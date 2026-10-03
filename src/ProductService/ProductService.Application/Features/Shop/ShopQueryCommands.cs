@@ -87,11 +87,14 @@ public static class ShopSorts
 /// <param name="DiscountSourceName">优惠来源名称（活动名或券码）。</param>
 /// <param name="HasDiscount">是否有优惠。</param>
 /// <param name="Sales">销量。</param>
+/// <param name="EvaluationScore">评价均分。<b>0 表示还没有评价</b>，前端展示时要转成 5.0。</param>
+/// <param name="EvaluationCount">评价条数（只数首评）。</param>
 public sealed record ShopProductItem(
     string ProductId, string SpuName, string SubTitle, string MainImage,
     string BrandName, string CategoryName, int DeliveryType,
     decimal OriginalPrice, decimal FinalPrice,
-    string DiscountSource, string DiscountSourceName, bool HasDiscount, long Sales);
+    string DiscountSource, string DiscountSourceName, bool HasDiscount, long Sales,
+    decimal EvaluationScore, int EvaluationCount);
 
 /// <summary>前台商品分页结果。</summary>
 /// <param name="Items">当页商品。</param>
@@ -113,10 +116,13 @@ public sealed record ShopProductPage(
 /// <param name="DeliveryType">配送方式。</param>
 /// <param name="Specs">规格项。</param>
 /// <param name="Skus">SKU 列表，含每个 SKU 的到手价。</param>
+/// <param name="EvaluationScore">评价均分。<b>0 表示还没有评价</b>，展示层要转成 5.0。</param>
+/// <param name="EvaluationCount">评价条数（只数首评）。</param>
 public sealed record ShopProductDetailDto(
     string ProductId, string SpuName, string SubTitle,
     string MainImage, string Images, string DetailImages,
     string BrandName, string CategoryName, int DeliveryType,
+    decimal EvaluationScore, int EvaluationCount,
     IReadOnlyList<ShopSpecDto> Specs, IReadOnlyList<ShopSkuDto> Skus);
 
 /// <summary>前台规格项。</summary>

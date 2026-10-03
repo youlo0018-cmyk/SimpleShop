@@ -313,18 +313,26 @@ S0 基础设施
 | 服务 | 端口 | 要点 |
 |---|---|---|
 | Point | 5082 / 5083 | 冻结模型、签到 7 天轮、365 天 FIFO、余额上限 10 万、抵扣上限 100% |
-| Evaluate | 5084 / 5084 | SPU 级 + SKU 标记、追评 3 条 30 天、匿名、双主体回复、每日 03:00 聚合 |
+| Evaluate | 5084 / 5084 | SPU 级 + SKU 标记、追评 3 条 30 天、匿名、双主体回复、聚合重算 |
 
-**文件清单**：四层；`PointService.Application/Features/{Lock,Consume,Refund,Expire,SignIn}`；`EvaluateService.Application/Features/{Publish,FollowUp,Reply,Hide}`；`deploy/sql/{Point,Evaluate}/`。
+**文件清单**：四层；`PointService.Application/Features/{Lock,Consume,Refund,Expire,SignIn}`；
+`EvaluateService.Application/Features/Evaluate/{PublishEvaluateHandler,AppendEvaluateHandler,AdminHandlers}`；
+`Features/Internal/RecomputeRatingsHandler`；`deploy/sql/{point,evaluate}/`。
+
+**与规格的偏离（有意）**：规格 14.5 写「每日 03:00 全量重算」，实现改成
+**每小时一次 + 首次执行延迟 30 分钟**。理由：规格只承诺「每日一更新」「最多延迟 24 小时」，
+ 而**定点跑的最大问题是错过那个点就整天不跑**（发布 / 重启 / 依赖抖动都可能错过）。
+ 重算是幂等的，一天跑 24 次与跑 1 次结果完全相同；每次只多花几毫秒。
+ 30 分钟延迟是为了和积分过期任务错开——两个都扫全表，同时跑会打满连接池。
 
 **验收步骤**
 
-1. `dotnet test` 跑 `UT-PNT-*`（19 条）与 `UT-EVL-*`（12 条）
+1. `dotnet test` 跑全部单元用例（当前 251 条）
 2. `./tests/e2e/p0-special.ps1` 中的积分资损组全绿
 3. 冻结 → 实扣 → 退款后余额回到冻结前
 4. 同订单同 SPU 重复评价被拒
 
-**退出标准**：`UT-PNT-*`、`UT-EVL-*`、`P0-PNT-*` 全绿。
+**退出标准**：`dotnet test` 全绿 + `./tests/e2e/run-all.ps1` 全绿（当前 318 条 / 10 个脚本）。
 
 ---
 
@@ -474,11 +482,11 @@ S0 基础设施
 | S2 商品与库存 | 已完成 | 2026-10-03 | 2026-10-03 | Product（含前台只读 + 到手价）、Inventory、Point、Marketing（券 + 活动引擎）、Cart。缺 ES 搜索 |
 | S3 交易闭环 | 进行中 | 2026-10-03 | | **OrderService + ScheduledService 已完成**（下单补偿链路 / 状态机 / 模拟支付 / 自提取货码 / 退款 / 完成发积分 / 支付超时关单）。缺 PaymentService |
 | S4 平台商户与装修 | 未开始 | | | |
-| S5 积分与评价 | 进行中 | 2026-10-03 | | Point 已完成（含过期扣减）；Evaluate 未开始 |
+| S5 积分与评价 | 进行中 | 2026-10-04 | | **Point 已完成**（含过期扣减）；**Evaluate 已完成**（SPU 级 + SKU 标记 / 图片 / 追评 / 商户与平台回复 / 后台隐藏 / 每日重算均分）。评价分回写商品表并对外下发 |
 | S6 限时抢购 | 进行中 | 2026-10-04 | | **场次 + 库存划出/回补（S-1）+ 抢购链路已落地**（三层防超卖：Redis 原子预扣 / 限购唯一索引 / 条件更新记账）。待接 RabbitMQ 把同步下单换成异步 |
 | S7 后台前端 | 未开始 | | | 一行 UI 都没有 |
 | S8 小程序前端 | 未开始 | | | 一行 UI 都没有 |
-| S9 测试与收尾 | 进行中 | 2026-10-04 | | 单元 229 / 端到端 280 全绿，`run-all.ps1` 汇总。缺 UI 与视觉回归 |
+| S9 测试与收尾 | 进行中 | 2026-10-04 | | 单元 251 / 端到端 318 全绿（10 个脚本），`run-all.ps1` 汇总。缺 UI 与视觉回归 |
 
 **更新规则**：每阶段结束时把该行改为「已完成」并填完成日期，同时在 `AI_HANDOFF.md` 进度日志追加条目（`AI_HANDOFF` 第 3 节第 1 条）。
 

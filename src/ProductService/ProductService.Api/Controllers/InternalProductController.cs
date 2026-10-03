@@ -3,6 +3,7 @@ using FreeSql;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using ProductService.Application.Features.Shop;
+using ProductService.Application.Features.Internal;
 using ProductService.Domain.Entities;
 
 namespace ProductService.Api.Controllers;
@@ -40,6 +41,20 @@ public sealed class InternalProductController : ControllerBase
     [HttpPost("search-index/sync")]
     public Task<ApiResponse<SearchIndexSyncResult>> SyncSearchIndex(
         [FromBody] SyncSearchIndexCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>回写商品评价均分与条数（EvaluateService 每日重算后调用）。</summary>
+    /// <param name="command">回写命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>回写统计。</returns>
+    /// <remarks>
+    /// 商品表上的评分是**冗余字段**：C 端列表页一次要展示几十个商品的评分，
+    /// 逐个调评价服务既慢又让列表强依赖评价服务可用性。
+    /// 代价是最多滞后 24 小时（每日 03:00 全量重算，规格 14.5）。
+    /// </remarks>
+    [HttpPost("ratings/sync")]
+    public Task<ApiResponse<SyncProductRatingsResult>> SyncRatings(
+        [FromBody] SyncProductRatingsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
     /// <summary>按 SKU Id 集合取快照信息。</summary>

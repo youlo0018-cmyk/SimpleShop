@@ -312,6 +312,8 @@ public sealed class QueryProductDetailHandler : IRequestHandler<QueryProductDeta
             product.AuditStatus,
             product.Status,
             product.Sales,
+            product.EvaluationScore,
+            product.EvaluationCount,
             specDtos,
             skuDtos);
 

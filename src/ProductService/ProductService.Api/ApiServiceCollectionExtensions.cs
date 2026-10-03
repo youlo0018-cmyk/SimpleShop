@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ProductService.Application.Services;
 using ProductService.Application.Features.Brand;
 using ProductService.Application.Features.Category;
+using ProductService.Application.Features.Internal;
 using ProductService.Application.Features.Product;
 using ProductService.Application.Features.Shop;
 using ProductService.Infrastructure;
@@ -38,6 +39,7 @@ public static class ApiServiceCollectionExtensions
         ProductValidators.AddProductValidators(services);
         ShopValidators.AddShopValidators(services);
         SearchIndexSyncValidators.AddSearchIndexSyncValidators(services);
+    SyncProductRatingsValidators.AddSyncProductRatingsValidators(services);
 
         // 库存服务地址只从配置来，代码里不写端口
         var inventoryUrl = configuration["Services:InventoryServiceBaseUrl"];

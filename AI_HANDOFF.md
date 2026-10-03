@@ -175,9 +175,10 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Marketing | 5072 | ✅ 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价试算 + **秒杀场次 / 库存划转 / 抢购链路**（三层防超卖）。待接 RabbitMQ 把同步下单换成异步 |
 | Order | 5064 | ✅ 下单四步补偿链路 + 客户级幂等锁 + 订单状态机 + 模拟支付 + 自提取货码（RSA）+ 退款回补 |
 | Scheduled | 无端口 | ✅ 独立定时进程：**支付超时关单**（30 秒）+ **积分过期扣减**（每小时）+ **商品索引对账**（10 分钟）。Redis `lock:job:*` 多实例互斥 |
-| Payment / MerchantPlatform / Evaluate / Log | 见 3.3 | ⬜ 未开始 |
+| Evaluate | 5084 | ✅ SPU 级评价 + SKU 标记自动推导 + 图片 + 追评 + 商户/平台回复 + 后台隐藏 + 每日重算均分 |
+| Payment / MerchantPlatform / Log | 见 3.3 | ⬜ 未开始 |
 
-**S1、S2 已完成，S3（交易闭环）已完成第一版。** 13 个进程在跑（12 个 HTTP 服务 + ScheduledService）。
+**S1、S2 已完成，S3（交易闭环）已完成第一版，S5 积分与评价已完成。** 14 个进程在跑（13 个 HTTP 服务 + ScheduledService）。
 下一步按依赖顺序：**PaymentService** → MerchantPlatform → Evaluate → ScheduledService 补偿重试 / 孤儿预留对账。
 
 **验证现状**
@@ -267,6 +268,44 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-04：S5 — EvaluateService 评价（BUSINESS.md 14 全量落地）
+
+**新服务，14 个进程里多了一个**：`src/EvaluateService/`（Domain / Application / Infrastructure / Api 四件套，端口 5084）
+
+**核心设计取舍**
+
+- **粒度 SPU + SKU 标记**：一条首评对应一个 SPU，SKU 标记**由服务端从订单自动推导**，
+  不让前端传——前端可能只传一个规格，也可能传一堆不属于这单的 SKU。
+- **幂等靠唯一索引** `uk_evaluate_order_spu(order_no, spu_id)`：一个订单内同一 SPU 只能一条首评。
+  不用「先查再插」，并发下两个请求都会查到「还没评过」。
+- **追评不计入均分**（规格 14.2）：否则「先打 5 星再追评差评拉低分数」就成了刷分路径。
+- **重算全量而非增量**：增量要处理「新增加一分 / 隐藏减一分 / 删除减一分」三条路径，
+  漏一条分数就永久漂移且不可逆。全量重算幂等、跑几次结果一样。
+- **店铺评分只统计有评价的商品**（规格 14.5）：把零评价商品的默认 5.0 算进去会让评分虚高。
+- **能否评价由订单服务判定**（`OrderForEvaluateDto.CanEvaluate`）：两边各写一份 `== 50`，
+  状态机加中间态时就会静默失配。
+
+**跨服务改动**
+
+- `OrderService`：`POST /internal/orders/for-evaluate`，按 SPU 聚合返回该单买过的 SKU。
+- `ProductService`：`product.evaluation_score` / `evaluation_count` 两列 + `POST /internal/products/ratings/sync` 回写；
+  后台详情与前台商品卡 / 详情都带上评分。
+- `ScheduledService`：新增 `evaluate_recompute` 任务（每小时，带 30 分钟初始延迟错峰，
+  与积分过期任务避开同时扫全表）。为此给 `IJob` 加了 `InitialDelaySeconds`——
+  原来只有「随机 200~1200 毫秒」，两个全表任务照样会在同一秒压数据库。
+
+**过程中修掉的 4 个缺陷**
+
+| 缺陷 | 后果 |
+|---|---|
+| EvaluateService 缺 `appsettings.json` | 配置源退化成 LocalFile，缺 5 个必填键直接启动失败 |
+| `Features/Evaluate` / `Features/Product` 命名空间段遮蔽同名实体 | CS0118（规范 §6 第 1 条，实战中再次命中） |
+| 仓储把 `CustomerId` 无条件覆盖成 `ctx.UserId` | 服务被直接调用时 UserId=0，评价全记到「客户 0」名下，**接口全返回成功**但「我的评价」查不到、追评被拒 |
+| 端到端用例漏了「发货」这一步 | 订单停在「待发货」，后续 20 条断言全部连锁失败 |
+
+**验证**：构建 0 warning 0 error；单元 **251/251**（新增 22 条评价计算用例）；
+端到端 **318/318**（10 个脚本，评价 38 条）；14 个进程全绿。
 
 ### 2026-10-04：S6 — 秒杀抢购链路 + 雪花 workerId 租约化
 

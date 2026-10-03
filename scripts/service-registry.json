@@ -88,7 +88,7 @@
     {
       "name": "EvaluateService",
       "port": 5084,
-      "implemented": false,
+      "implemented": true,
       "project": "src/EvaluateService/EvaluateService.Api/EvaluateService.Api.csproj"
     },
     {

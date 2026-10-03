@@ -44,4 +44,17 @@ public sealed class InternalOrderController : ControllerBase
     public Task<ApiResponse<CloseTimeoutResult>> CloseTimeout(
         [FromBody] CloseTimeoutOrdersCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>按订单号取评价所需信息（供 EvaluateService 调用）。</summary>
+    /// <param name="command">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>订单状态与它买过的 SPU / SKU 清单。</returns>
+    /// <remarks>
+    /// 评价是 SPU 级的（规格 14.1），所以返回的数据也按 SPU 聚合：
+    /// 买了同一 SPU 的 3 个规格，评价服务据此只写 1 条首评 + 3 个 SKU 标记。
+    /// </remarks>
+    [HttpPost("for-evaluate")]
+    public Task<ApiResponse<OrderForEvaluateDto>> ForEvaluate(
+        [FromBody] QueryOrderForEvaluateCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 }

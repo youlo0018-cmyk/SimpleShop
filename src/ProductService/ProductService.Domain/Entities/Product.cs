@@ -85,6 +85,23 @@ public class Product : AdminEntityBase
     [Column(Name = "sales")]
     public long Sales { get; set; }
 
+    /// <summary>
+    /// 评价均分，首评星级均值，两位小数。
+    /// </summary>
+    /// <remarks>
+    /// <b>冗余字段，C 端直接读它</b>，不实时去评价服务聚合：
+    /// 商品列表页一次要展示几十个商品的评分，逐个调评价服务既慢又让列表强依赖评价服务可用性。
+    /// 代价是它最多滞后 24 小时（每日 03:00 全量重算，见规格 14.5）。
+    /// <b>0 表示还没有评价</b>，展示时用 <c>EvaluateCalculator.DisplayScore</c> 转成 5.0——
+    /// 0 分会被用户理解成「很差」，而「还没人评价」是中性的。
+    /// </remarks>
+    [Column(Name = "evaluation_score")]
+    public decimal EvaluationScore { get; set; }
+
+    /// <summary>评价条数（只数首评，追评不计入）。</summary>
+    [Column(Name = "evaluation_count")]
+    public int EvaluationCount { get; set; }
+
     /// <summary>排序，小的在前。</summary>
     [Column(Name = "sort_order")]
     public int SortOrder { get; set; }

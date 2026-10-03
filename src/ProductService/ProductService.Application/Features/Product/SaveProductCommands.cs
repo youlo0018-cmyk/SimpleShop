@@ -120,6 +120,8 @@ public record ProductDetailDto(
     int AuditStatus,
     int Status,
     long Sales,
+    decimal EvaluationScore,
+    int EvaluationCount,
     IReadOnlyList<ProductSpecDto> Specs,
     IReadOnlyList<SkuDto> Skus);
 

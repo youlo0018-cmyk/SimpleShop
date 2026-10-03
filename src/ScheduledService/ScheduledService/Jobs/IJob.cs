@@ -24,6 +24,17 @@ public interface IJob
     /// </remarks>
     int LockTtlSeconds { get; }
 
+    /// <summary>
+    /// 首次执行前额外等待的秒数，默认 0。
+    /// </summary>
+    /// <remarks>
+    /// 存在的理由：多个任务都是整点启动时，光靠「随机等 200~1200 毫秒」只能避免
+    /// 请求在同一秒发出，但两个**都会扫全表**的重任务仍然会在同一秒压数据库，
+    /// 连接池被打满后彼此超时、互相拖慢。给重任务设一个明确的初始延迟
+    /// （比如评价重算推迟 30 分钟）才是真正的错峰。
+    /// </remarks>
+    int InitialDelaySeconds => 0;
+
     /// <summary>执行一次。</summary>
     /// <param name="ct">取消令牌。</param>
     /// <returns>本次执行的摘要，写进日志。</returns>

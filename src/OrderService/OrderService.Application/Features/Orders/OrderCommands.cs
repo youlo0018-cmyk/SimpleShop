@@ -104,6 +104,43 @@ public sealed record OrderListItemDto(
     long OrderId, string OrderNo, int Status, string StatusName,
     decimal PayableAmount, int ItemCount, string FirstProductName, string CreatedAt, string ReceiverName);
 
+/// <summary>供评价服务使用的订单信息。</summary>
+/// <remarks>
+/// 为什么不复用 <see cref="OrderDetailDto"/>：那个 DTO 面向 C 端展示，
+/// 带应收货人姓名电话地址——评价服务只需要「这单买了哪些 SPU/SKU、是什么状态」，
+/// 多传个人信息等于凭空扩大数据出库的边界。这里只给评价真正需要的字段。
+/// </remarks>
+/// <param name="OrderId">订单 Id。</param>
+/// <param name="OrderNo">订单号。</param>
+/// <param name="CustomerId">下单客户 Id。</param>
+/// <param name="PlatformId">平台 Id。</param>
+/// <param name="MerchantId">商户 Id。</param>
+/// <param name="Status">订单状态，见 <see cref="OrderStatuses"/>。</param>
+/// <param name="StatusName">订单状态中文名。</param>
+/// <param name="CanEvaluate">是否处于可评价状态（已完成）。</param>
+/// <param name="Items">该订单买过的 SPU 及其 SKU 清单。</param>
+public sealed record OrderForEvaluateDto(
+    long OrderId, string OrderNo, long CustomerId, long PlatformId, long MerchantId,
+    int Status, string StatusName, bool CanEvaluate,
+    IReadOnlyList<OrderSpuForEvaluateDto> Items);
+
+/// <summary>评价用的订单内单个 SPU 及其 SKU。</summary>
+/// <remarks>
+/// 按 SPU 聚合而不是逐行返回，是因为一条首评就是 SPU 级的（规格 14.1）：
+/// 买了同一 SPU 的 3 个规格也只写一条评价，SKU 只是它的标记集合。
+/// </remarks>
+/// <param name="SpuId">SPU Id。</param>
+/// <param name="SpuName">商品名快照（取该 SPU 首行的商品名）。</param>
+/// <param name="Skus">该 SPU 下本单购买的 SKU 清单。</param>
+public sealed record OrderSpuForEvaluateDto(
+    long SpuId, string SpuName, IReadOnlyList<OrderSkuForEvaluateDto> Skus);
+
+/// <summary>评价用的订单内单个 SKU。</summary>
+/// <param name="SkuId">SKU Id。</param>
+/// <param name="SkuSpecText">规格文本快照。</param>
+/// <param name="OrderItemId">订单行 Id，供评价反查。</param>
+public sealed record OrderSkuForEvaluateDto(long SkuId, string SkuSpecText, long OrderItemId);
+
 /// <summary>订单详情。</summary>
 public sealed record OrderDetailDto(
     long OrderId, string OrderNo, int Status, string StatusName, bool CanCancel, bool CanConfirmReceipt,

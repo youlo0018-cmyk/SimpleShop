@@ -64,6 +64,24 @@ public sealed class JobRunner : BackgroundService
         var interval = TimeSpan.FromSeconds(Math.Max(1, job.IntervalSeconds));
         var lockTtl = TimeSpan.FromSeconds(Math.Max(interval.TotalSeconds * 3, job.LockTtlSeconds));
 
+        // 明确的初始延迟（错峰）：两个都会扫全表的重任务如果都等到整点才第一次跑，
+        // 会在同一秒压数据库，连接池打满后彼此超时、互相拖慢。
+        // 只有设了 InitialDelaySeconds 的任务会被推迟，其余任务行为不变。
+        if (job.InitialDelaySeconds > 0)
+        {
+            _logger.LogInformation(
+                "任务 {Job} 首次执行推迟 {Seconds} 秒（错峰）", job.Name, job.InitialDelaySeconds);
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(job.InitialDelaySeconds), ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+
         // 错开首次执行：多个任务如果都等到整点才第一次跑，会在同一秒发出所有请求
         await Task.Delay(Random.Shared.Next(200, 1200), ct).ConfigureAwait(false);
 

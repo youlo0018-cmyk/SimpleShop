@@ -89,6 +89,11 @@ CREATE TABLE IF NOT EXISTS product (
     audit_status  int           NOT NULL DEFAULT 10,
     status        int           NOT NULL DEFAULT 2,
     sales         bigint        NOT NULL DEFAULT 0,
+    -- 评价均分与评价条数：EvaluateService 每日 03:00 全量重算后回写（规格 14.5）。
+    -- C 端直接读这两个冗余字段，不实时去评价服务聚合——列表页一次要展示几十个商品评分。
+    -- 0 表示还没有评价，展示时转成 5.0（0 分会被用户理解成「很差」）。
+    evaluation_score  numeric(3,2) NOT NULL DEFAULT 0,
+    evaluation_count  int          NOT NULL DEFAULT 0,
     sort_order    int           NOT NULL DEFAULT 0,
     remark        varchar(512)  NOT NULL DEFAULT '',
     CONSTRAINT pk_product PRIMARY KEY (id)
@@ -97,6 +102,10 @@ CREATE TABLE IF NOT EXISTS product (
 CREATE INDEX IF NOT EXISTS idx_product_category ON product (category_id, status);
 CREATE INDEX IF NOT EXISTS idx_product_platform ON product (platform_id, merchant_id, status);
 CREATE INDEX IF NOT EXISTS idx_product_audit ON product (audit_status, status);
+
+-- 补列：本文件首次执行前就已建过 product 的库，CREATE TABLE IF NOT EXISTS 不会给它加列。
+ALTER TABLE product ADD COLUMN IF NOT EXISTS evaluation_score numeric(3,2) NOT NULL DEFAULT 0;
+ALTER TABLE product ADD COLUMN IF NOT EXISTS evaluation_count int          NOT NULL DEFAULT 0;
 
 -- 规格项与规格值：SPU 下动态定义，不建全局字典（DATA_SPEC 5.7.1）
 CREATE TABLE IF NOT EXISTS product_spec (

@@ -90,7 +90,12 @@ public sealed class ShopItemAssembler
                 best.Source,
                 best.SourceName,
                 best.DiscountAmount > 0m,
-                row.Sales));
+                row.Sales,
+                // 冗余评分直接带出。**0 表示还没有评价**，展示层要转成 5.0——
+                // 在这里转会把「还没人评价」和「均分刚好是 0」两种情况混成一个值，
+                // 以后想区分「没评价」和「全是 1 星」就做不到了。
+                row.EvaluationScore,
+                row.EvaluationCount));
         }
 
         return items;

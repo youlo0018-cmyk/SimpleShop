@@ -16,7 +16,12 @@ var loaded = await ServiceBootstrap.LoadConfigurationAsync(
     builder.Configuration,
     "ScheduledService",
     builder.Environment.EnvironmentName,
-    extraRequiredKeys: ["Services:OrderServiceBaseUrl", "Services:PointServiceBaseUrl"],
+    extraRequiredKeys:
+    [
+        "Services:OrderServiceBaseUrl",
+        "Services:PointServiceBaseUrl",
+        "Services:EvaluateServiceBaseUrl"
+    ],
     exemptBaseKeys: [ConfigurationValidator.DatabaseConnectionKey]);
 
 builder.Configuration.AddConfiguration(
@@ -30,6 +35,7 @@ builder.Services.AddSingleton(_ => redis.GetDatabase(redisOptions.Database));
 var orderUrl = builder.Configuration["Services:OrderServiceBaseUrl"]!;
 var pointUrl = builder.Configuration["Services:PointServiceBaseUrl"]!;
 var productUrl = builder.Configuration["Services:ProductServiceBaseUrl"]!;
+var evaluateUrl = builder.Configuration["Services:EvaluateServiceBaseUrl"]!;
 builder.Services.AddHttpClient<OrderTimeoutCloseJob>(client =>
 {
     client.BaseAddress = new Uri(orderUrl.TrimEnd('/') + "/");
@@ -52,6 +58,7 @@ builder.Services.AddHttpClient<PointExpireJob>(client =>
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<OrderTimeoutCloseJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<PointExpireJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<ProductSearchIndexSyncJob>());
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<EvaluateRecomputeJob>());
 
 builder.Services.AddHttpClient<ProductSearchIndexSyncJob>(client =>
 {
@@ -59,6 +66,14 @@ builder.Services.AddHttpClient<ProductSearchIndexSyncJob>(client =>
 
     // 对账要扫全表并逐个补写，比关单慢得多，给足时间
     client.Timeout = TimeSpan.FromSeconds(180);
+});
+
+builder.Services.AddHttpClient<EvaluateRecomputeJob>(client =>
+{
+    client.BaseAddress = new Uri(evaluateUrl.TrimEnd('/') + "/");
+
+    // 重算要扫全量评价并逐个回写商品表，比索引对账还慢
+    client.Timeout = TimeSpan.FromSeconds(300);
 });
 
 builder.Services.AddHostedService<JobRunner>();

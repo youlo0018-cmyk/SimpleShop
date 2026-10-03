@@ -175,6 +175,8 @@ public sealed class QueryShopProductDetailHandler
             product.BrandName,
             product.CategoryName,
             product.DeliveryType,
+            product.EvaluationScore,
+            product.EvaluationCount,
             specDtos,
             skuDtos);
 

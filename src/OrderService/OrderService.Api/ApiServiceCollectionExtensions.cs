@@ -30,6 +30,7 @@ public static class ApiServiceCollectionExtensions
         SeckillOrderValidators.AddSeckillOrderValidators(services);
         OrderAdminValidators.AddOrderAdminValidators(services);
         CloseTimeoutValidators.AddCloseTimeoutValidators(services);
+        QueryOrderForEvaluateValidators.AddQueryOrderForEvaluateValidators(services);
 
         // 超时阈值是配置不是常量：不同业务等待时长不同，线上要临时调长时改配置比发版快
         services.Configure<OrderTimeoutOptions>(configuration.GetSection(OrderTimeoutOptions.SectionName));

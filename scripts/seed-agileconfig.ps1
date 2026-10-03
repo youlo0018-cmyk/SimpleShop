@@ -148,6 +148,7 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     $cfg['Services:CartServiceBaseUrl']        = $serviceUrls['CartService']
     $cfg['Services:OrderServiceBaseUrl']       = $serviceUrls['OrderService']
     $cfg['Services:PaymentServiceBaseUrl']     = $serviceUrls['PaymentService']
+    $cfg['Services:EvaluateServiceBaseUrl']    = $serviceUrls['EvaluateService']
 
     # 自提取货码的 RSA 私钥路径。密钥文件由 ./scripts/generate-pickup-rsa.ps1 生成，
     # 不入库、不进发布包；这里只给路径。取货码 = 公钥加密后的订单号，
