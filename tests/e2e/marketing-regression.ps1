@@ -15,6 +15,10 @@
 [CmdletBinding()]
 param(
     [string]$Marketing = 'http://127.0.0.1:5072',
+    [string]$Gateway = 'http://127.0.0.1:5008',
+    [string]$Inventory = 'http://127.0.0.1:5062',
+    [string]$AdminUser = 'codexadmin',
+    [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
 )
 
@@ -44,6 +48,23 @@ function Invoke-Case {
 }
 
 $script:suffix = Get-Random -Minimum 100000 -Maximum 999999
+
+# 秒杀用例要走后台建商品 / 建分类 / 初始化库存，那几条只有经网关带令牌才能调
+Add-Type -AssemblyName System.Net.Http
+$adminHttp = [System.Net.Http.HttpClient]::new()
+$dd = [System.Collections.Generic.Dictionary[string,string]]::new()
+$dd['grant_type'] = 'password'
+$dd['client_id'] = 'admin-app'
+$dd['username'] = $AdminUser
+$dd['password'] = $AdminPassword
+
+$tokenResp = $adminHttp.PostAsync(
+    "$Gateway/gateway/auth/token",
+    [System.Net.Http.FormUrlEncodedContent]::new($dd)
+).GetAwaiter().GetResult()
+
+$tokenJson = ($tokenResp.Content.ReadAsStringAsync().GetAwaiter().GetResult()) | ConvertFrom-Json
+$script:adminHeaders = @{ Authorization = "Bearer $($tokenJson.access_token)" }
 $script:customerId = 900000000 + $script:suffix
 $script:now = [DateTime]::UtcNow
 
@@ -438,6 +459,188 @@ Invoke-Case 'API-MKT-064' '🔴 删除后不再参与计算（软删）' {
 Invoke-Case 'API-MKT-065' '清理本节所有活动' {
     foreach ($id in $script:promoIds) { Post '/marketing/activities/Delete' @{ activityId = [long]$id } | Out-Null }
     $script:promoIds = @()
+    return $true
+}
+
+Write-Host "`n=== SKL 秒杀：库存划出与回补（S-1）===" -ForegroundColor Cyan
+
+# 秒杀要用一个**真实存在且有库存**的 SKU：发布时真的会去库存服务划库存，
+# 拿个不存在的 SKU 去测只能测到「划出失败」这一条分支。
+$script:sklProductId = 0
+$script:sklCategoryIds = @()
+$script:sklSkuId = 0
+$script:sklOriginPrice = 200
+$script:sklInitStock = 50
+$script:sklSessionId = 0
+$script:sklItemId = 0
+$script:sklQty = 10
+
+function Get-SkuStock([long]$SkuId) {
+    $r = Invoke-RestMethod "$Inventory/internal/inventory/Snapshot?skuIds=$SkuId" -TimeoutSec 20
+    return @($r.data | Where-Object { $_.skuId -eq $SkuId })[0]
+}
+
+function New-SklSession([int]$Hours = 1) {
+    $now = [DateTime]::UtcNow
+    return (Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Create' -Method Post `
+        -Body (@{
+            sessionName = "秒杀场次$($script:suffix)"; platformId = 0; merchantId = 0
+            startTime = $now.AddHours(-1).ToString('o'); endTime = $now.AddHours($Hours).ToString('o')
+            sortOrder = 0
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 20).data
+}
+
+function Publish-Skl([long]$Id, [bool]$Force = $false) {
+    return Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Publish' -Method Post `
+        -Body (@{ sessionId = $Id; force = $Force } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+}
+
+Invoke-Case 'API-SKL-000' '准备：一个有 50 件库存、单价 200 的 SKU' {
+    $a = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = 0; categoryName = "秒杀$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $b = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $a; categoryName = "秒杀$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $c = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $b; categoryName = "秒杀$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $script:sklCategoryIds = @($a, $b, $c)
+
+    $body = @{
+        productId = 0; spuName = "秒杀商品$($script:suffix)"; categoryId = $c
+        deliveryType = 1; mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "SKL$($script:suffix)"; specValues = @('红'); price = $script:sklOriginPrice; stock = $script:sklInitStock; status = 1 })
+    }
+    $script:sklProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    $det = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:sklProductId)" -Headers $script:adminHeaders -TimeoutSec 30
+    $script:sklSkuId = [long]$det.data.skus[0].id
+
+    return $script:sklSkuId -gt 0 -and (Get-SkuStock $script:sklSkuId).available -eq $script:sklInitStock
+}
+
+Invoke-Case 'API-SKL-001' '建场次：未开始、库存未划出' {
+    $script:sklSessionId = [long](New-SklSession)
+    $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/List' -Method Post `
+        -Body (@{ status = 0; page = 1; pageSize = 50 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $row = @($list.data.items | Where-Object { $_.sessionId -eq "$($script:sklSessionId)" })[0]
+    return $script:sklSessionId -gt 0 -and $row.status -eq 10 -and $row.statusName -eq '未开始' -and $row.stockTransferred -eq $false
+}
+
+Invoke-Case 'API-SKL-002' '🔴 秒杀价不低于原价被拒（「秒杀」比原价还贵没有意义）' {
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $script:sklSessionId; skuId = $script:sklSkuId; seckillPrice = $script:sklOriginPrice; seckillStock = 5; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    return (-not $r.success) -and $r.message -match '低于商品原价'
+}
+
+Invoke-Case 'API-SKL-003' '加商品成功，快照下商品名 / 规格 / 图 / 原价' {
+    $script:sklItemId = [long](Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $script:sklSessionId; skuId = $script:sklSkuId; seckillPrice = 99.00; seckillStock = $script:sklQty; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20).data
+
+    $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $script:sklSessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $row = @($list.data | Where-Object { $_.itemId -eq "$($script:sklItemId)" })[0]
+    return $script:sklItemId -gt 0 -and $row.skuId -eq "$($script:sklSkuId)" `
+        -and $row.seckillStock -eq $script:sklQty -and $row.remaining -eq $script:sklQty -and $row.soldCount -eq 0
+}
+
+Invoke-Case 'API-SKL-010' '🔴 P0 发布：库存从常规池划到秒杀池（50 → 40）' {
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $r = Publish-Skl $script:sklSessionId
+    $after = (Get-SkuStock $script:sklSkuId).available
+
+    Write-Host ("        {0} 库存 {1} → {2}" -f $r.message, $before, $after) -ForegroundColor DarkGray
+    return $r.success -and $r.data.reservedTotal -eq $script:sklQty `
+        -and $before - $after -eq $script:sklQty
+}
+
+Invoke-Case 'API-SKL-011' '🔴 P0 重复发布被拒，库存**不能被划第二遍**' {
+    # 这是整个库存方案最贵的一条防线：重复点发布会把常规库存扣走第二份，
+    # 而秒杀池子里只有一份货——等于凭空蒸发一批库存
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $r = Publish-Skl $script:sklSessionId
+    $after = (Get-SkuStock $script:sklSkuId).available
+
+    return (-not $r.success) -and $r.message -match '不能重复发布' -and $before -eq $after
+}
+
+Invoke-Case 'API-SKL-012' '发布后场次变为「进行中」且标记库存已划出' {
+    $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/List' -Method Post `
+        -Body (@{ status = 0; page = 1; pageSize = 50 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $row = @($list.data.items | Where-Object { $_.sessionId -eq "$($script:sklSessionId)" })[0]
+    return $row.status -eq 20 -and $row.statusName -eq '进行中' -and $row.stockTransferred -eq $true
+}
+
+Invoke-Case 'API-SKL-013' '🔴 发布后不能再加商品（库存已按当时的列表一次性划走）' {
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $script:sklSessionId; skuId = $script:sklSkuId; seckillPrice = 88.00; seckillStock = 1; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    # 事后再加的商品没有对应的划转记录，用户会看到一个抢不了也退不掉的商品
+    return (-not $r.success) -and $r.message -match '不能'
+}
+
+Invoke-Case 'API-SKL-014' '🔴 P0 中止场次：剩余库存立即回补常规池（40 → 50）' {
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `
+        -Body (@{ sessionId = $script:sklSessionId; cancel = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    $after = (Get-SkuStock $script:sklSkuId).available
+
+    Write-Host ("        {0} 库存 {1} → {2}" -f $r.message, $before, $after) -ForegroundColor DarkGray
+    return $r.success -and $r.data.status -eq 40 -and $r.data.releasedTotal -eq $script:sklQty `
+        -and $after - $before -eq $script:sklQty
+}
+
+Invoke-Case 'API-SKL-015' '🔴 重复中止被拒且不再回补第二遍' {
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `
+        -Body (@{ sessionId = $script:sklSessionId; cancel = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    $after = (Get-SkuStock $script:sklSkuId).available
+    return $r.success -and $before -eq $after
+}
+
+Invoke-Case 'API-SKL-016' '已取消的场次不出现在前台（用户只该看到即将开场与进行中）' {
+    $pub = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Public' -Method Post `
+        -Body (@{ platformId = 0; sessionId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $ids = @($pub.data | ForEach-Object { $_.sessionId })
+    return -not ($ids -contains "$($script:sklSessionId)")
+}
+
+Invoke-Case 'API-SKL-017' '🔴 数量上限被校验挡住（0 件不是有效配置）' {
+    # 校验失败返回 HTTP 400，Invoke-RestMethod 会直接抛异常。
+    # 这里要的是「被拒绝了」这个事实，所以把异常也当成拒绝
+    try {
+        $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+            -Body (@{ sessionId = $script:sklSessionId; skuId = $script:sklSkuId; seckillPrice = 50.00; seckillStock = 0; perUserLimit = 1 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 20
+        return (-not $r.success)
+    } catch {
+        return [int]$_.Exception.Response.StatusCode -eq 400
+    }
+}
+
+Invoke-Case 'API-SKL-018' '清理：删商品 → 删分类' {
+    if ($script:sklProductId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:sklProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    foreach ($id in [array]($script:sklCategoryIds | Sort-Object -Descending)) {
+        Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ categoryId = $id } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
     return $true
 }
 

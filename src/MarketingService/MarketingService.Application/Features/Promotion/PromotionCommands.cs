@@ -108,9 +108,7 @@ public record CalculateFinalPriceCommand(
     long CustomerId, IReadOnlyList<PromotionOrderLine> Lines, long SessionId = 0, long PlatformId = 0)
     : IRequest<ApiResponse<FinalPriceDto>>;
 
-/// <summary>
-/// 分组批量试算：<b>每一组独立算</b>，组与组之间不影响。
-/// </summary>
+/// <summary>分组批量试算：<b>每一组独立算</b>，组与组之间不影响。</summary>
 /// <param name="CustomerId">客户 Id；0 表示游客。</param>
 /// <param name="Groups">若干组订单行，每组是一次独立的试算。</param>
 /// <param name="SessionId">场次 Id，普通场景传 0。</param>
@@ -119,7 +117,7 @@ public record CalculateFinalPriceCommand(
 /// <para><b>为什么不能把整页商品塞进一次普通试算</b>：门槛是按「适用行金额合计」判的。
 /// 「满 100 减 20」遇到一页里的 200 元和 100 元两个商品，普通试算会把它们当成一单，
 /// 门槛按合计 300 判定通过，然后把 20 元按比例摊到两件上——200 元那件显示 186.67，
-/// 100 元那件显示 93.33。用户在商品卡上看到的「到手价」于是**比他自己买一单真实拿到的要便宜</b>，
+/// 100 元那件显示 93.33。用户在商品卡上看到的「到手价」于是<b>比他自己买一单真实拿到的要便宜</b>，
 /// 点进去下单发现价格对不上，这是最典型的「标价与实付不符」投诉。</para>
 ///
 /// <para>所以列表页要的是「每个商品单独算一次价」，而不是「一页商品算一次价」。

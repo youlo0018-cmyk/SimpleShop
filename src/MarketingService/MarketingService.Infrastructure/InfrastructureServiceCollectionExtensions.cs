@@ -14,6 +14,7 @@ public static class InfrastructureServiceCollectionExtensions
     {
         services.AddScoped<ICouponRepository, CouponRepository>();
         services.AddScoped<IPromotionRepository, PromotionRepository>();
+        services.AddScoped<ISeckillRepository, SeckillRepository>();
         return services;
     }
 }

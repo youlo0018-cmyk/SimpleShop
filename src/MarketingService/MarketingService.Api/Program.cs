@@ -32,7 +32,7 @@ builder.Services.AddAppFreeSql(
     databaseOptions.Default,
     typeof(CouponTemplate).Assembly);
 
-builder.Services.AddAppServices();
+builder.Services.AddAppServices(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 

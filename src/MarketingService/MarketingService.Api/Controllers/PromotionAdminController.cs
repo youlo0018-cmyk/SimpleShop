@@ -65,16 +65,8 @@ public sealed class PromotionAdminController : ControllerBase
     public Task<ApiResponse> Delete([FromBody] DeletePromotionActivityCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
-    /// <summary>到手价试算（游客与 C 端共用）。</summary>
-    /// <param name="command">命令；CustomerId 传 0 即游客。</param>
-    /// <param name="ct">取消令牌。</param>
-    /// <returns>原价 / 活动优惠 / 券优惠 / 到手价与逐行拆分，<b>不含运费</b>。</returns>
-    /// <remarks>
-    /// 游客传 <c>customerId = 0</c> 即可，无需令牌——游客也能看到活动价，
-    /// 只是看不到券价（游客没有券包，见 BUSINESS.md 11.5）。
-    /// </remarks>
     /// <summary>分组批量试算（商品列表页专用）。<b>每组独立算，组间互不影响。</b></summary>
-    /// <param name="command">命令；Groups 每组是一个商品的全部 SKU。</param>
+    /// <param name="command">命令；Groups 每组是一个 SKU。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>与 Groups 一一对应的试算结果。</returns>
     /// <remarks>
@@ -88,6 +80,13 @@ public sealed class PromotionAdminController : ControllerBase
         => _mediator.Send(command, ct);
 
     /// <summary>到手价试算（游客与 C 端共用）。</summary>
+    /// <param name="command">命令；CustomerId 传 0 即游客。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>原价 / 活动优惠 / 券优惠 / 到手价与逐行拆分，<b>不含运费</b>。</returns>
+    /// <remarks>
+    /// 游客传 <c>customerId = 0</c> 即可，无需令牌——游客也能看到活动价，
+    /// 只是看不到券价（游客没有券包，见 BUSINESS.md 11.5）。
+    /// </remarks>
     [HttpPost("FinalPrice")]
     public Task<ApiResponse<FinalPriceDto>> FinalPrice(
         [FromBody] CalculateFinalPriceCommand command, CancellationToken ct)
