@@ -421,10 +421,25 @@ Invoke-Case 'API-ORD-061' '已发货的订单不能再取消' {
     return (-not $r.success) -and $r.code -eq 4003
 }
 
-Invoke-Case 'API-ORD-062' '确认收货：30 → 50' {
+Invoke-Case 'API-ORD-062' '🔴 确认收货：30 → 50，并按实付发积分（实付 51.00 → 51 分）' {
+    # 积分是**在这条用例里**发的，所以前后余额必须在这条内部取；
+    # 放到下一条去测就永远只能看到差 0。
+    $before = Get-PointBalance $script:customerId
     $r = OrderPost 'ConfirmReceipt' @{ customerId = $script:customerId; orderNo = $script:basicOrderNo }
     $d = Get-Order $script:basicOrderNo
-    return $r.success -and $d.status -eq 50
+    $after = Get-PointBalance $script:customerId
+    $granted = $after.totalEarned - $before.totalEarned
+
+    Write-Host ("        实付 {0} 发放积分 {1}" -f $d.payableAmount, $granted) -ForegroundColor DarkGray
+    return $r.success -and $d.status -eq 50 -and $granted -eq [long]$d.payableAmount
+}
+
+
+Invoke-Case 'API-ORD-062c' '🔴 重复确认收货不重复发积分（幂等）' {
+    $before = Get-PointBalance $script:customerId
+    OrderPost 'ConfirmReceipt' @{ customerId = $script:customerId; orderNo = $script:basicOrderNo } | Out-Null
+    $after = Get-PointBalance $script:customerId
+    return $after.totalEarned -eq $before.totalEarned
 }
 
 Invoke-Case 'API-ORD-063' '🔴 用户确认收货后不可退款' {
@@ -506,9 +521,39 @@ Invoke-Case 'API-ORD-082' '🔴 乱码取货码核销失败且不泄露订单是
 }
 
 Invoke-Case 'API-ORD-083' '🔴 取货码核销成功：40 → 50，解出的就是订单号' {
+    $script:before083Points = Get-PointBalance $script:customerId
     $r = AdminOrderPost 'VerifyPickupCode' @{ pickupCode = $script:pickupCode; platformId = 0; merchantId = 0 }
     $d = Get-Order $script:pickupOrderNo
-    return $r.success -and $r.data.orderNo -eq $script:pickupOrderNo -and $r.data.verified -eq $true -and $d.status -eq 50
+    $after = Get-PointBalance $script:customerId
+    return $r.success -and $r.data.orderNo -eq $script:pickupOrderNo -and $r.data.verified -eq $true -and $d.status -eq 50 `
+        -and ($after.totalEarned - $script:before083Points.totalEarned) -eq [long]$d.payableAmount
+}
+
+Invoke-Case 'API-ORD-086' '🔴 0 元单实付为 0 → 一分积分也不发（否则积分成永动机）' {
+    $before = Get-PointBalance $script:customerId
+    # full 单实付 0.00，规则是「实付每满 1 元 1 积分」，所以是 0 分。
+    # 如果这里发成了 51 分，用户就能「用券抵扣到 0 元 → 白拿 51 积分 → 再抵扣下一单」，
+    # 形成闭环。所以这条专门盯住「不发」。
+    $r = Invoke-Api "$PointService/internal/points/EarnByOrder" 'Post' @{
+        customerId = $script:customerId; bizNo = 'ZERO-AMOUNT-PROBE'; paidAmount = 0; remark = '回归'
+    }
+    $after = Get-PointBalance $script:customerId
+    return $r.success -and $r.message -match '不足 1 元' -and $after.totalEarned -eq $before.totalEarned
+}
+
+Invoke-Case 'API-ORD-086b' '🔴 同一订单号重复发放只发一次（幂等）' {
+    $bizNo = "EARN-IDEM-$($script:suffix)"
+    $before = Get-PointBalance $script:customerId
+
+    Invoke-Api "$PointService/internal/points/EarnByOrder" 'Post' `
+        @{ customerId = $script:customerId; bizNo = $bizNo; paidAmount = 20.00; remark = '回归' } | Out-Null
+    $mid = Get-PointBalance $script:customerId
+
+    Invoke-Api "$PointService/internal/points/EarnByOrder" 'Post' `
+        @{ customerId = $script:customerId; bizNo = $bizNo; paidAmount = 20.00; remark = '回归' } | Out-Null
+    $after = Get-PointBalance $script:customerId
+
+    return ($mid.totalEarned - $before.totalEarned) -eq 20 -and ($after.totalEarned - $mid.totalEarned) -eq 0
 }
 
 Write-Host "`n=== ORD 虚拟商品 ===" -ForegroundColor Cyan
@@ -519,9 +564,14 @@ Invoke-Case 'API-ORD-090' '虚拟单发货即完成：20 → 50' {
     $r = OrderPost 'Create' (New-OrderBody 'virtual' 2)
     $script:virtualOrderNo = $r.data.orderNo
     AdminOrderPost 'SimulatePayment' @{ orderNo = $script:virtualOrderNo; succeed = $true; remark = '回归' } | Out-Null
+    $script:before090Points = Get-PointBalance $script:customerId
     $v = AdminOrderPost 'DeliverVirtual' @{ orderNo = $script:virtualOrderNo; remark = '卡号 ABCD-1234' }
     $d = Get-Order $script:virtualOrderNo
-    return $r.success -and $v.success -and $d.status -eq 50
+    $after = Get-PointBalance $script:customerId
+    # 虚拟发货也是一条进「已完成」的路，积分同样要发。
+    # 漏掉的话就是「同一个功能，有的单给积分有的不给」，客服解释不了。
+    return $r.success -and $v.success -and $d.status -eq 50 `
+        -and ($after.totalEarned - $script:before090Points.totalEarned) -eq [long]$d.payableAmount
 }
 
 Invoke-Case 'API-ORD-091' '🔴 虚拟商品订单不可退款（用户明确要求）' {

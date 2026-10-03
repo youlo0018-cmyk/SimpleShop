@@ -466,6 +466,16 @@ public class OrderCreatorTests
             Frozen = 0;
             return Task.CompletedTask;
         }
+
+        /// <summary>最近一次按订单发放的实付金额。没调用过就是 -1。</summary>
+        public decimal LastEarnedAmount = -1m;
+
+        public Task EarnByOrderAsync(
+            long customerId, string orderNo, decimal paidAmount, CancellationToken ct = default)
+        {
+            LastEarnedAmount = paidAmount;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeInventoryPort : IInventoryPort

@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表** | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 198/198） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -86,7 +86,7 @@
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
 | `marketing-regression.ps1` | MarketingService 券全生命周期 | 18 |
 | `point-regression.ps1` | PointService 积分冻结 / 消耗 / 过期 / 签到 | 23 |
-| `order-regression.ps1` | OrderService 下单补偿链路与状态机 | 44 |
+| `order-regression.ps1` | OrderService 下单补偿链路、状态机、模拟支付、自提取货码、完成发积分 | 47 |
 
 ### 0.6 视觉回归的稳定性前提
 
@@ -488,7 +488,7 @@
 | API-PNT-002 | P0 | 下单冻结积分 | 断言账户冻结额增加 |
 | API-PNT-003 | P0 | 支付实扣积分 | 断言冻结清零、余额减少 |
 | API-PNT-004 | P0 | 取消解冻积分 | 断言余额恢复 |
-| API-PNT-005 | P0 | 订单完成发放积分 | 断言按实付每满 1 元 1 积分 |
+| API-PNT-005 | P0 | 订单完成发放积分 | 断言按实付每满 1 元 1 积分（`EarnByOrder`）。三条进「已完成」的路——确认收货、核销取货码、虚拟发货——**都要发**（回归 API-ORD-062 / 083 / 090）。**向下取整**，实付 0.99 发 0 分且**回成功不报错**；同一订单号重复发放只发一次 |
 | API-PNT-006 | P0 | 评价发放 20 积分 | 断言流水 action = earn |
 | API-PNT-007 | P0 | 退款回收积分 | 断言按比例向上取整 |
 | API-PNT-008 | P1 | 签到接口 | 断言当日幂等 |

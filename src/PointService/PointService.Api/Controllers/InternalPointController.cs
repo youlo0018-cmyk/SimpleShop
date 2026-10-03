@@ -52,6 +52,19 @@ public sealed class InternalPointController : ControllerBase
     public Task<ApiResponse<PointBalance>> Consume([FromBody] ConsumePointsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>按订单发放积分（订单完成时由 OrderService 调用）。实付每满 1 元 1 积分。</summary>
+    /// <param name="command">发放命令，积分数由服务端按规则算，不接受调用方传入。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额；实付不足 1 元时返回成功但不发积分。</returns>
+    /// <remarks>
+    /// 之所以不直接复用 <c>Earn</c>：<c>Earn</c> 收的是**调用方算好的积分数**，
+    /// 而「实付每满 1 元 1 积分」这条规则必须只有一处定义。
+    /// 让订单服务自己算一遍的话，改了规则就会有两个服务算出不同的积分数，且没人会发现。
+    /// </remarks>
+    [HttpPost("EarnByOrder")]
+    public Task<ApiResponse<PointBalance>> EarnByOrder([FromBody] EarnByOrderCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>退款按比例回收积分（向上取整），退回原发放批次。</summary>
     /// <param name="command">回收命令。</param>
     /// <param name="ct">取消令牌。</param>

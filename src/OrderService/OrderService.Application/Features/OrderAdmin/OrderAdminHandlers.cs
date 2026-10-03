@@ -129,10 +129,16 @@ public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand,
 public sealed class DeliverVirtualHandler : MediatR.IRequestHandler<DeliverVirtualCommand, ApiResponse>
 {
     private readonly IOrderStore _store;
+    private readonly OrderCompletionReward _reward;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
-    public DeliverVirtualHandler(IOrderStore store) => _store = store;
+    /// <param name="reward">完成奖励服务（发积分）。</param>
+    public DeliverVirtualHandler(IOrderStore store, OrderCompletionReward reward)
+    {
+        _store = store;
+        _reward = reward;
+    }
 
     /// <summary>执行虚拟发货。</summary>
     /// <param name="request">发货命令，Remark 一般放卡号 / 激活码。</param>
@@ -171,6 +177,9 @@ public sealed class DeliverVirtualHandler : MediatR.IRequestHandler<DeliverVirtu
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
+
+        // 虚拟发货即完成，所以这里是三条进「已完成」的路之一，积分同样要发
+        await _reward.GrantAsync(order, ct).ConfigureAwait(false);
 
         return ApiResponseFactory.Ok("已发货并完成");
     }
@@ -253,17 +262,21 @@ public sealed class VerifyPickupCodeHandler
 {
     private readonly IOrderStore _store;
     private readonly IPickupCodeCodec _codec;
+    private readonly OrderCompletionReward _reward;
     private readonly ILogger<VerifyPickupCodeHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
     /// <param name="codec">取货码编解码。</param>
+    /// <param name="reward">完成奖励服务（发积分）。</param>
     /// <param name="logger">日志器。</param>
     public VerifyPickupCodeHandler(
-        IOrderStore store, IPickupCodeCodec codec, ILogger<VerifyPickupCodeHandler> logger)
+        IOrderStore store, IPickupCodeCodec codec,
+        OrderCompletionReward reward, ILogger<VerifyPickupCodeHandler> logger)
     {
         _store = store;
         _codec = codec;
+        _reward = reward;
         _logger = logger;
     }
 
@@ -311,6 +324,9 @@ public sealed class VerifyPickupCodeHandler
         {
             return ApiResults.Fail<PickupCodeDto>(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
+
+        // 取货核销也是一条进「已完成」的路
+        await _reward.GrantAsync(order, ct).ConfigureAwait(false);
 
         _logger.LogInformation("取货码核销成功，订单 {OrderNo} 已完成", order.OrderNo);
 

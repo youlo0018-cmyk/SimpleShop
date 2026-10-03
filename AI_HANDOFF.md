@@ -171,7 +171,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
 | Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU 完成；Elasticsearch 搜索、前台只读接口未开始） |
 | Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
-| Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 |
+| Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 + 按订单发放（实付每满 1 元 1 积分） |
 | Marketing | 5072 | 🔄 进行中（券全生命周期完成；满减/满折/满赠「活动」与限时抢购未开始） |
 | Order | 5064 | ✅ 下单四步补偿链路 + 客户级幂等锁 + 订单状态机 + 模拟支付 + 自提取货码（RSA）+ 退款回补 |
 | Payment / MerchantPlatform / Evaluate / Scheduled / Log | 见 3.3 | ⬜ 未开始 |
@@ -185,7 +185,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
 | `dotnet test`（单元测试） | **202/202** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **195/195**，9 个脚本全绿 |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **198/198**，9 个脚本全绿 |
 | └ `api-regression.ps1` | 15/15 |
 | └ `auth-regression.ps1` | 17/17 |
 | └ `gateway-regression.ps1` | 13/13 |
@@ -194,7 +194,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | └ `inventory-regression.ps1` | 21/21 |
 | └ `marketing-regression.ps1` | 18/18 |
 | └ `point-regression.ps1` | 23/23 |
-| └ `order-regression.ps1` | 44/44 |
+| └ `order-regression.ps1` | 47/47 |
 
 ### 4.2 已确定的关键决策
 
@@ -330,9 +330,10 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | 租户归属 | 平台 / 商户**以令牌为准**，请求里伪造的值不采信 |
 | 越权 | 查他人订单回 404 而不是 403（403 等于告诉别人这个订单号真实存在） |
 | 重复发货 | 按幂等处理，回「已发货」而不是报错（运营误点两下是常事） |
+| 订单完成发积分 | 三条进「已完成」的路（确认收货 / 核销取货码 / 虚拟发货）**都**发积分，规则只在 PointService 一处（`EarnByOrder`） |
 | 回归入口 | `./tests/e2e/run-all.ps1` 跑全部 9 个脚本并汇总成一张表 |
 
-**验证**：单元测试 **202/202**，端到端 **195/195**（9 个脚本），全量构建 **0 warning 0 error**，12 个服务在跑。
+**验证**：单元测试 **202/202**，端到端 **198/198**（9 个脚本），全量构建 **0 warning 0 error**，12 个服务在跑。
 
 #### 还没做（诚实清单）
 
@@ -341,7 +342,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 - **Elasticsearch + IK 分词搜索**：ProductService 未做
 - **PaymentService**：支付单、支付回调、审批式退款未做（模拟支付先顶上）
 - **超时关单**：需要 Scheduled 定时任务
-- **订单完成发放积分**：`EarnByOrder` 未做，规则还没落到 PointService
+
 - **后台 / 小程序前端**：一行 UI 都没有，全部只有接口
 
 

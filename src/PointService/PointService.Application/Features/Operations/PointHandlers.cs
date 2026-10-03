@@ -69,6 +69,59 @@ public sealed class LockPointsHandler : IRequestHandler<LockPointsCommand, ApiRe
     }
 }
 
+/// <summary>按订单发放积分处理器（实付每满 1 元 1 积分）。</summary>
+public sealed class EarnByOrderHandler : IRequestHandler<EarnByOrderCommand, ApiResponse<PointBalance>>
+{
+    private readonly IPointRepository _points;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="points">积分仓储。</param>
+    public EarnByOrderHandler(IPointRepository points) => _points = points;
+
+    /// <summary>执行发放。</summary>
+    /// <param name="request">发放命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额；实付不足 1 元时返回成功但未发放。</returns>
+    /// <remarks>
+    /// <para><b>向下取整</b>，不是四舍五入：实付 0.99 元得 0 积分。
+    /// 四舍五入的话 0.40 元也能得 0 分……差得不多，但规则一旦说不清，
+    /// 用户就会来问「为什么我这单没给积分」，而那时没人能答上来。</para>
+    ///
+    /// <para>实付不足 1 元时<b>不报错</b>：0 元单（全额抵扣）是完全正常的单，
+    /// 它只是恰好拿不到积分。回错误会让订单服务把「订单完成」当成失败。</para>
+    /// </remarks>
+    public async Task<ApiResponse<PointBalance>> Handle(EarnByOrderCommand request, CancellationToken ct)
+    {
+        var earned = (long)Math.Floor(request.PaidAmount * PointRules.PointsPerYuanPerYuan);
+
+        if (earned <= 0)
+        {
+            // 不足 1 元只查余额就够了：不写流水（没有积分变动，写一条流水只会让人以为发生过什么）
+            var account = await _points.GetAccountAsync(request.CustomerId, ct);
+            return ApiResults.Ok(new PointBalance(
+                account?.CustomerId ?? request.CustomerId,
+                account?.Available ?? 0, account?.Frozen ?? 0,
+                account?.TotalEarned ?? 0, account?.TotalUsed ?? 0, false),
+                "订单实付不足 1 元，本次不发放积分");
+        }
+
+        var outcome = await _points.EarnAsync(
+            request.CustomerId, PointSources.OrderCompleted, earned, request.BizNo,
+            "earn", request.Remark, PointRules.ValidDays, ct);
+
+        if (!outcome.Succeeded)
+        {
+            return ApiResults.Fail<PointBalance>(BaseApiResponseCode.BusinessError, outcome.Error);
+        }
+
+        var msg = outcome.AlreadyApplied ? "该订单已发放过积分"
+            : outcome.Capped ? $"发放成功 {earned} 积分，超出余额上限的部分未入账"
+            : $"订单完成，发放 {earned} 积分";
+
+        return ApiResults.Ok(EarnPointsHandler.ToBalance(request.CustomerId, outcome), msg);
+    }
+}
+
 /// <summary>解冻积分处理器。</summary>
 public sealed class UnfreezePointsHandler : IRequestHandler<UnfreezePointsCommand, ApiResponse<PointBalance>>
 {

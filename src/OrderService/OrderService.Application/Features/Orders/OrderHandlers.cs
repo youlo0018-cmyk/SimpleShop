@@ -293,14 +293,18 @@ public sealed class CancelOrderHandler : MediatR.IRequestHandler<CancelOrderComm
 public sealed class ConfirmReceiptHandler : MediatR.IRequestHandler<ConfirmReceiptCommand, ApiResponse>
 {
     private readonly IOrderStore _store;
+    private readonly OrderCompletionReward _reward;
     private readonly ILogger<ConfirmReceiptHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
+    /// <param name="reward">完成奖励服务（发积分）。</param>
     /// <param name="logger">日志器。</param>
-    public ConfirmReceiptHandler(IOrderStore store, ILogger<ConfirmReceiptHandler> logger)
+    public ConfirmReceiptHandler(
+        IOrderStore store, OrderCompletionReward reward, ILogger<ConfirmReceiptHandler> logger)
     {
         _store = store;
+        _reward = reward;
         _logger = logger;
     }
 
@@ -332,6 +336,10 @@ public sealed class ConfirmReceiptHandler : MediatR.IRequestHandler<ConfirmRecei
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
+
+        // 状态已改成 50 之后才发积分：反过来先发积分再改状态，
+        // 改状态失败就会留下「积分发了但订单还没完成」的一笔账
+        await _reward.GrantAsync(order, ct).ConfigureAwait(false);
 
         _logger.LogInformation("订单 {OrderNo} 确认收货完成，进入已完成", order.OrderNo);
         return ApiResponseFactory.Ok("已确认收货");

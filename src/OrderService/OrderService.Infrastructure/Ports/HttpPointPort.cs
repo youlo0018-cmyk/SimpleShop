@@ -65,6 +65,15 @@ public sealed class HttpPointPort : IPointPort
             ct).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task EarnByOrderAsync(long customerId, string orderNo, decimal paidAmount, CancellationToken ct = default)
+    {
+        await SendAsync(
+            "internal/points/EarnByOrder",
+            new EarnByOrderRequest(customerId, orderNo, paidAmount, "订单完成发放"),
+            ct).ConfigureAwait(false);
+    }
+
     /// <summary>统一发 POST 并检查业务结果。</summary>
     /// <param name="path">相对路径。</param>
     /// <param name="payload">请求体。</param>
@@ -106,6 +115,13 @@ public sealed class HttpPointPort : IPointPort
     /// <param name="Quantity">冻结数量。</param>
     /// <param name="Remark">备注。</param>
     private sealed record LockRequest(long CustomerId, string BizNo, long Quantity, string Remark);
+
+    /// <summary>按订单发放的请求体。</summary>
+    /// <param name="CustomerId">客户 Id。</param>
+    /// <param name="BizNo">订单号。</param>
+    /// <param name="PaidAmount">实付金额，积分数由积分服务按规则算。</param>
+    /// <param name="Remark">备注。</param>
+    private sealed record EarnByOrderRequest(long CustomerId, string BizNo, decimal PaidAmount, string Remark);
 
     /// <summary>解冻 / 实扣请求体。</summary>
     /// <param name="CustomerId">客户 Id。</param>

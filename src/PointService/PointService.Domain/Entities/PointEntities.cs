@@ -244,6 +244,17 @@ public static class PointRules
     /// <summary>抵扣汇率：100 积分 = 1.00 元。</summary>
     public const long PointsPerYuan = 100;
 
+    /// <summary>
+    /// 获取积分：实付每满 1.00 元 1 积分，<b>向下取整</b>（BUSINESS.md 13.6）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="PointsPerYuan"/> 是<b>反向</b>的两条汇率，别混：
+    /// 一条是「花多少积分抵 1 元」，一条是「花 1 元给多少积分」。
+    /// 写成 100 的话，51 元订单会发 5100 积分，抵回来等于白送——
+    /// 用户下单 100 元、抵扣 100 元、再送 100 元，积分就成了永动机。
+    /// </remarks>
+    public const long PointsPerYuanPerYuan = 1;
+
     /// <summary>连续签到 7 天一轮的奖励。</summary>
     public static readonly long[] SignInRewards = [1, 2, 3, 5, 8, 10, 15];
 }

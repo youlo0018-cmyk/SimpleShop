@@ -59,6 +59,19 @@ public interface IPointPort
     /// <param name="ct">取消令牌。</param>
     /// <returns>异步任务。</returns>
     Task ConsumeAsync(long customerId, string orderNo, CancellationToken ct = default);
+
+    /// <summary>订单完成时按实付金额发放积分。</summary>
+    /// <param name="customerId">客户 Id。</param>
+    /// <param name="orderNo">订单号，同时是发放的幂等键。</param>
+    /// <param name="paidAmount">订单实付金额，两位小数。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    /// <remarks>
+    /// 只传<b>实付金额</b>、不传算好的积分数：「实付每满 1 元 1 积分」这条规则
+    /// 必须只在积分服务里存在一处。两边各算一遍的话，改了规则就会有两个数，
+    /// 而且没有任何测试会发现。
+    /// </remarks>
+    Task EarnByOrderAsync(long customerId, string orderNo, decimal paidAmount, CancellationToken ct = default);
 }
 
 /// <summary>③ 库存端口。</summary>

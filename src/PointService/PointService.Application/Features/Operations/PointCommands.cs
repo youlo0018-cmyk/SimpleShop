@@ -50,6 +50,20 @@ public record ConsumePointsCommand(
 public record RefundPointsCommand(
     long CustomerId, string BizNo, decimal RefundRatio, string Remark = "") : IRequest<ApiResponse<PointBalance>>;
 
+/// <summary>按订单发放积分（订单完成时由 OrderService 调用）。</summary>
+/// <param name="CustomerId">客户 Id。</param>
+/// <param name="BizNo">订单号，幂等键的一部分。</param>
+/// <param name="PaidAmount">订单实付金额，两位小数。积分数由服务端按规则算，<b>不接受客户端传积分数</b>。</param>
+/// <param name="Remark">备注。</param>
+/// <remarks>
+/// 单独开这个入口而不是让订单服务自己算好积分数再调 <c>Earn</c>，是为了让<b>规则只存在一处</b>。
+/// 「实付每满 1 元 1 积分」这条规则改了，只改 PointService 一处；
+/// 散到订单服务里算一遍的话，改了规则就会有两个服务算出不同的积分数。
+/// </remarks>
+public record EarnByOrderCommand(
+    long CustomerId, string BizNo, decimal PaidAmount, string Remark = "")
+    : IRequest<ApiResponse<PointBalance>>;
+
 /// <summary>每日签到。</summary>
 /// <param name="CustomerId">客户 Id。</param>
 public record SignInPointsCommand(long CustomerId) : IRequest<ApiResponse<PointSignInResult>>;
@@ -95,6 +109,7 @@ public static class PointValidators
         services.AddScoped<IValidator<EarnPointsCommand>, EarnPointsValidator>();
         services.AddScoped<IValidator<LockPointsCommand>, LockPointsValidator>();
         services.AddScoped<IValidator<RefundPointsCommand>, RefundPointsValidator>();
+        services.AddScoped<IValidator<EarnByOrderCommand>, EarnByOrderValidator>();
     }
 
     /// <summary>发放校验。</summary>
@@ -119,6 +134,22 @@ public static class PointValidators
             RuleFor(x => x.CustomerId).GreaterThan(0).WithMessage("客户 Id 必须为正数");
             RuleFor(x => x.Quantity).GreaterThan(0).WithMessage("冻结数量必须大于 0");
             RuleFor(x => x.BizNo).NotEmpty().MaximumLength(64).WithMessage("订单号必填且不超过 64 个字符");
+        }
+    }
+
+    /// <summary>按订单发放的校验。</summary>
+    private sealed class EarnByOrderValidator : AbstractValidator<EarnByOrderCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public EarnByOrderValidator()
+        {
+            RuleFor(x => x.CustomerId).GreaterThan(0).WithMessage("客户 Id 必须为正数");
+            RuleFor(x => x.BizNo).NotEmpty().MaximumLength(64).WithMessage("订单号必填且不超过 64 个字符");
+            RuleFor(x => x.Remark).MaximumLength(512).WithMessage("备注最多 512 个字符");
+
+            // 实付为负说明上游算错了（退款回来说要发积分？）。
+            // 这里必须挡住：0 元单实付就是 0，那是合法的（积分数算出来是 0，本次不发）。
+            RuleFor(x => x.PaidAmount).InclusiveBetween(0m, 9999999.99m).WithMessage("实付金额不正确");
         }
     }
 
