@@ -58,6 +58,38 @@ function Post([string]$Path, $Body) {
         -Body ($Body | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
 }
 
+# 「预期会失败」的用例必须用这个：校验失败与业务失败都由全局异常中间件返回 HTTP 400，
+# Invoke-RestMethod 见到 400 就抛异常，body 里的 { success:false, message } 拿不到，
+# 用例只能看到一句 "400 (Bad Request)"，分不清是被哪条规则拒的。
+function Post-Api([string]$Path, $Body) {
+    try {
+        return Invoke-RestMethod -Uri "$Marketing$Path" -Method Post `
+            -Body ($Body | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
+    } catch {
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{ success = $false; code = -1; message = $_.Exception.Message; data = $null }
+        }
+        # -AsHashtable：errors 里可能出现**空字符串键**（FluentValidation 从方法调用表达式里
+        # 提不出属性名时就会给空键），普通 ConvertFrom-Json 遇到空键直接抛异常。
+        try { return $raw | ConvertFrom-Json -AsHashtable }
+        catch { return [pscustomobject]@{ success = $false; code = -1; message = $raw; data = $null } }
+    }
+}
+
+# 把 errors 里所有字段级错误文案拼成一段。
+# 必须同时兼容两种形状：Post-Api 用 ConvertFrom-Json -AsHashtable 返回 Hashtable，
+# 直接用 Invoke-RestMethod 的则返回 PSCustomObject。写死一种就在另一种上拿到空串，
+# 断言随之静默失败——那种失败比用例红更糟，因为它看起来「通过」了。
+function Get-ErrorText($resp) {
+    if ($null -eq $resp.errors) { return '' }
+    $errs = $resp.errors
+    if ($errs -is [System.Collections.IDictionary]) {
+        return (@($errs.Values | ForEach-Object { $_ }) -join ' ')
+    }
+    return (@($errs.PSObject.Properties | ForEach-Object { $_.Value }) -join ' ')
+}
+
 Write-Host "`n=== MKT 建模板 / 建活动 ===" -ForegroundColor Cyan
 $script:templateId = 0
 $script:activityId = 0
@@ -207,6 +239,206 @@ Invoke-Case 'API-MKT-041' '保存优先级为「活动优先」后可读回' {
 Invoke-Case 'API-MKT-042' '非法优先级被拒' {
     try { Post '/marketing/marketing-config/Save' @{ platformId = $script:suffix; priority = 9 } | Out-Null; return $false }
     catch { return [int]$_.Exception.Response.StatusCode -eq 400 }
+}
+
+Write-Host "`n=== MKT 营销活动（满减 / 满折 / 满赠）与到手价 ===" -ForegroundColor Cyan
+
+$script:promoIds = @()
+
+function New-Activity([hashtable]$over) {
+    $b = @{
+        activityName = "活动$($script:suffix)"; activityType = 1
+        thresholdAmount = 0; discountAmount = 0; discountRate = 0; giftTemplateId = 0
+        targetType = 1; targets = '[]'
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+        platformId = $script:suffix          # 用 suffix 当平台号，天然隔离，不影响别的用例
+        merchantId = 0
+    }
+    foreach ($k in $over.Keys) { $b[$k] = $over[$k] }
+
+    $r = Post '/marketing/activities/Create' $b
+    if ($r.success) { $script:promoIds += [long]$r.data }
+    return $r
+}
+
+function Stop-Activity([long]$id) {
+    if ($id -gt 0) { Post '/marketing/activities/SetStatus' @{ activityId = $id; status = 2 } | Out-Null }
+}
+
+function FinalPrice([long]$customerId, $lines) {
+    return Post '/marketing/activities/FinalPrice' @{
+        customerId = $customerId; lines = $lines; sessionId = 0; platformId = $script:suffix
+    }
+}
+
+# 三行各 50，合计 150
+$threeLines = @(
+    [pscustomobject]@{ spuId = 100; skuId = 1001; amount = 50 },
+    [pscustomobject]@{ spuId = 100; skuId = 1002; amount = 50 },
+    [pscustomobject]@{ spuId = 100; skuId = 1003; amount = 50 }
+)
+
+$script:mainPromoId = 0
+
+Invoke-Case 'API-MKT-050' '新建满减活动（满 100 减 20）' {
+    $r = New-Activity @{ activityType = 1; thresholdAmount = 100; discountAmount = 20; activityName = "满100减20$($script:suffix)" }
+    $script:mainPromoId = [long]$r.data
+    return $r.success -and $script:mainPromoId -gt 0
+}
+
+Invoke-Case 'API-MKT-051' '🔴 P0 整单优惠额按行分摊，各行之和恰好等于整单优惠' {
+    $r = FinalPrice 0 $threeLines
+    if (-not $r.success) { return $false }
+
+    # 「每行各减 20」会把优惠额变成 60 元，直接把商家的钱减穿。
+    # 正确是 20.00 按 50:50:50 分摊，余数给金额最大的那行。
+    $sum = ($r.data.lines | Measure-Object -Property activityDiscount -Sum).Sum
+    return $r.data.originalTotal -eq 150 `
+        -and $r.data.activityDiscount -eq 20 `
+        -and $sum -eq 20 `
+        -and $r.data.finalPrice -eq 130
+}
+
+Invoke-Case 'API-MKT-052' '优惠来源角标带出活动名（商品卡要显示「满减」）' {
+    $r = FinalPrice 0 $threeLines
+    $first = @($r.data.lines)[0]
+    return $first.source -eq 'activity' -and $first.sourceName -match '满100减20'
+}
+
+Invoke-Case 'API-MKT-053' '🔴 游客只算活动不计券' {
+    $r = FinalPrice 0 $threeLines
+    return $r.data.isVisitor -eq $true -and $r.data.couponDiscount -eq 0 -and $r.data.couponId -eq 0
+}
+
+Invoke-Case 'API-MKT-053b' '首个活动用完立刻停掉，避免压过后面每个用例' {
+    # 不停的话它是「全场满 100 减 20」，后面每条用例都在跟它比，
+    # 「多活动取力度最大」「指定 SKU 范围」这些就都测不到真实逻辑了
+    Stop-Activity $script:mainPromoId
+    $r = FinalPrice 0 $threeLines
+    return $r.data.activityDiscount -eq 0
+}
+
+Invoke-Case 'API-MKT-054' '未达门槛不享受活动，按原价' {
+    $r = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 30 })
+    return $r.data.activityDiscount -eq 0 -and $r.data.finalPrice -eq 30 -and $r.data.usedActivity -eq $false
+}
+
+Invoke-Case 'API-MKT-055' '满折：8.5 折按 15% 算优惠' {
+    $id = (New-Activity @{ activityType = 2; thresholdAmount = 100; discountRate = 8.5; activityName = "满100打85折$($script:suffix)" }).data
+    if (-not $id) { return $false }
+
+    $r = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+    Stop-Activity ([long]$id)
+    return $r.data.activityDiscount -eq 15 -and $r.data.finalPrice -eq 85
+}
+
+Invoke-Case 'API-MKT-056' '🔴 满赠：折扣额记 0 但角标显示「赠」' {
+    $id = (New-Activity @{ activityType = 3; thresholdAmount = 50; giftTemplateId = $script:templateId; activityName = "满50赠券$($script:suffix)" }).data
+    if (-not $id) { return $false }
+
+    $r = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+    Stop-Activity ([long]$id)
+    # 满赠不是折扣：金额一分不少，但前端要显示「满 50 赠券」而不是「无优惠」
+    return $r.data.activityDiscount -eq 0 -and $r.data.finalPrice -eq 100 -and @($r.data.lines)[0].source -eq 'gift'
+}
+
+Invoke-Case 'API-MKT-057' '🔴 多活动冲突取优惠力度最大的' {
+    $weak = (New-Activity @{ activityType = 1; thresholdAmount = 50; discountAmount = 5; activityName = "弱$($script:suffix)" }).data
+    $strong = (New-Activity @{ activityType = 1; thresholdAmount = 80; discountAmount = 20; activityName = "强$($script:suffix)" }).data
+    if (-not $weak -or -not $strong) { return $false }
+
+    $r = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+    Stop-Activity ([long]$weak); Stop-Activity ([long]$strong)
+    return $r.data.activityDiscount -eq 20 -and @($r.data.lines)[0].sourceName -match '^强'
+}
+
+Invoke-Case 'API-MKT-058' '指定 SKU 范围：范围外的行不享受活动' {
+    $id = (New-Activity @{
+        activityType = 1; thresholdAmount = 0; discountAmount = 10
+        targetType = 3; targets = '[1001]'
+        activityName = "指定SKU$($script:suffix)"
+    }).data
+    if (-not $id) { return $false }
+
+    $r = FinalPrice 0 @(
+        [pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 },
+        [pscustomobject]@{ spuId = 200; skuId = 2001; amount = 100 }
+    )
+    Stop-Activity ([long]$id)
+    # 只有 1001 这一行减 10，2001 不减
+    return $r.data.activityDiscount -eq 10 -and @($r.data.lines)[1].activityDiscount -eq 0
+}
+
+Invoke-Case 'API-MKT-059' '🔴 单行封底 0.01：优惠不能把某一行打成 0 元' {
+    $id = (New-Activity @{ activityType = 1; thresholdAmount = 0; discountAmount = 100; activityName = "打穿$($script:suffix)" }).data
+    if (-not $id) { return $false }
+
+    $r = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+    Stop-Activity ([long]$id)
+    return $r.data.finalPrice -eq 0.01
+}
+
+Invoke-Case 'API-MKT-060' '🔴 满减没填金额被拒（否则活动命中却不打折）' {
+    $r = Post-Api '/marketing/activities/Create' @{
+        activityName = "空金额$($script:suffix)"; activityType = 1
+        thresholdAmount = 50; discountAmount = 0
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        platformId = $script:suffix
+    }
+    # 顶层 message 是统一的「请求参数校验失败」，具体原因在 errors 里
+    # （CODING_STANDARD 3.4：前端只用 errors 做 tip 提示，不飘红输入框）
+    return (-not $r.success) -and (Get-ErrorText $r) -match '优惠金额'
+}
+
+Invoke-Case 'API-MKT-061' '结束时间早于开始时间被拒' {
+    $r = Post-Api '/marketing/activities/Create' @{
+        activityName = "时间倒置$($script:suffix)"; activityType = 1
+        thresholdAmount = 0; discountAmount = 5
+        startTime = $script:now.ToString('o')
+        endTime = $script:now.AddDays(-1).ToString('o')
+        platformId = $script:suffix
+    }
+    return (-not $r.success) -and (Get-ErrorText $r) -match '晚于开始时间'
+}
+
+Invoke-Case 'API-MKT-062' '🔴 时间已过的活动不参与计算（时间窗按 now 过滤，不缓存）' {
+    $id = (New-Activity @{
+        activityType = 1; thresholdAmount = 0; discountAmount = 30
+        startTime = $script:now.AddDays(-10).ToString('o')
+        endTime = $script:now.AddDays(-5).ToString('o')
+        activityName = "过期$($script:suffix)"
+    }).data
+    if (-not $id) { return $false }
+
+    $r = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+    Stop-Activity ([long]$id)
+    return $r.data.activityDiscount -eq 0
+}
+
+Invoke-Case 'API-MKT-063' '后台列表带出类型 / 范围 / 状态中文名（不显示数字枚举）' {
+    $r = Post '/marketing/activities/List' @{ platformId = 0; page = 1; pageSize = 20 }
+    $first = @($r.data.items)[0]
+    return $r.success -and $first.typeName -ne '' -and $first.targetName -ne '' -and $first.statusName -ne ''
+}
+
+Invoke-Case 'API-MKT-064' '🔴 删除后不再参与计算（软删）' {
+    $id = (New-Activity @{ activityType = 1; thresholdAmount = 0; discountAmount = 40; activityName = "待删$($script:suffix)" }).data
+    if (-not $id) { return $false }
+
+    $before = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+    Post '/marketing/activities/Delete' @{ activityId = [long]$id } | Out-Null
+    $after = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+
+    return $before.data.activityDiscount -eq 40 -and $after.data.activityDiscount -eq 0
+}
+
+Invoke-Case 'API-MKT-065' '清理本节所有活动' {
+    foreach ($id in $script:promoIds) { Post '/marketing/activities/Delete' @{ activityId = [long]$id } | Out-Null }
+    $script:promoIds = @()
+    return $true
 }
 
 Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan

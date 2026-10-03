@@ -61,3 +61,7 @@ p9.log
 u1.log
 u2.log
 u3.log
+
+# 构建 / 冒烟时随手重定向出来的临时输出（build.ps1 之类）
+b*.txt
+!deploy/**/*.txt

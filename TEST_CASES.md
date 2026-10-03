@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 201/201） | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 218/218） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -84,7 +84,7 @@
 | `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU | 31 |
 | `cart-regression.ps1` | CartService 累加语义购物车 | 13 |
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
-| `marketing-regression.ps1` | MarketingService 券全生命周期 | 18 |
+| `marketing-regression.ps1` | MarketingService 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价 | 35 |
 | `point-regression.ps1` | PointService 积分冻结 / 消耗 / 过期 / 签到 | 23 |
 | `order-regression.ps1` | OrderService 下单补偿链路、状态机、模拟支付、自提取货码、完成发积分、支付超时关单 | 50 |
 
@@ -455,6 +455,37 @@
 | API-REF-009 | P1 | 退款不退券 | 断言券仍为已核销 |
 
 ### 2.5 MKT / SEC 营销、限时抢购
+
+**活动引擎（满减 / 满折 / 满赠）已落地**，限时抢购未开始。
+活动侧规则见 2.5.1，回归脚本 API-MKT-050 ~ API-MKT-065。
+
+#### 2.5.1 活动与到手价
+
+| 编号 | 优先级 | 用例 | 期望与断言 |
+|---|---|---|---|
+| API-MKT-050 | P1 | 新建满减活动（满 100 减 20） | 成功返回活动 Id |
+| API-MKT-051 | **P0** | 整单优惠额按行分摊 | 三行各 50、满 100 减 20：断言 `activityDiscount == 20`、`Σ行 == 20`、`finalPrice == 130`。**「每行各减 20」会让优惠额变 60 元，直接减穿商家** |
+| API-MKT-052 | P1 | 优惠来源角标带出活动名 | `source == "activity"`、`sourceName` 为活动名（商品卡要显示「满减」而不是数字枚举） |
+| API-MKT-053 | P0 | 游客只算活动不计券 | `customerId = 0` → `isVisitor == true`、`couponDiscount == 0`、`couponId == 0` |
+| API-MKT-054 | P1 | 未达门槛按原价 | 单行 30 元对满 100 → 优惠 0、到手价 30 |
+| API-MKT-055 | P1 | 满折 8.5 折 | 100 元 → 优惠 15、到手价 85 |
+| API-MKT-056 | P0 | 满赠折扣额记 0 但角标显示「赠」 | 金额一分不少，但 `source == "gift"`。**商品卡不能显示「无优惠」** |
+| API-MKT-057 | P0 | 多活动冲突取力度最大 | 同给 100 元：优惠 5 的让位给优惠 20 的 |
+| API-MKT-058 | P0 | 指定 SKU 范围 | 只有范围内的行减，范围外不减 |
+| API-MKT-059 | P0 | 单行封底 0.01 | 优惠不能把某一行打成 0 元 |
+| API-MKT-060 | P0 | 满减没填金额被拒 | 否则活动命中却什么也不减，用户看到「已参与活动却没便宜」 |
+| API-MKT-061 | P1 | 结束时间早于开始时间被拒 | 400 |
+| API-MKT-062 | P0 | 时间已过的活动不参与计算 | 时间窗按 `now` 过滤，**不缓存** |
+| API-MKT-063 | P1 | 后台列表带中文名 | `typeName` / `targetName` / `statusName` 均非空，不显示数字枚举 |
+| API-MKT-064 | P0 | 删除后不再参与计算 | 软删 |
+| UT-PRM-001 | P0 | 多活动三级比较 | 优惠力度最大 → 门槛最高 → 创建最早。结果必须**确定**，否则同一单两次试算给出不同优惠 |
+| UT-PRM-002 | **P0** | 整单优惠额分摊 | 同 API-MKT-051，单测层再挡一次 |
+| UT-PRM-003 | P0 | 门槛基数是适用行金额合计 | 只对一个 SPU 生效的活动，不能拿全单金额判门槛 |
+| UT-PRM-004 | P0 | 确认收货后不可退款 / 虚拟订单禁退 | 订单状态机侧，见 1.3 UT-ORD-018/019 |
+
+**尚未落地**：限时抢购（活动类型 4 与 `session_id` 字段已预留，场次模型与下单链路未做）。
+
+#### 2.5.2 限时抢购（未开始）
 
 | 编号 | 优先级 | 用例 | 期望与断言 |
 |---|---|---|---|

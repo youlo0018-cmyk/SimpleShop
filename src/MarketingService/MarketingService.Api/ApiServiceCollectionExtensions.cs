@@ -1,6 +1,7 @@
 using Collaboration.Domain.MediatR;
 using FluentValidation;
 using MarketingService.Application.Features.Coupon;
+using MarketingService.Application.Features.Promotion;
 using MarketingService.Infrastructure;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +23,7 @@ public static class ApiServiceCollectionExtensions
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         CouponValidators.AddCouponValidators(services);
+        PromotionValidators.AddPromotionValidators(services);
 
         services.AddInfrastructure();
         return services;

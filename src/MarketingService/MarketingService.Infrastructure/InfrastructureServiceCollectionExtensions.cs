@@ -13,6 +13,7 @@ public static class InfrastructureServiceCollectionExtensions
     public static IServiceCollection AddInfrastructure(this IServiceCollection services)
     {
         services.AddScoped<ICouponRepository, CouponRepository>();
+        services.AddScoped<IPromotionRepository, PromotionRepository>();
         return services;
     }
 }
