@@ -15,4 +15,13 @@
     <ProjectReference Include="..\ProductService.Application\ProductService.Application.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 走 IHttpClientFactory 而不是裸 HttpClient：连接池与 DNS 刷新由工厂托管，
+         否则每次建客户端都会耗尽端口。 -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+    <!-- Configure<T>(IConfigurationSection) 的扩展方法在这里，
+         没有它就得手工 new Options 并 AddSingleton，读配置节变成额外一堆样板。 -->
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.0" />
+  </ItemGroup>
+
 </Project>

@@ -37,6 +37,22 @@ builder.Services.AddHealthChecks().AddCheck("self", () => Microsoft.Extensions.D
 
 var app = builder.Build();
 
+// 启动时确保商品索引存在。
+// 🔴 失败**不阻止启动**：ES 挂了应该只是「搜不到」，不该让整个商品服务起不来。
+// 索引不存在时搜索会自动降级为数据库浏览（见 QueryShopSearchHandler），功能降级但可用。
+using (var scope = app.Services.CreateScope())
+{
+    var index = scope.ServiceProvider.GetService<ProductService.Application.Services.IProductSearchIndex>();
+    if (index is null)
+    {
+        Console.WriteLine("[search] 未配置 Elasticsearch，跳过索引初始化（商品搜索将降级为数据库浏览）");
+    }
+    else if (!await index.EnsureIndexAsync())
+    {
+        Console.WriteLine("[search] 商品索引初始化失败，商品搜索将降级为数据库浏览");
+    }
+}
+
 app.UseAppTenantContext();
 app.UseAppExceptionHandling();
 app.MapHealthChecks("/health");

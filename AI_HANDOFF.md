@@ -169,7 +169,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Permission | 5022 | ✅ 权限树（4 层 / 106 节点）、权限点增删改、角色 CRUD、内置角色种子 |
 | Tool | 5080 | ✅ 统一文件上传（三步校验）+ 本地回源 |
 | Customer | 5280 | ✅ 注册 / 登录（HS256 客户令牌）/ 资料 / 地址簿 / 收藏 |
-| Product | 5058 | 🔄 进行中（分类 + 品牌 + SPU/规格/SKU + **前台只读（匿名商品 / 分类树 / 品牌、到手价）** 完成；Elasticsearch + IK 分词搜索未开始） |
+| Product | 5058 | ✅ 分类 / 品牌 / SPU/规格/SKU / 前台只读（匿名、到手价）/ **Elasticsearch + IK 分词搜索** 全部完成 |
 | Inventory | 5062 | ✅ 三计数模型 + 锁定/扣减/释放/回补 + 流水幂等 + 补偿表 + 商品创建即初始化库存 |
 | Point | 5082 | ✅ 冻结模型（锁定/实扣/解冻/按比例回收）+ 发放批次 FIFO + 流水幂等 + 余额上限 + 每日签到 + 按订单发放（实付每满 1 元 1 积分）+ **过期扣减** |
 | Marketing | 5072 | ✅ 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价试算 + **秒杀场次与库存划转**。秒杀抢购链路未做 |
@@ -186,11 +186,11 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
 | `dotnet test`（单元测试） | **220/220** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **252/252**，9 个脚本全绿 |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **263/263**，9 个脚本全绿 |
 | └ `api-regression.ps1` | 15/15 |
 | └ `auth-regression.ps1` | 17/17 |
 | └ `gateway-regression.ps1` | 13/13 |
-| └ `product-regression.ps1` | 46/46 |
+| └ `product-regression.ps1` | 57/57 |
 | └ `cart-regression.ps1` | 13/13 |
 | └ `inventory-regression.ps1` | 21/21 |
 | └ `marketing-regression.ps1` | 48/48 |
@@ -267,6 +267,71 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-04：S2 — ProductService Elasticsearch + IK 中文分词搜索
+
+用户需求 X1「使用 IK」从 2026-10-02 拖到今天。原因是当时 IK 装不上——
+get.infini.cloud 的 SSL 握手被阻断，GitHub 上 infinilabs/analysis-ik 只到 v5.0.0-rc1、没有 8.x 产物，
+于是按降级方案改用 ES 内置的 smartcn。
+
+**今天复测网络已恢复**（`get.infini.cloud` 返回 200），IK 8.15.0 安装成功、ES 容器重建后插件生效。
+实测「小米空气净化器4代 静音款」被切成 小米/空气净化/空气/净化器/净化/器/4/代/静音/款 —— 这正是 smartcn 做不到的。
+Dockerfile 已改成**默认装 IK**（不再是降级），并保留 `INSTALL_IK` 参数给离线 CI 场景。
+
+#### 一条铁律：ES 只召回 Id，权威数据回库取
+
+商品价格与上下架是会变的字段，索引副本必然有滞后窗口。直接读副本就会出现
+「搜索结果显示有货、点进去发现已下架」「列表显示 99、结算 129」——用户对价格的不信任就是这么来的，
+而且极难排查：两个库对不上，却都不知道该信哪个。
+
+所以索引 mapping 里**刻意不存价格**，搜到 Id 后一律回 PostgreSQL 取，
+并把「审核通过 + 已上架」**再过滤一次**：ES 侧已经过滤过一次，这里再过一次是因为
+索引可能滞后于库（运营刚下架、索引同步失败，那一单还会被 ES 放出来）。
+宁可少一条，也不要「搜到了却买不了」。
+
+#### 索引写失败绝不阻塞业务
+
+保存商品是主链路，ES 只是加速手段。索引写失败只记 Error 日志、不返回错误——
+返回失败会让用户以为商品没保存，于是再点一次保存，那才是真的重复商品。
+索引一致性靠补偿任务补齐（尚未做，已列入清单）。
+
+#### 踩到的坑：调外部 JSON API 不要用匿名对象
+
+建索引时报 `unknown key [headers] for create index`，报错完全指不到真正原因。
+根因是 `JsonContent.Create(mapping, options: null)` 用了默认的 **PascalCase**：
+`settings` 被序列化成 `Settings`，而 ES 8 严格区分大小写。
+
+改用 camelCase 选项后**依然报同样的错**——真正的问题是 C# 里写 `@bool` 规避关键字，
+序列化出来是 `Bool`；原始字符串插值那套 `$$"""` 的 `{{ }}` 定界符又会和 JSON 的 `}}` 撞车（CS9007）。
+
+最后统一改成 **`Dictionary<string, object?>`** 构造请求体：字典键由序列化器**原样写出**，
+不受任何命名策略影响，也就没有「改了命名策略就静默发错请求」这类只在运行时暴露的问题。
+已写进 CODING_STANDARD 第 27 条。
+
+#### 顺带
+
+- **端口不能放在 Infrastructure**。`IProductSearchIndex` 一开始写在 Infrastructure，
+  结果 Application 层要引用它就形成了 `Application → Infrastructure` 的反向依赖，
+  编译器直接报错。已挪到 `Application/Services`，与既有的 `IProductClient` / `IInventoryClient` 同处。
+- **启动时确保索引存在，但失败不阻止启动**：ES 挂了应该只是「搜不到」，
+  搜索会自动降级为「按类目浏览」（`engine` 字段会标成 `database-fallback`），而不是让整个商品服务起不来。
+- 抽出了 `ShopItemAssembler`：列表查询与搜索查询共用同一份到手价组装逻辑。
+  到手价是这个模块里最容易写错的一处（每 SKU 单独定价、按比例分摊、余数给最小价那行），
+  两处各写一遍迟早会分叉。
+
+#### 验证
+
+单元测试 **220/220**，端到端 **263/263**（product 57/57，新增 11 条搜索用例），
+全量构建 **0 warning 0 error**，13 个进程在跑。
+
+#### 还没做（诚实清单）
+
+- **搜索索引的补偿任务**：索引写失败目前只记日志，靠人工/定时任务补齐，尚未实现
+- **秒杀抢购（Grab）**：需先给 OrderService 加「秒杀订单」入口（跳过锁库存）+ 建 MQ
+- **PaymentService**：支付单、支付回调、审批式退款未做（模拟支付先顶上）
+- **ScheduledService 其它任务**：补偿重试 / 孤儿预留对账 / 积分过期 / 评价重算
+- **前台接口未按平台隔离**：目前按 `platformId = 0`（不限）取活动，多平台会串优惠
+- **后台 / 小程序前端**：一行 UI 都没有，全部只有接口
 
 ### 2026-10-04：S6 — 秒杀场次与库存划出（S-1）
 
@@ -1309,6 +1374,7 @@ FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET �
 - 状态：build 0 error 0 warning；单测 29/29；API 回归 15/15（CustomerService）。
 - **S1 剩余**：UserService（后台账号）、AuthService（OpenIddict RS256 令牌）、ToolService（统一上传）、
   以及 Gateway 的双令牌验签与 RBAC（这些都还没写，是 S1 的最后一块）。
+
 
 
 

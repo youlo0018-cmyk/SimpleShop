@@ -111,6 +111,12 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     $cfg['RabbitMq:UserName']         = 'simpleshop'
     $cfg['RabbitMq:Password']         = $dbPassword
     $cfg['RabbitMq:VirtualHost']      = '/'
+    # Elasticsearch：商品搜索（BUSINESS.md 15.2 / 用户需求 X1 用 IK 分词）。
+    # 索引与分词器都由 ProductService 自己管，所以**每个服务都给一份**：
+    # 少给一份会导致别的服务读到「配置不全」而拒绝启动，多给一份只是几行 YAML。
+    # 分词器装不上时降级 smartcn —— 见 deploy/elasticsearch/Dockerfile。
+    $cfg['Elasticsearch:Url']       = 'http://127.0.0.1:9200'
+    $cfg['Elasticsearch:IndexName'] = 'simpleshop_product'
     $cfg['Snowflake:WorkerIdKeyPrefix'] = 'snowflake:worker'
     $cfg['Snowflake:WorkerIdUpperBound'] = '64'
     $cfg['Tenancy:InternalToken']    = $internalToken

@@ -14,6 +14,7 @@
 [CmdletBinding()]
 param(
     [string]$Gateway = 'http://127.0.0.1:5008',
+    [string]$Product = 'http://127.0.0.1:5058',
     [string]$Marketing = 'http://127.0.0.1:5072',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
@@ -619,6 +620,134 @@ Invoke-Case 'API-SHP-012' '清理：停用活动 → 删商品 → 删分类' {
         Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:headers `
             -Body (@{ categoryId = $id } | ConvertTo-Json) `
             -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    return $true
+}
+
+Write-Host "`n=== SRC 商品搜索（Elasticsearch + IK 中文分词）===" -ForegroundColor Cyan
+
+# 名字刻意用「小米空气净化器 4代 静音款」：搜「净化器」能不能命中，
+# 就是 IK 与 smartcn 的分水岭——smartcn 会把整个词当成一个 token，搜子词必然搜不到。
+$script:searchProductId = 0
+$script:searchCategoryId = 0
+
+function Search-Shop([string]$keyword) {
+    return Invoke-RestMethod "$Product/shop/products/Search" -Method Post `
+        -Body (@{ customerId = 0; keyword = $keyword; page = 1; pageSize = 10 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+}
+
+Invoke-Case 'API-SRC-001' '准备：一个中文名商品「小米空气净化器 4代 静音款」' {
+    # 自建分类：SHP 段的分类已被 API-SHP-012 清理掉了，复用它必然建不出商品
+    $a1 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = 0; categoryName = "搜索$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $a2 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = $a1; categoryName = "搜索$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $script:searchCategoryId = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = $a2; categoryName = "搜索$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+
+    $body = @{
+        productId = 0; spuName = '小米空气净化器 4代 静音款'; subTitle = '除甲醛 适用客厅'
+        categoryId = $script:searchCategoryId; deliveryType = 1
+        mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '版本'; specValues = @('标准') })
+        skus = @(@{ skuCode = "SRC$($script:suffix)"; specValues = @('标准'); price = 1299; stock = 20; status = 1 })
+    }
+    $script:searchProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:headers `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    Invoke-RestMethod "$Gateway/gateway/products/SubmitAudit" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:searchProductId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:searchProductId; auditStatus = 20; remark = 'ok' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:searchProductId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    # ES 是最终一致，索引更新有毫秒级延迟，等一下再断言
+    Start-Sleep -Seconds 2
+    return $script:searchProductId -gt 0
+}
+
+Invoke-Case 'API-SRC-002' '🔴 P0 IK 分词：搜「净化器」能命中「空气净化器」' {
+    $r = Search-Shop '净化器'
+    $hit = @($r.data.items | Where-Object { $_.productId -eq "$($script:searchProductId)" })
+    # smartcn 会把「空气净化器」整体当一个 token，这一搜必然是 0 条；
+    # 能命中就说明索引用的确实是 IK（用户需求 X1「使用 IK」）
+    return $r.data.engine -match 'elasticsearch' -and $hit.Count -eq 1
+}
+
+Invoke-Case 'API-SRC-003' '🔴 搜「空气」同样命中（分词不是只对某个词有效）' {
+    $r = Search-Shop '空气'
+    return @($r.data.items | Where-Object { $_.productId -eq "$($script:searchProductId)" }).Count -eq 1
+}
+
+Invoke-Case 'API-SRC-004' '🔴 搜「静音」命中（命中商品名后半段，说明确实做了分词而不是前缀匹配）' {
+    $r = Search-Shop '静音'
+    return @($r.data.items | Where-Object { $_.productId -eq "$($script:searchProductId)" }).Count -eq 1
+}
+
+Invoke-Case 'API-SRC-005' '搜不存在的词返回空列表而不是报错' {
+    $r = Search-Shop '这个词肯定不存在xyz'
+    return $r.success -and @($r.data.items).Count -eq 0
+}
+
+Invoke-Case 'API-SRC-006' '🔴 搜索结果的价格来自数据库，不是索引副本' {
+    $r = Search-Shop '净化器'
+    $hit = @($r.data.items | Where-Object { $_.productId -eq "$($script:searchProductId)" })[0]
+    # 索引里刻意**不存价格**（防副本滞后），这里的 1299 必须是从库里取回的真实售价
+    return $hit -and $hit.finalPrice -eq 1299
+}
+
+Invoke-Case 'API-SRC-007' '🔴 下架后立刻搜不到（下架必须同步索引，否则「有问题先下架」就失效了）' {
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:searchProductId; status = 2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Start-Sleep -Seconds 2
+
+    $r = Search-Shop '净化器'
+    return @($r.data.items | Where-Object { $_.productId -eq "$($script:searchProductId)" }).Count -eq 0
+}
+
+Invoke-Case 'API-SRC-008' '重新上架后又能搜到' {
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:searchProductId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Start-Sleep -Seconds 2
+
+    $r = Search-Shop '净化器'
+    return @($r.data.items | Where-Object { $_.productId -eq "$($script:searchProductId)" }).Count -eq 1
+}
+
+Invoke-Case 'API-SRC-009' '🔴 删除后搜不到' {
+    Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:searchProductId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Start-Sleep -Seconds 2
+
+    $r = Search-Shop '净化器'
+    return @($r.data.items).Count -eq 0
+}
+
+Invoke-Case 'API-SRC-010' '🔴 关键词含引号不会拼出非法 JSON（转义必须到位）' {
+    # 用户可能搜 `50" 寸` 这类内容。直接字符串插值会把请求体拼坏，
+    # ES 返回 400 解析错误，而报错完全指不到「是用户输入的问题」。
+    $r = Search-Shop '50" 寸'
+    return $r.success
+}
+
+Invoke-Case 'API-SRC-011' '清理：删搜索分类' {
+    if ($script:searchCategoryId -gt 0) {
+        foreach ($id in @($script:searchCategoryId)) {
+            Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:headers `
+                -Body (@{ categoryId = $id } | ConvertTo-Json) `
+                -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        }
     }
     return $true
 }

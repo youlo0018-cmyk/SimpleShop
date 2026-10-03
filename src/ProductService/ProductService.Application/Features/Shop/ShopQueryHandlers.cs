@@ -23,15 +23,15 @@ public sealed class QueryShopProductsHandler
     : MediatR.IRequestHandler<QueryShopProductsCommand, ApiResponse<ShopProductPage>>
 {
     private readonly IProductRepository _products;
-    private readonly IShopPriceClient _prices;
+    private readonly ShopItemAssembler _assembler;
 
     /// <summary>构造处理器。</summary>
     /// <param name="products">商品仓储。</param>
-    /// <param name="prices">营销服务客户端（到手价）。</param>
-    public QueryShopProductsHandler(IProductRepository products, IShopPriceClient prices)
+    /// <param name="assembler">列表项组装器（含到手价计算，与搜索查询共用同一份实现）。</param>
+    public QueryShopProductsHandler(IProductRepository products, ShopItemAssembler assembler)
     {
         _products = products;
-        _prices = prices;
+        _assembler = assembler;
     }
 
     /// <summary>执行查询。</summary>
@@ -64,7 +64,7 @@ public sealed class QueryShopProductsHandler
 
         var (rows, total) = await _products.QueryPagedAsync(page, pageSize, filter, ct);
 
-        var items = await BuildItemsAsync(request.CustomerId, rows, ct);
+        var items = await _assembler.BuildAsync(request.CustomerId, rows, ct);
 
         // 按到手价排序没法交给 SQL（要跨服务试算），只能在**当页**内排。
         // 这是已知取舍：这里排出来的只是当前页的相对顺序，
@@ -78,73 +78,6 @@ public sealed class QueryShopProductsHandler
 
         return ApiResults.Ok(new ShopProductPage(items, total, page, pageSize));
     }
-
-    /// <summary>给当页商品算到手价并组装列表项。</summary>
-    /// <param name="customerId">客户 Id，0 表示游客。</param>
-    /// <param name="rows">当页商品。</param>
-    /// <param name="ct">取消令牌。</param>
-    /// <returns>列表项。</returns>
-    private async Task<List<ShopProductItem>> BuildItemsAsync(
-        long customerId, IReadOnlyList<ProductEntity> rows, CancellationToken ct)
-    {
-        if (rows.Count == 0) return new List<ShopProductItem>();
-
-        var priceRows = await _products
-            .GetSkuPriceRowsAsync(rows.Select(a => a.Id).ToArray(), ct);
-
-        var byProduct = priceRows
-            .GroupBy(a => a.ProductId)
-            .ToDictionary(g => g.Key, g => g.ToList());
-
-        // **每个 SKU 单独定价**，不把它们拍平成一单。
-        // 拍平的坏处：「满 100 减 20」遇到 200 元与 100 元两个 SKU，门槛按合计 300 判过，
-        // 20 元摊到两件上——200 元那件显示 186.67，而用户真只买那一个 SKU 时是 180。
-        // 商品卡上的价低于实付价，用户结算时发现变贵，这就是标价不符投诉。
-        // 按商品分组也不行：同一商品的不同规格之间同样会被摊，顾客买的是一件不是全部规格。
-        var priceLines = priceRows
-            .Select(a => new ShopPriceLine(a.ProductId, a.SkuId, a.Price))
-            .ToList();
-
-        var prices = await _prices.CalculateAsync(customerId, priceLines, ct);
-
-        var items = new List<ShopProductItem>(rows.Count);
-
-        foreach (var row in rows)
-        {
-            // 一个启用 SKU 都没有的商品不该出现在前台列表里：
-            // 它展示不出任何可买的规格，用户点进去只能看到一个空壳。
-            if (!byProduct.TryGetValue(row.Id, out var skus) || skus.Count == 0) continue;
-
-            var originals = skus.Select(a => a.Price).ToList();
-            var originalPrice = originals.Min();
-
-            // 到手价取**各启用 SKU 的最小值**：商品卡显示的就是「最低能买到的那个价」。
-            // 取的是最大值的话，卡片上的价比实际买得到的高，用户加购物车发现变贵了。
-            var best = skus
-                .Select(a => prices.TryGetValue(a.SkuId, out var p) ? p : new ShopSkuPrice(a.Price, a.Price, 0m, "none", string.Empty))
-                .OrderBy(a => a.PayableAmount)
-                .First();
-
-            items.Add(new ShopProductItem(
-                row.Id.ToString(),
-                row.SpuName,
-                row.SubTitle,
-                row.MainImage,
-                row.BrandName,
-                row.CategoryName,
-                row.DeliveryType,
-                originalPrice,
-                best.PayableAmount,
-                best.Source,
-                best.SourceName,
-                best.DiscountAmount > 0m,
-                row.Sales));
-        }
-
-        return items;
-    }
-
-
 }
 
 /// <summary>前台商品详情处理器。</summary>

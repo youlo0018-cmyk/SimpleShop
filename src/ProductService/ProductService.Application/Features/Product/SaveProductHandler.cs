@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using Collaboration.Domain.Infrastructure;
 using MediatR;
+using Microsoft.Extensions.Logging;
 // 本命名空间 Features.Product 会遮蔽同名实体 Product，枚举同样从别名命名空间取。
 using ProductEnums = ProductService.Domain.Entities;
 using ProductService.Application.Services;
@@ -26,22 +27,30 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
     private readonly ICategoryRepository _categories;
     private readonly IBrandRepository _brands;
     private readonly IInventoryClient _inventory;
+    private readonly IProductSearchIndex _search;
+    private readonly ILogger<SaveProductHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="products">商品仓储。</param>
     /// <param name="categories">分类仓储。</param>
     /// <param name="brands">品牌仓储。</param>
     /// <param name="inventory">库存服务客户端，用于建商品时初始化 SKU 库存。</param>
+    /// <param name="search">商品搜索索引，用于保存后同步到 ES。</param>
+    /// <param name="logger">日志器。</param>
     public SaveProductHandler(
         IProductRepository products,
         ICategoryRepository categories,
         IBrandRepository brands,
-        IInventoryClient inventory)
+        IInventoryClient inventory,
+        IProductSearchIndex search,
+        ILogger<SaveProductHandler> logger)
     {
         _products = products;
         _categories = categories;
         _brands = brands;
         _inventory = inventory;
+        _search = search;
+        _logger = logger;
     }
 
     /// <summary>执行保存。</summary>
@@ -362,6 +371,12 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
             }
         }
 
+        // 保存成功后同步搜索索引。
+        // 🔴 索引失败**不返回错误**：保存商品是主链路，ES 只是加速手段。
+        // 索引靠补偿任务补齐（见 AI_HANDOFF 的「还没做」清单）。
+        // 这里返回失败会让用户以为商品没保存，于是再点一次保存——那才是真的重复商品。
+        await SyncSearchAsync(product, ct);
+
         return ApiResults.Ok(product.Id, isCreate ? "创建成功" : "保存成功");
     }
 
@@ -371,4 +386,19 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
     /// <remarks>用 MidpointRounding.AwayFromZero 而不是默认的 ToEven：
     /// 「四舍五入」在中文语境里指 0.5 进位，而 .NET 默认的银行家舍入会把 2.345 舍成 2.34。</remarks>
     internal static decimal Round2(decimal value) => decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+    /// <summary>把商品同步到搜索索引。失败只记日志，不影响业务结果。</summary>
+    /// <param name="product">已保存的商品。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    private async Task SyncSearchAsync(ProductEntity product, CancellationToken ct)
+    {
+        try
+        {
+            await _search.IndexAsync(product, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "同步商品到搜索索引失败：{ProductId}", product.Id);
+        }
+    }
 }

@@ -28,6 +28,32 @@ public record QueryShopProductsCommand(
 public record QueryShopProductDetailCommand(long CustomerId, long ProductId)
     : IRequest<ApiResponse<ShopProductDetailDto>>;
 
+/// <summary>前台商品搜索（Elasticsearch + IK 分词，无需登录）。</summary>
+/// <param name="CustomerId">客户 Id；0 表示游客，只算活动价不计券。</param>
+/// <param name="Keyword">关键词，空表示按类目 / 品牌浏览。</param>
+/// <param name="CategoryId">分类过滤，0 表示不限。</param>
+/// <param name="BrandId">品牌过滤，0 表示不限。</param>
+/// <param name="Page">页码。</param>
+/// <param name="PageSize">每页条数。</param>
+public record QueryShopSearchCommand(
+    long CustomerId = 0,
+    string Keyword = "",
+    long CategoryId = 0,
+    long BrandId = 0,
+    int Page = 1,
+    int PageSize = 20) : IRequest<ApiResponse<ShopSearchResult>>;
+
+/// <summary>前台搜索结果。</summary>
+/// <param name="Items">商品列表。</param>
+/// <param name="Total">命中总数（按 ES 的 hits 总数估算，可能略偏）。</param>
+/// <param name="Page">当前页码。</param>
+/// <param name="PageSize">每页条数。</param>
+/// <param name="Keyword">回显的关键词。</param>
+/// <param name="Engine">检索引擎说明，便于排查「为什么搜不准」。</param>
+public sealed record ShopSearchResult(
+    IReadOnlyList<ShopProductItem> Items, long Total, int Page, int PageSize,
+    string Keyword, string Engine);
+
 /// <summary>前台排序方式。</summary>
 public static class ShopSorts
 {
@@ -127,6 +153,7 @@ public static class ShopValidators
     public static void AddShopValidators(IServiceCollection services)
     {
         services.AddScoped<IValidator<QueryShopProductsCommand>, QueryShopProductsValidator>();
+        services.AddScoped<IValidator<QueryShopSearchCommand>, QueryShopSearchValidator>();
         services.AddScoped<IValidator<QueryShopProductDetailCommand>, QueryShopDetailValidator>();
     }
 
@@ -142,6 +169,19 @@ public static class ShopValidators
             RuleFor(x => x.Keyword).MaximumLength(64).WithMessage("搜索关键字最多 64 个字符");
             RuleFor(x => x.SortBy).Must(a => a is >= ShopSorts.Default and <= ShopSorts.Newest)
                 .WithMessage("排序方式不正确");
+        }
+    }
+
+    /// <summary>前台搜索校验。</summary>
+    private sealed class QueryShopSearchValidator : AbstractValidator<QueryShopSearchCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public QueryShopSearchValidator()
+        {
+            RuleFor(x => x.CustomerId).GreaterThanOrEqualTo(0).WithMessage("客户 Id 不正确");
+            RuleFor(x => x.Page).GreaterThanOrEqualTo(1).WithMessage("页码必须大于 0");
+            RuleFor(x => x.PageSize).InclusiveBetween(1, 50).WithMessage("每页条数必须在 1 ~ 50 之间");
+            RuleFor(x => x.Keyword).MaximumLength(64).WithMessage("搜索关键字最多 64 个字符");
         }
     }
 

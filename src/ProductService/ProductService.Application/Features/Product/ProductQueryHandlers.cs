@@ -1,6 +1,8 @@
 using Collaboration.Domain.Common;
 using MediatR;
+using Microsoft.Extensions.Logging;
 using ProductEnums = ProductService.Domain.Entities;
+using ProductService.Application.Services;
 using ProductService.Domain.IRepository;
 using ProductEntity = ProductService.Domain.Entities.Product;
 using ProductSpec = ProductService.Domain.Entities.ProductSpec;
@@ -13,10 +15,20 @@ namespace ProductService.Application.Features.Product;
 public sealed class ChangeProductAuditHandler : IRequestHandler<ChangeProductAuditCommand, ApiResponse>
 {
     private readonly IProductRepository _products;
+    private readonly IProductSearchIndex _search;
+    private readonly ILogger<ChangeProductAuditHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="products">商品仓储。</param>
-    public ChangeProductAuditHandler(IProductRepository products) => _products = products;
+    /// <param name="search">商品搜索索引，审核结果要同步（审核通过的才能被搜到）。</param>
+    /// <param name="logger">日志器。</param>
+    public ChangeProductAuditHandler(
+        IProductRepository products, IProductSearchIndex search, ILogger<ChangeProductAuditHandler> logger)
+    {
+        _products = products;
+        _search = search;
+        _logger = logger;
+    }
 
     /// <summary>执行审核。</summary>
     /// <param name="request">审核命令。</param>
@@ -42,7 +54,28 @@ public sealed class ChangeProductAuditHandler : IRequestHandler<ChangeProductAud
         }
 
         await _products.UpdateAsync(product, ct);
+
+        // 审核结果同步到索引：审核通过的才允许被前台搜到（ES 侧有 auditStatus 过滤）
+        await SyncStatusAsync(product, ct);
+
         return ApiResponseFactory.Ok(request.AuditStatus == ProductEnums.AuditStatuses.Approved ? "审核已通过" : "已驳回");
+    }
+
+    /// <summary>同步商品审核 / 上下架状态到索引。失败只记日志。</summary>
+    /// <param name="product">商品。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    private async Task SyncStatusAsync(ProductEntity product, CancellationToken ct)
+    {
+        try
+        {
+            await _search.UpdateStatusAsync(product.Id, product.AuditStatus, product.Status, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 索引失败不回错：审核是主链路，ES 只是加速。补偿任务会补齐。
+            _logger.LogError(ex, "同步商品审核状态到索引失败：{ProductId}", product.Id);
+        }
     }
 
     private static string AppendReason(string existing, string reason)
@@ -94,10 +127,20 @@ public sealed class SubmitProductAuditHandler : IRequestHandler<SubmitProductAud
 public sealed class ChangeProductListingHandler : IRequestHandler<ChangeProductListingCommand, ApiResponse>
 {
     private readonly IProductRepository _products;
+    private readonly IProductSearchIndex _search;
+    private readonly ILogger<ChangeProductListingHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="products">商品仓储。</param>
-    public ChangeProductListingHandler(IProductRepository products) => _products = products;
+    /// <param name="search">商品搜索索引，上下架要同步（下架的商品必须立刻搜不到）。</param>
+    /// <param name="logger">日志器。</param>
+    public ChangeProductListingHandler(
+        IProductRepository products, IProductSearchIndex search, ILogger<ChangeProductListingHandler> logger)
+    {
+        _products = products;
+        _search = search;
+        _logger = logger;
+    }
 
     /// <summary>执行上下架。</summary>
     /// <param name="request">上下架命令。</param>
@@ -119,7 +162,28 @@ public sealed class ChangeProductListingHandler : IRequestHandler<ChangeProductL
 
         product.Status = request.Status;
         await _products.UpdateAsync(product, ct);
+
+        // 下架必须立刻从索引里消失：商品有问题时运营下架，用户却还能搜到、点进去才发现买不了，
+        // 这比「搜不到」糟糕得多
+        await SyncStatusAsync(product, ct);
+
         return ApiResponseFactory.Ok(request.Status == ProductEnums.ListingStatuses.OnShelf ? "已上架" : "已下架");
+    }
+
+    /// <summary>同步商品上下架状态到索引。失败只记日志。</summary>
+    /// <param name="product">商品。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    private async Task SyncStatusAsync(ProductEntity product, CancellationToken ct)
+    {
+        try
+        {
+            await _search.UpdateStatusAsync(product.Id, product.AuditStatus, product.Status, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "同步商品上下架状态到索引失败：{ProductId}", product.Id);
+        }
     }
 }
 
@@ -127,10 +191,20 @@ public sealed class ChangeProductListingHandler : IRequestHandler<ChangeProductL
 public sealed class DeleteProductHandler : IRequestHandler<DeleteProductCommand, ApiResponse>
 {
     private readonly IProductRepository _products;
+    private readonly IProductSearchIndex _search;
+    private readonly ILogger<DeleteProductHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="products">商品仓储。</param>
-    public DeleteProductHandler(IProductRepository products) => _products = products;
+    /// <param name="search">商品搜索索引，删除后要从索引里移除。</param>
+    /// <param name="logger">日志器。</param>
+    public DeleteProductHandler(
+        IProductRepository products, IProductSearchIndex search, ILogger<DeleteProductHandler> logger)
+    {
+        _products = products;
+        _search = search;
+        _logger = logger;
+    }
 
     /// <summary>执行删除。</summary>
     /// <param name="request">删除命令。</param>
@@ -148,6 +222,17 @@ public sealed class DeleteProductHandler : IRequestHandler<DeleteProductCommand,
         if (product is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "商品不存在");
 
         await _products.DeleteProductAsync(product.Id, ct);
+
+        // 从索引里移除：删掉的商品还能被搜到、点进去是空白，比搜不到更糟
+        try
+        {
+            await _search.DeleteAsync(product.Id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "从商品索引移除失败：{ProductId}", product.Id);
+        }
+
         return ApiResponseFactory.Ok("删除成功");
     }
 }

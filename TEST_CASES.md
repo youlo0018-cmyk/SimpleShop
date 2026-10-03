@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 252/252） | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 263/263） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -81,7 +81,7 @@
 | `api-regression.ps1` | CustomerService 健康 / 注册 / 登录 | 15 |
 | `auth-regression.ps1` | AuthService 令牌签发与内容 | 17 |
 | `gateway-regression.ps1` | 网关鉴权、租户头剥离、RBAC | 13 |
-| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU + **前台商品与导航只读（无需登录）** | 46 |
+| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU + 前台只读 + **ES/IK 搜索** | 57 |
 | `cart-regression.ps1` | CartService 累加语义购物车 | 13 |
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
 | `marketing-regression.ps1` | MarketingService 券全生命周期 + 活动引擎 + 到手价 + **秒杀场次与库存划转** | 48 |
@@ -564,6 +564,24 @@
 | API-SHP-011b | P1 | 前台分类树能看到启用中的三级分类 | 必须**递归整棵树**取 Id，只看顶层会漏掉三级分类 |
 | API-SHP-011b2 | P0 | 停用后立刻从前台分类树消失 | 前台接口**不提供** `includeDisabled` 参数（后台的 `/categories/Tree` 有），所以停用后没有任何办法再看到它 |
 | API-SHP-011c | P1 | 前台品牌列表可匿名访问 | 不需要登录 |
+
+#### 2.3.2 SRC 商品搜索（Elasticsearch + IK）
+
+分词器用 **IK**（用户需求 X1）。索引与查询用不同分词器：`ik_max_word` 建索引（切细，召回高）、
+`ik_smart` 查询（切粗，避免碎词命中无关结果）——这是 IK 的标准用法。
+
+| 编号 | 优先级 | 用例 | 期望与断言 |
+|---|---|---|---|
+| API-SRC-001 | P1 | 准备中文名商品「小米空气净化器 4代 静音款」 | 审核通过 + 已上架 |
+| API-SRC-002 | **P0** | 搜「净化器」命中「空气净化器」 | **IK 与 smartcn 的分水岭**：smartcn 把整词当一个 token，这一搜必然 0 条 |
+| API-SRC-003 | P0 | 搜「空气」同样命中 | 证明不是只对某一个词有效 |
+| API-SRC-004 | P0 | 搜「静音」命中 | 命中商品名后半段，说明真做了分词而非前缀匹配 |
+| API-SRC-005 | P1 | 搜不存在的词返回空列表 | 不报错 |
+| API-SRC-006 | **P0** | 搜索结果价格来自数据库 | 索引刻意**不存价格**，此处必须是从库取回的 1299 |
+| API-SRC-007 | **P0** | 下架后立刻搜不到 | 「有问题先下架」是运营的最后手段，搜不到才算生效 |
+| API-SRC-008 | P0 | 重新上架后又能搜到 | |
+| API-SRC-009 | **P0** | 删除后搜不到 | 删掉的商品还能被搜到、点进去空白，比搜不到更糟 |
+| API-SRC-010 | P0 | 关键词含引号不会拼出非法 JSON | 用户可能搜 `50" 寸`；转义不到位会让 ES 返回 400 解析错误，而报错指不到「是用户输入的问题」 |
 
 ### 2.6 PNT / EVL 积分、评价
 

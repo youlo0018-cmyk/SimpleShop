@@ -18,6 +18,17 @@ public interface IProductRepository
     /// </remarks>
     Task<(List<Product> Items, long Total)> QueryPagedAsync(
         int page, int pageSize, ProductQuery query, CancellationToken ct = default);
+    /// <summary>按 Id 集合批量取商品（搜索召回后回库取权威数据用）。</summary>
+    /// <param name="ids">商品 Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>命中的商品；<b>不保证与传入顺序一致</b>，调用方需自行按 Id 重排。</returns>
+    /// <remarks>
+    /// 搜索只用 ES 召回 Id，价格与状态一律回这里取权威值——否则会出现
+    /// 「搜索结果显示有货，点进去发现已下架」「列表显示 99、结算 129」。
+    /// 一次 IN 查询拿回整页，避免 N+1。
+    /// </remarks>
+    Task<List<Product>> GetByIdsAsync(IReadOnlyCollection<long> ids, CancellationToken ct = default);
+
     /// <summary>按 Id 取商品。</summary>
     /// <param name="id">商品 Id。</param>
     /// <param name="ct">取消令牌。</param>

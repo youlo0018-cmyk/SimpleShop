@@ -68,6 +68,21 @@ public sealed class ProductRepository : CrudRepository<Product>, IProductReposit
         return (items, total);
     }
     /// <inheritdoc />
+    public async Task<List<Product>> GetByIdsAsync(
+        IReadOnlyCollection<long> ids, CancellationToken ct = default)
+    {
+        if (ids.Count == 0) return new List<Product>();
+
+        // Distinct 很重要：搜索召回里可能有重复 Id（多关键词命中同一条），
+        // 不去重会让同一件商品在一页里出现两次
+        var list = ids.Distinct().ToArray();
+
+        return await _db.Select<Product>()
+            .Where(a => list.Contains(a.Id))
+            .ToListAsync(ct);
+    }
+
+    /// <inheritdoc />
     public async Task<List<Sku>> GetSkusAsync(long productId, CancellationToken ct = default)
         => await _db.Select<Sku>()
             .Where(a => a.ProductId == productId)

@@ -48,4 +48,21 @@ public sealed class ShopProductController : ControllerBase
     public Task<ApiResponse<ShopProductDetailDto>> Detail(
         [FromBody] QueryShopProductDetailCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>商品搜索（Elasticsearch + IK 中文分词，无需登录）。</summary>
+    /// <param name="command">命令；关键词留空即按类目 / 品牌浏览。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>搜索结果，含到手价与优惠来源。</returns>
+    /// <remarks>
+    /// <para>ES 只负责<b>召回商品 Id</b>，价格与上下架状态一律回库取权威值——
+    /// 直接读索引副本会出现「搜到有货、点进去已下架」「列表 99、结算 129」，
+    /// 这种不一致对价格信任的伤害比搜不准更大。</para>
+    ///
+    /// <para>搜不到时自动降级为「按类目浏览」，不返回错误：
+    /// 搜索是增强功能，它不可用不该让商品页整个打不开。</para>
+    /// </remarks>
+    [HttpPost("Search")]
+    public Task<ApiResponse<ShopSearchResult>> Search(
+        [FromBody] QueryShopSearchCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 }

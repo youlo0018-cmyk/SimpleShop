@@ -17,6 +17,7 @@ public static class ApiServiceCollectionExtensions
 {
     /// <summary>注册 MediatR、校验器、管道与基础设施。</summary>
     /// <param name="services">服务集合。</param>
+    /// <param name="configuration">应用配置，用于读下游服务与 Elasticsearch 地址。</param>
     /// <returns>原集合，便于链式调用。</returns>
     public static IServiceCollection AddAppServices(this IServiceCollection services, IConfiguration configuration)
     {
@@ -27,6 +28,9 @@ public static class ApiServiceCollectionExtensions
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(appAssembly));
         services.AddValidatorsFromAssembly(appAssembly);
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+
+        // 列表查询与搜索查询共用同一份到手价组装逻辑，单独注册一个 Scoped
+        services.AddScoped<ShopItemAssembler>();
 
         // 嵌套静态类里的校验器 AddValidatorsFromAssembly 扫不到，显式注册
         CategoryValidators.AddCategoryValidators(services);
@@ -66,7 +70,7 @@ public static class ApiServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(8);
         });
 
-        services.AddInfrastructure();
+        services.AddInfrastructure(configuration);
         return services;
     }
 }
