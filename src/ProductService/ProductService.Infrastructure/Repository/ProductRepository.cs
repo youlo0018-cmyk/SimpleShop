@@ -45,11 +45,23 @@ public sealed class ProductRepository : CrudRepository<Product>, IProductReposit
 
         var total = await select.CountAsync(ct);
 
+        select = query.Order switch
+        {
+            ProductSorts.SalesDesc => select
+                .OrderByDescending(a => a.Sales)
+                .OrderByDescending(a => a.Id),
+            ProductSorts.Newest => select
+                .OrderByDescending(a => a.CreatedAt)
+                .OrderByDescending(a => a.Id),
+            _ => select
+                .OrderBy(a => a.AuditStatus)
+                .OrderBy(a => a.SortOrder)
+                .OrderByDescending(a => a.Sales)
+                // Id 兜底排序：同值行的顺序必须稳定，否则翻页会重复或漏行
+                .OrderByDescending(a => a.Id)
+        };
+
         var items = await select
-            .OrderBy(a => a.AuditStatus)
-            .OrderBy(a => a.SortOrder)
-            // Id 兜底排序：同值行的顺序必须稳定，否则翻页会重复或漏行
-            .OrderByDescending(a => a.Id)
             .Page(page, pageSize)
             .ToListAsync(ct);
 
@@ -61,6 +73,22 @@ public sealed class ProductRepository : CrudRepository<Product>, IProductReposit
             .Where(a => a.ProductId == productId)
             .OrderBy(a => a.Id)
             .ToListAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<List<SkuPriceRow>> GetSkuPriceRowsAsync(
+        IReadOnlyCollection<long> productIds, CancellationToken ct = default)
+    {
+        if (productIds.Count == 0) return new List<SkuPriceRow>();
+
+        var ids = productIds.Distinct().ToArray();
+
+        // 只取**启用中**的 SKU：停用 SKU 不可下单，把它算进到手价会让商品卡显示一个买不到的价格。
+        var rows = await _db.Select<Sku>()
+            .Where(a => ids.Contains(a.ProductId) && a.Status == SkuStatuses.Enabled)
+            .ToListAsync(ct);
+
+        return rows.Select(a => new SkuPriceRow(a.Id, a.ProductId, a.Price)).ToList();
+    }
 
     /// <inheritdoc />
     public async Task<List<ProductSpec>> GetSpecsAsync(long productId, CancellationToken ct = default)

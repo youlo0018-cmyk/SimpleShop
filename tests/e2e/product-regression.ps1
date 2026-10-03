@@ -14,6 +14,7 @@
 [CmdletBinding()]
 param(
     [string]$Gateway = 'http://127.0.0.1:5008',
+    [string]$Marketing = 'http://127.0.0.1:5072',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
@@ -409,6 +410,177 @@ Invoke-Case 'API-PRP-016' '清理：商品 → 品牌 → 分类（先叶子后�
     $tree = Invoke-RestMethod "$Gateway/gateway/categories/Tree" -Headers $script:headers -TimeoutSec 30
     return -not ($tree.data | Where-Object { $_.id -eq "$($script:l1)" })
 }
+Write-Host "`n=== SHP 前台商品只读（无需登录）===" -ForegroundColor Cyan
+
+# 前台用**自己的一套商品与活动**，不复用后台用例的数据：
+# 后台用例会把自己的商品删掉，而前台用例要验证「审核通过 + 已上架」才可见，
+# 复用同一批商品就会出现「上一条用例刚删掉它，前台就读不到了」这种时序脆弱。
+$script:shopProductId = 0
+$script:shopActivityId = 0
+$script:shopCategoryId = 0
+
+# 建出的三级分类 Id 要留着最后按「先叶子后父级」的顺序删：
+# 有子分类时父级删不掉（那是防止误删孤立数据的保护，回归 API-PRD-008 就验过这条）。
+$script:shopCategoryIds = @()
+
+function New-ShopCategory {
+    $a = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = 0; categoryName = "前台$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $b = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = $a; categoryName = "前台$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $c = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:headers `
+        -Body (@{ parentId = $b; categoryName = "前台$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+
+    $script:shopCategoryIds = @($a, $b, $c)
+    return $c
+}
+
+# 前台列表 / 详情一律**不带令牌**调网关：能调通就同时证明了匿名白名单生效
+function ShopPost([string]$Op, $Body) {
+    return Invoke-RestMethod "$Gateway/gateway/shop/products/$Op" -Method Post `
+        -Body ($Body | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
+}
+
+Invoke-Case 'API-SHP-001' '准备：一个三级分类 + 两个 SKU（200 元 / 100 元）的商品' {
+    $script:shopCategoryId = New-ShopCategory
+
+    $body = @{
+        productId = 0; spuName = "前台商品$($script:suffix)"; categoryId = $script:shopCategoryId
+        deliveryType = 1; mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红', '蓝') })
+        skus = @(
+            @{ skuCode = "SHP-A$($script:suffix)"; specValues = @('红'); price = 200; stock = 10; status = 1 }
+            @{ skuCode = "SHP-B$($script:suffix)"; specValues = @('蓝'); price = 100; stock = 10; status = 1 }
+        )
+    }
+    $script:shopProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post `
+        -Headers $script:headers -Body ($body | ConvertTo-Json -Depth 8) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    return $script:shopProductId -gt 0
+}
+
+Invoke-Case 'API-SHP-002' '🔴 未上架 + 未审核通过时前台看不到（服务端强制过滤，不靠调用方传参）' {
+    $r = ShopPost 'List' @{ customerId = 0; keyword = "前台商品$($script:suffix)"; page = 1; pageSize = 10 }
+    # 新建商品固定「待审核 + 默认下架」，两个条件任一不满足都该看不见
+    return $r.success -and @($r.data.items).Count -eq 0
+}
+
+Invoke-Case 'API-SHP-003' '通过审核但仍下架 → 前台依然看不到' {
+    Invoke-RestMethod "$Gateway/gateway/products/SubmitAudit" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:shopProductId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:shopProductId; auditStatus = 20; remark = 'ok' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $r = ShopPost 'List' @{ customerId = 0; keyword = "前台商品$($script:suffix)"; page = 1; pageSize = 10 }
+    return @($r.data.items).Count -eq 0
+}
+
+Invoke-Case 'API-SHP-004' '🔴 未上架商品的详情也回 404，且不区分「不存在」与「已下架」' {
+    $r = ShopPost 'Detail' @{ customerId = 0; productId = $script:shopProductId }
+    return (-not $r.success) -and $r.code -eq 404
+}
+
+Invoke-Case 'API-SHP-005' '审核通过 + 已上架 → 前台可见' {
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:shopProductId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $r = ShopPost 'List' @{ customerId = 0; keyword = "前台商品$($script:suffix)"; page = 1; pageSize = 10 }
+    return @($r.data.items).Count -eq 1
+}
+
+Invoke-Case 'API-SHP-006' '🔴 P0 每个 SKU 单独定价：满 100 减 20 → 200 元件到手 180、100 元件到手 80' {
+    # 全场满 100 减 20
+    $now = [DateTime]::UtcNow
+    $act = @{
+        activityName = "前台满减$($script:suffix)"; activityType = 1
+        thresholdAmount = 100; discountAmount = 20; targetType = 1; targets = '[]'
+        startTime = $now.AddDays(-1).ToString('o'); endTime = $now.AddDays(1).ToString('o')
+        status = 1; platformId = 0
+    }
+    $script:shopActivityId = [long](Invoke-RestMethod "$Marketing/marketing/activities/Create" -Method Post `
+        -Body ($act | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30).data
+
+    $r = ShopPost 'Detail' @{ customerId = 0; productId = $script:shopProductId }
+    $skus = @($r.data.skus)
+    if ($skus.Count -ne 2) { return $false }
+
+    # 关键：两个 SKU **各自**满足满 100，所以各自减 20。
+    # 如果把它们拍平成一次试算，门槛按合计 300 判过、20 元摊到两件上，
+    # 就会得到 186.67 / 93.33 —— 商品卡上的价比用户实付便宜，结算时发现变贵。
+    $p200 = @($skus | Where-Object { $_.originalPrice -eq 200 })[0]
+    $p100 = @($skus | Where-Object { $_.originalPrice -eq 100 })[0]
+
+    return $p200.finalPrice -eq 180 -and $p100.finalPrice -eq 80
+}
+
+Invoke-Case 'API-SHP-007' '🔴 列表的到手价取各启用 SKU 的最小值（商品卡展示的就是最低能买到的那个价）' {
+    $r = ShopPost 'List' @{ customerId = 0; keyword = "前台商品$($script:suffix)"; page = 1; pageSize = 10 }
+    $item = @($r.data.items)[0]
+    # min(180, 80) = 80；原价同理取 min(200, 100) = 100
+    return $item.finalPrice -eq 80 -and $item.originalPrice -eq 100 -and $item.hasDiscount -eq $true
+}
+
+Invoke-Case 'API-SHP-008' '优惠来源标签带出活动名（商品卡显示「满减」而不是数字枚举）' {
+    $r = ShopPost 'List' @{ customerId = 0; keyword = "前台商品$($script:suffix)"; page = 1; pageSize = 10 }
+    $item = @($r.data.items)[0]
+    return $item.discountSource -eq 'activity' -and $item.discountSourceName -match "前台满减"
+}
+
+Invoke-Case 'API-SHP-009' '游客不计券（customerId = 0）' {
+    $r = ShopPost 'Detail' @{ customerId = 0; productId = $script:shopProductId }
+    return $r.success
+}
+
+Invoke-Case 'API-SHP-010' '🔴 前台接口走独立前缀，后台的待审核列表不会因此泄露到前台' {
+    # 后台能看到待审核商品，前台看不到；两者路由前缀不同，互不影响
+    $admin = Invoke-RestMethod "$Gateway/gateway/products/List?auditStatus=10&page=1&pageSize=50" `
+        -Headers $script:headers -TimeoutSec 30
+    $shop = ShopPost 'List' @{ customerId = 0; page = 1; pageSize = 50 }
+
+    $adminIds = @($admin.data | Where-Object { $_.id -eq "$($script:shopProductId)" }).Count
+    $shopIds = @($shop.data.items | Where-Object { $_.productId -eq "$($script:shopProductId)" }).Count
+    return $adminIds -eq 0 -and $shopIds -eq 1
+}
+
+Invoke-Case 'API-SHP-011' '🔴 营销服务不可用时按原价回退，而不是整页 500' {
+    # 停掉本节的活动 → 没有优惠，但接口必须正常返回（BUSINESS.md 11.5 的「静默回退原价展示」）
+    Invoke-RestMethod "$Marketing/marketing/activities/SetStatus" -Method Post `
+        -Body (@{ activityId = $script:shopActivityId; status = 2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $r = ShopPost 'List' @{ customerId = 0; keyword = "前台商品$($script:suffix)"; page = 1; pageSize = 10 }
+    $item = @($r.data.items)[0]
+    Write-Host ("        原价={0} 到手价={1} 有优惠={2} 来源={3}" -f `
+        $item.originalPrice, $item.finalPrice, $item.hasDiscount, $item.discountSource) -ForegroundColor DarkGray
+    return $r.success -and $item.finalPrice -eq $item.originalPrice -and $item.hasDiscount -eq $false
+}
+
+Invoke-Case 'API-SHP-012' '清理：停用活动 → 删商品 → 删分类' {
+    if ($script:shopActivityId -gt 0) {
+        Invoke-RestMethod "$Marketing/marketing/activities/Delete" -Method Post `
+            -Body (@{ activityId = $script:shopActivityId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    if ($script:shopProductId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:headers `
+            -Body (@{ productId = $script:shopProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    # 先叶子后父级：有子分类时父级删不掉
+    foreach ($id in [array]($script:shopCategoryIds | Sort-Object -Descending)) {
+        Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:headers `
+            -Body (@{ categoryId = $id } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    return $true
+}
+
 Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan
 Write-Host ("  通过: " + $script:pass + "  失败: " + $script:fail)
 $http.Dispose()

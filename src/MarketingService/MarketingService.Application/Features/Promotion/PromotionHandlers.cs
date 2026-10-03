@@ -311,3 +311,69 @@ public sealed class CalculateFinalPriceHandler
     }
 
 }
+/// <summary>分组批量试算处理器：每组独立算，组间互不影响。</summary>
+/// <remarks>
+/// 列表页要的就是这个语义——「这个商品我自己买，能便宜多少」，
+/// 而不是「这一页所有商品合起来能便宜多少」。原因写在 <see cref="CalculateFinalPriceBatchCommand"/> 的注释里。
+/// </remarks>
+public sealed class CalculateFinalPriceBatchHandler
+    : IRequestHandler<CalculateFinalPriceBatchCommand, ApiResponse<IReadOnlyList<FinalPriceDto>>>
+{
+    private readonly IPromotionRepository _promotions;
+    private readonly ICouponRepository _coupons;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="promotions">活动仓储。</param>
+    /// <param name="coupons">券仓储。</param>
+    public CalculateFinalPriceBatchHandler(IPromotionRepository promotions, ICouponRepository coupons)
+    {
+        _promotions = promotions;
+        _coupons = coupons;
+    }
+
+    /// <summary>执行批量试算。</summary>
+    /// <param name="request">命令，Groups 每组一次独立试算。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>与 Groups 一一对应的试算结果，顺序一致。</returns>
+    /// <remarks>
+    /// 活动与用户券都<b>只查一次</b>然后复用：几十组共享同一批候选活动与同一张券包，
+    /// 逐组查库才是真正的 N+1。结果的正确性来自「门槛只按组内行金额判定」，
+    /// 不来自「查得更多」。
+    /// </remarks>
+    public async Task<ApiResponse<IReadOnlyList<FinalPriceDto>>> Handle(
+        CalculateFinalPriceBatchCommand request, CancellationToken ct)
+    {
+        var nowUtc = DateTime.UtcNow;
+
+        var activities = await _promotions.ListActiveAsync(
+            request.PlatformId, request.SessionId, nowUtc, ct);
+
+        var coupons = request.CustomerId > 0
+            ? await _coupons.ListAvailableAsync(request.CustomerId, nowUtc, ct)
+            : new List<UserCoupon>();
+
+        var priority = await _promotions.GetPriorityAsync(request.PlatformId, ct);
+
+        var results = new List<FinalPriceDto>(request.Groups.Count);
+
+        foreach (var group in request.Groups)
+        {
+            var lines = group
+                .Select(a => new PromotionLine(a.SpuId, a.SkuId, PromotionCalculator.Round2(a.Amount)))
+                .ToArray();
+
+            var r = PromotionCalculator.Calculate(lines, activities, coupons, priority, nowUtc);
+
+            results.Add(new FinalPriceDto(
+                r.OriginalTotal, r.ActivityDiscountTotal, r.CouponDiscountTotal,
+                r.FinalPrice, r.CouponId, r.CouponCode,
+                r.UsedActivity, request.CustomerId <= 0,
+                r.Lines.Select(a => new FinalPriceLineDto(
+                    a.SpuId, a.SkuId, a.OriginalAmount,
+                    a.ActivityDiscount, a.CouponDiscount, a.PayableAmount,
+                    a.Source, a.SourceName)).ToList()));
+        }
+
+        return ApiResults.Ok<IReadOnlyList<FinalPriceDto>>(results);
+    }
+}

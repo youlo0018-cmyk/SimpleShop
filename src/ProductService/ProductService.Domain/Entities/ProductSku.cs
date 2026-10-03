@@ -84,10 +84,20 @@ public class Sku : EntityBase
     [Column(Name = "image", StringLength = 512)]
     public string Image { get; set; } = string.Empty;
 
-    /// <summary>状态。1 启用 / 2 停用。停用后不可下单。</summary>
+    /// <summary>状态，见 <see cref="SkuStatuses"/>。停用后不可下单。</summary>
     [Column(Name = "status")]
-    public int Status { get; set; } = 1;
+    public int Status { get; set; } = SkuStatuses.Enabled;
 
+}
+
+/// <summary>SKU 状态。</summary>
+public static class SkuStatuses
+{
+    /// <summary>启用。前台可见、可下单。</summary>
+    public const int Enabled = 1;
+
+    /// <summary>停用。不可下单，但历史订单里仍然显示（订单行是快照，不受影响）。</summary>
+    public const int Disabled = 2;
 }
 
 /// <summary>SKU 与规格值的关联（多对多）。</summary>

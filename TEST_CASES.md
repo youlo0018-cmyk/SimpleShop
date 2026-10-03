@@ -66,7 +66,7 @@
 | 命令 | 范围 | 当前状态 |
 |---|---|---|
 | `dotnet test` | 单元测试 | ✅ 已落地 |
-| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 218/218） | ✅ 已落地 |
+| `./tests/e2e/run-all.ps1` | **跑全部 API 回归脚本并汇总成一张表**（当前 230/230） | ✅ 已落地 |
 | `./tests/e2e/<name>-regression.ps1` | 单个服务的 API 回归 | ✅ 已落地 9 个 |
 | `./scripts/build.ps1` | 全量构建（0 warning 0 error，不达标即失败） | ✅ 已落地 |
 | `./tests/e2e/ui-regression.js` | UI 功能回归 | ⬜ 未落地 |
@@ -81,7 +81,7 @@
 | `api-regression.ps1` | CustomerService 健康 / 注册 / 登录 | 15 |
 | `auth-regression.ps1` | AuthService 令牌签发与内容 | 17 |
 | `gateway-regression.ps1` | 网关鉴权、租户头剥离、RBAC | 13 |
-| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU | 31 |
+| `product-regression.ps1` | ProductService 分类 / 品牌 / 商品 / SKU + **前台商品只读（无需登录）** | 43 |
 | `cart-regression.ps1` | CartService 累加语义购物车 | 13 |
 | `inventory-regression.ps1` | InventoryService 三计数与防超卖 | 21 |
 | `marketing-regression.ps1` | MarketingService 券全生命周期 + 活动引擎（满减/满折/满赠）+ 到手价 | 35 |
@@ -512,6 +512,26 @@
 | API-SEC-007 | P1 | 非进行中场次不可抢 | 断言拒绝 |
 | API-SEC-008 | P1 | 秒杀价必须低于售价 | 断言 400 |
 | API-SEC-009 | P2 | 秒杀结果轮询 | 断言 `GrabResult` 返回订单号 |
+
+#### 2.3.1 SHP 前台商品只读（无需登录）
+
+前台走**独立前缀** `/gateway/shop/products/*`，与后台的 `/gateway/products/*` 分开：
+后台要看待审核 / 下架商品，前台只能看已上架已审核的，混在一起等于把后台接口暴露给小程序。
+这两个接口在网关的**匿名白名单**里——用户没登录就想先看看有什么是最正常的行为，
+要求先登录再逛商品会把大量潜在用户挡在第一步。
+
+| 编号 | 优先级 | 用例 | 期望与断言 |
+|---|---|---|---|
+| API-SHP-002 | **P0** | 未上架 + 未审核通过时前台看不到 | 过滤条件**写死在服务端**，不靠调用方传参 |
+| API-SHP-003 | P0 | 通过审核但仍下架 → 依然看不到 | 两个条件都要满足 |
+| API-SHP-004 | P0 | 未上架商品详情回 404 | 不区分「不存在」与「已下架」，否则等于告诉竞品「我们在筹备 XX」 |
+| API-SHP-005 | P1 | 审核通过 + 已上架 → 可见 | |
+| API-SHP-006 | **P0** | 每个 SKU 单独定价 | 满 100 减 20 → 200 元件到手 **180**、100 元件到手 **80**。拍平会得到 186.67 / 93.33，**比实付价低** |
+| API-SHP-007 | **P0** | 列表到手价取各启用 SKU 的**最小值** | 商品卡展示的就是「最低能买到的那个价」；取最大值会加购后发现变贵 |
+| API-SHP-008 | P1 | 优惠来源标签带出活动名 | 展示中文名而不是数字枚举 |
+| API-SHP-009 | P1 | 游客不计券 | `customerId = 0` 时只算活动价 |
+| API-SHP-010 | P0 | 前后台前缀互不泄露 | 后台能看到的待审核商品前台看不到 |
+| API-SHP-011 | P0 | 营销服务不可用时按原价回退 | 静默回退原价展示，**不是整页 500**（BUSINESS.md 11.5） |
 
 ### 2.6 PNT / EVL 积分、评价
 

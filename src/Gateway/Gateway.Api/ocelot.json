@@ -246,6 +246,24 @@
       ]
     },
     {
+      "//说明": "前台商品只读。与后台的 /gateway/products/* 刻意分开：后台要看待审核、下架商品，前台只能看已上架已审核的。混在一起等于把后台接口暴露给小程序。",
+      "UpstreamPathTemplate": "/gateway/shop/products/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/shop/products/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5058
+        }
+      ]
+    },
+    {
       "//说明": "C 端订单。与后台刻意分成两个上游前缀：后台订单在 /admin/orders 下，这样权限点能只绑后台那几个操作，不会把「发货」「退款」也开放给小程序。",
       "UpstreamPathTemplate": "/gateway/orders/{everything}",
       "UpstreamHttpMethod": [

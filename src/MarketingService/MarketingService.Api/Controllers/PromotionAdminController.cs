@@ -73,6 +73,21 @@ public sealed class PromotionAdminController : ControllerBase
     /// 游客传 <c>customerId = 0</c> 即可，无需令牌——游客也能看到活动价，
     /// 只是看不到券价（游客没有券包，见 BUSINESS.md 11.5）。
     /// </remarks>
+    /// <summary>分组批量试算（商品列表页专用）。<b>每组独立算，组间互不影响。</b></summary>
+    /// <param name="command">命令；Groups 每组是一个商品的全部 SKU。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>与 Groups 一一对应的试算结果。</returns>
+    /// <remarks>
+    /// 商品列表页必须用这个而不是 <c>FinalPrice</c>：后者把传进来的所有行当成**一单**，
+    /// 门槛按合计判定、再把优惠摊到各行，于是「满 100 减 20」会把 200 元商品显示成 186.67——
+    /// 而用户真买那一件时其实是 200。商品卡上的价必须等于他自己下单时的价。
+    /// </remarks>
+    [HttpPost("FinalPriceBatch")]
+    public Task<ApiResponse<IReadOnlyList<FinalPriceDto>>> FinalPriceBatch(
+        [FromBody] CalculateFinalPriceBatchCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>到手价试算（游客与 C 端共用）。</summary>
     [HttpPost("FinalPrice")]
     public Task<ApiResponse<FinalPriceDto>> FinalPrice(
         [FromBody] CalculateFinalPriceCommand command, CancellationToken ct)

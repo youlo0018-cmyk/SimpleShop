@@ -48,6 +48,19 @@ public interface IProductRepository
     /// <returns>关联列表。幂等只读。</returns>
     Task<List<SkuSpecValue>> GetSkuSpecLinksAsync(long productId, CancellationToken ct = default);
 
+    /// <summary>按商品 Id 集合批量取**启用中**的 SKU 价格行。</summary>
+    /// <param name="productIds">商品 Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>SKU Id / 商品 Id / 售价。</returns>
+    /// <remarks>
+    /// 列表页要给每个商品算到手价，而到手价是按 **SKU** 算的。
+    /// 逐个商品调 <see cref="GetSkusAsync"/> 就是 N+1——一屏 20 个商品就是 20 条额外查询。
+    /// 一次批量取回，本地按商品分组，再合成一次营销试算，总共 2 条查询。
+    /// </remarks>
+    Task<List<SkuPriceRow>> GetSkuPriceRowsAsync(
+        IReadOnlyCollection<long> productIds, CancellationToken ct = default);
+
+
     /// <summary>按 SKU 编码取 SKU。</summary>
     /// <param name="skuCode">SKU 编码（Upsert 的依据）。</param>
     /// <param name="ct">取消令牌。</param>
@@ -128,3 +141,9 @@ public interface IProductRepository
     /// <returns>受影响行数。</returns>
     Task<int> DeleteProductAsync(long id, CancellationToken ct = default);
 }
+
+/// <summary>SKU 的价格行，只带列表页算到手价必需的字段。</summary>
+/// <param name="SkuId">SKU Id。</param>
+/// <param name="ProductId">所属商品 Id。</param>
+/// <param name="Price">售价。</param>
+public readonly record struct SkuPriceRow(long SkuId, long ProductId, decimal Price);

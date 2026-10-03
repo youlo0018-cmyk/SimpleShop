@@ -465,14 +465,14 @@ S0 基础设施
 |---|---|---|---|---|
 | S0 基础设施 | 已完成 | 2026-10-02 | 2026-10-02 | PostgreSQL / Redis / RabbitMQ / Consul / MinIO / **AgileConfig 自部署**（localhost:5000）。ES 分词器降级 smartcn，见 2.7 |
 | S1 认证与租户地基 | 已完成 | 2026-10-02 | 2026-10-03 | Collaboration 类库、Gateway、Auth、User、Permission、Tool、Customer 全部落地 |
-| S2 商品与库存 | 已完成 | 2026-10-03 | 2026-10-03 | Product、Inventory、Point、Marketing（券 + 活动引擎）、Cart。缺 ES 搜索 |
+| S2 商品与库存 | 已完成 | 2026-10-03 | 2026-10-03 | Product（含前台只读 + 到手价）、Inventory、Point、Marketing（券 + 活动引擎）、Cart。缺 ES 搜索 |
 | S3 交易闭环 | 进行中 | 2026-10-03 | | **OrderService + ScheduledService 已完成**（下单补偿链路 / 状态机 / 模拟支付 / 自提取货码 / 退款 / 完成发积分 / 支付超时关单）。缺 PaymentService |
 | S4 平台商户与装修 | 未开始 | | | |
 | S5 积分与评价 | 进行中 | 2026-10-03 | | Point 已完成；Evaluate 未开始 |
 | S6 限时抢购 | 未开始 | | | 库存已有 seckill_reserve / seckill_release 动作位，待建场次模型 |
 | S7 后台前端 | 未开始 | | | 一行 UI 都没有 |
 | S8 小程序前端 | 未开始 | | | 一行 UI 都没有 |
-| S9 测试与收尾 | 进行中 | 2026-10-03 | | 单元 220 / 端到端 218 全绿，`run-all.ps1` 汇总。缺 UI 与视觉回归 |
+| S9 测试与收尾 | 进行中 | 2026-10-03 | | 单元 220 / 端到端 230 全绿，`run-all.ps1` 汇总。缺 UI 与视觉回归 |
 
 **更新规则**：每阶段结束时把该行改为「已完成」并填完成日期，同时在 `AI_HANDOFF.md` 进度日志追加条目（`AI_HANDOFF` 第 3 节第 1 条）。
 

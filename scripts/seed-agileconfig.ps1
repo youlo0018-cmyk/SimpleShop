@@ -183,11 +183,18 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         # 全站就人人都是超管。
         $cfg['Gateway:Rbac:AllowAllWhenUnavailable'] = 'false'
 
-        # 匿名白名单：只列登录 / 注册 / 换令牌。
+        # 匿名白名单：登录 / 注册 / 换令牌 + **前台商品只读**。
         # 不写黑名单——黑名单意味着「忘了加的接口默认放行」，等于没做鉴权。
+        #
+        # 商品浏览为什么必须匿名：用户没登录就想先看看有什么，这是最正常的行为。
+        # 要求先登录再逛商品，会把大量潜在用户挡在第一步之外。
+        # 这里放行的只读接口本身就过滤了「审核通过 + 已上架」，不存在越权风险；
+        # 真正需要登录的加购 / 下单不在这个前缀下。
         $cfg['Gateway:AnonymousPaths:0'] = '/gateway/customers/Register'
         $cfg['Gateway:AnonymousPaths:1'] = '/gateway/customers/Login'
         $cfg['Gateway:AnonymousPaths:2'] = '/gateway/auth/Token'
+        $cfg['Gateway:AnonymousPaths:3'] = '/gateway/shop/products/List'
+        $cfg['Gateway:AnonymousPaths:4'] = '/gateway/shop/products/Detail'
     }
     if ($name -eq 'AuthService') {
         # 后台令牌服务配置（BUSINESS 4.1 / DATA_SPEC 1.5）

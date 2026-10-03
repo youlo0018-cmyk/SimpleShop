@@ -7,6 +7,7 @@ using ProductService.Application.Services;
 using ProductService.Application.Features.Brand;
 using ProductService.Application.Features.Category;
 using ProductService.Application.Features.Product;
+using ProductService.Application.Features.Shop;
 using ProductService.Infrastructure;
 
 namespace ProductService.Api;
@@ -31,6 +32,7 @@ public static class ApiServiceCollectionExtensions
         CategoryValidators.AddCategoryValidators(services);
         BrandValidators.AddBrandValidators(services);
         ProductValidators.AddProductValidators(services);
+        ShopValidators.AddShopValidators(services);
 
         // 库存服务地址只从配置来，代码里不写端口
         var inventoryUrl = configuration["Services:InventoryServiceBaseUrl"];
@@ -44,6 +46,24 @@ public static class ApiServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(inventoryUrl!.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(5);
+        });
+
+        // 营销服务地址只从配置来，代码里不写端口。
+        // 前台商品列表与详情都要拿到手价，少了它整个前台就显示不出优惠。
+        var marketingUrl = configuration["Services:MarketingServiceBaseUrl"];
+        if (string.IsNullOrWhiteSpace(marketingUrl))
+        {
+            throw new InvalidOperationException(
+                "缺少配置 Services:MarketingServiceBaseUrl。前台商品列表与详情要展示到手价，没有它前台就没有优惠信息。");
+        }
+
+        services.AddHttpClient<IShopPriceClient, HttpShopPriceClient>(client =>
+        {
+            client.BaseAddress = new Uri(marketingUrl!.TrimEnd('/') + "/");
+
+            // 列表页一次要试算几十个 SKU 的到手价，给得比普通内部调用宽一些；
+            // 但也别给太大：营销服务慢下来时前台会跟着卡住。
+            client.Timeout = TimeSpan.FromSeconds(8);
         });
 
         services.AddInfrastructure();
