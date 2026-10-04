@@ -57,4 +57,44 @@ public sealed class InternalOrderController : ControllerBase
     public Task<ApiResponse<OrderForEvaluateDto>> ForEvaluate(
         [FromBody] QueryOrderForEvaluateCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>按订单号取支付 / 退款所需的订单信息（供 PaymentService 调用）。</summary>
+    /// <param name="command">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>订单金额、状态与逐行实付。</returns>
+    /// <remarks>
+    /// <b>金额一律服务端反查</b>（规格 10.1），支付服务不接受客户端传入的金额——
+    /// 客户端报多少不是关键，「这笔单子实际该付多少」才关键。
+    /// </remarks>
+    [HttpPost("for-payment")]
+    public Task<ApiResponse<OrderForPaymentDto>> ForPayment(
+        [FromBody] QueryOrderForPaymentCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>把订单标记为已退款（PaymentService 退款审批通过后调用）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// 幂等：订单已是「已退款」时直接返回成功。退款审批可能被重复调用
+    /// （消息重试、运营多点一次），报错会让上游以为失败而反复重试。
+    /// </remarks>
+    [HttpPost("mark-refunded")]
+    public Task<ApiResponse> MarkRefunded(
+        [FromBody] MarkOrderRefundedCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>支付完成收尾（PaymentService 支付成功后调用）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// 支付成功的副作用有四步（库存确认 / 积分冻结转实扣 / 券核销 / 订单转已支付），
+    /// 全部复用 <c>OrderPaymentCompleter</c>。支付服务只负责「钱收到了没有」，
+    /// 剩下的订单侧副作用由订单服务自己完成——在支付服务里复制一份，迟早会和这里漂移。
+    /// </remarks>
+    [HttpPost("complete-payment")]
+    public Task<ApiResponse> CompletePayment(
+        [FromBody] CompletePaymentCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 }

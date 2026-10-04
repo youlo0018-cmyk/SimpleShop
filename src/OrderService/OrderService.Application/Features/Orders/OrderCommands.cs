@@ -161,7 +161,7 @@ public sealed record OrderDetailDto(
 /// <param name="CouponDiscount">券优惠额。</param>
 /// <param name="PayableAmount">本行实付金额。</param>
 /// <param name="DeliveryType">配送方式。</param>
-/// <param name="SourceType">订单来源，见 <see cref="Entities.OrderSourceTypes"/>。后台订单列表要靠它区分秒杀单。</param>
+/// <param name="SourceType">订单来源，见 <see cref="OrderSourceTypes"/>。后台订单列表要靠它区分秒杀单。</param>
 public sealed record OrderItemDto(
     long SkuId, long SpuId, string ProductName, string SkuSpecText,
     decimal Price, int Quantity, decimal OriginalAmount,

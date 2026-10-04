@@ -1,0 +1,120 @@
+using Collaboration.Domain.Infrastructure;
+using Collaboration.Domain.Repository;
+using Collaboration.Domain.Context;
+using Collaboration.Domain.Entities;
+using FreeSql;
+using PaymentService.Domain.Entities;
+using PaymentService.Domain.IRepository;
+
+namespace PaymentService.Infrastructure.Repository;
+
+/// <summary>退款仓储实现。</summary>
+public sealed class RefundRepository : CrudRepository<RefundOrder>, IRefundRepository
+{
+    /// <summary>构造仓储。</summary>
+    /// <param name="freeSql">已注册全局过滤的 FreeSql 单例。</param>
+    public RefundRepository(IFreeSql freeSql) : base(freeSql) { }
+
+    /// <inheritdoc />
+    public async Task<long> InsertAsync(
+        RefundOrder refund,
+        IReadOnlyCollection<RefundOrderItem> items,
+        CancellationToken ct = default)
+    {
+        await Task.Run(() => Db.Transaction(() =>
+        {
+            if (refund.Id == 0) refund.Id = SnowflakeId.NewId();
+            refund.CreatedAt = DateTime.UtcNow;
+            ApplyCreator(refund);
+            Db.Insert(refund).ExecuteAffrows();
+
+            foreach (var item in items)
+            {
+                item.Id = SnowflakeId.NewId();
+                item.CreatedAt = DateTime.UtcNow;
+                item.RefundId = refund.Id;
+                ApplyCreator(item);
+            }
+
+            if (items.Count > 0) Db.Insert(items.ToList()).ExecuteAffrows();
+        }), ct).ConfigureAwait(false);
+
+        return refund.Id;
+    }
+
+    /// <summary>写入创建人快照。后台实体的操作人来自租户上下文。</summary>
+    /// <param name="entity">待写入实体。</param>
+    private static void ApplyCreator(AdminEntityBase entity)
+    {
+        var ctx = TenantContextHolder.Current;
+        entity.CreatedById = ctx.UserId;
+        entity.CreatedByName = ctx.UserName;
+        entity.OperationId = ctx.UserId;
+        entity.OperationName = ctx.UserName;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<RefundOrderItem>> ListItemsAsync(long refundId, CancellationToken ct = default)
+        => await Db.Select<RefundOrderItem>()
+            .Where(a => a.RefundId == refundId)
+            .OrderBy(a => a.Id)
+            .ToListAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<RefundOrderItem>> ListRefundedItemsAsync(
+        string orderNo, CancellationToken ct = default)
+    {
+        // 只统计**已退款（20）**的退款单。待审批的还没生效，
+        // 算进「已退」会把可退余额提前吃掉，客户被拒之后再想退就没额度了
+        var refundIds = await Db.Select<RefundOrder>()
+            .Where(a => a.OrderNo == orderNo && a.Status == RefundStatuses.Refunded)
+            .ToListAsync(a => a.Id, ct)
+            .ConfigureAwait(false);
+
+        if (refundIds.Count == 0) return [];
+
+        return await Db.Select<RefundOrderItem>()
+            .Where(a => refundIds.Contains(a.RefundId))
+            .ToListAsync(ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedRefunds> PageAsync(int status, string orderNo, int page, int pageSize,
+        CancellationToken ct = default)
+    {
+        var query = Db.Select<RefundOrder>();
+        if (status > 0) query = query.Where(a => a.Status == status);
+        if (!string.IsNullOrWhiteSpace(orderNo))
+        {
+            var no = orderNo.Trim();
+            query = query.Where(a => a.OrderNo == no);
+        }
+
+        var total = await query.CountAsync(ct);
+        if (total == 0) return new PagedRefunds([], 0, page, pageSize);
+
+        var items = await query
+            .OrderByDescending(a => a.CreatedAt)
+            .OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct);
+
+        return new PagedRefunds(items, total, page, pageSize);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> TryApproveAsync(long refundId, int expectedStatus, int newStatus,
+        long approverId, string approverName, string rejectReason, CancellationToken ct = default)
+        => await Db.Update<RefundOrder>()
+            .Where(a => a.Id == refundId && a.Status == expectedStatus)
+            .Set(a => new RefundOrder
+            {
+                Status = newStatus,
+                ApproverId = approverId,
+                ApproverName = approverName,
+                RejectReason = newStatus == RefundStatuses.Rejected ? rejectReason : string.Empty,
+                ApprovedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            })
+            .ExecuteAffrowsAsync(ct);
+}

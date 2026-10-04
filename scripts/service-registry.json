@@ -64,7 +64,7 @@
     {
       "name": "PaymentService",
       "port": 5066,
-      "implemented": false,
+      "implemented": true,
       "project": "src/PaymentService/PaymentService.Api/PaymentService.Api.csproj"
     },
     {

@@ -280,6 +280,40 @@
       ]
     },
     {
+      "UpstreamPathTemplate": "/gateway/payments/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/payments/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5066
+        }
+      ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/refunds/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/refunds/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5066
+        }
+      ]
+    },
+    {
       "UpstreamPathTemplate": "/gateway/coupons/{everything}",
       "UpstreamHttpMethod": [
         "GET",
