@@ -1,7 +1,7 @@
 using Collaboration.Domain.Common;
 using MediatR;
 using OrderService.Domain.Ports;
-using OrderService.Domain.Services;
+using Collaboration.Domain.Services;
 
 namespace OrderService.Application.Features.Reports;
 

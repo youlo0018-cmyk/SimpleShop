@@ -378,4 +378,49 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
     /// </remarks>
     private static string NewCouponCode(DateTime nowUtc, int index)
         => $"{nowUtc:yyyyMMddHHmmss}{index:D2}{Random.Shared.Next(100000, 999999)}";
+
+    /// <inheritdoc />
+    public async Task<CouponReportAggregate> AggregateAsync(
+        DateTime from, DateTime to, long merchantId, long platformId,
+        CancellationToken ct = default)
+    {
+        // 发放 = 运营配的库存总量。它是「配置值」而不是「发生额」，所以不带时间过滤：
+        // 按区间截断会让「上个月配的 1000 张」在本月报表里凭空少掉。
+        var issued = await _db.Select<CouponActivity>()
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .SumAsync(a => a.ClaimQuantity)
+            .ConfigureAwait(false);
+
+        // 领取按「拿到券」的时刻算
+        var received = await _db.Select<UserCoupon>()
+            .Where(a => a.ReceiveAt != null && a.ReceiveAt >= from && a.ReceiveAt < to)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        // 核销按「真正用掉」的时刻算。两个时间基准各管各的，
+        // 混用会让「月初领、月底用」的券凭空消失。
+        var consumed = await _db.Select<UserCoupon>()
+            .Where(a => a.ConsumeAt != null && a.ConsumeAt >= from && a.ConsumeAt < to)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        var discount = await _db.Select<UserCoupon>()
+            .Where(a => a.ConsumeAt != null && a.ConsumeAt >= from && a.ConsumeAt < to)
+            .SumAsync(a => a.DiscountAmount)
+            .ConfigureAwait(false);
+
+        // 显式转成 decimal 再除：long / long 在 C# 里是**整数除法**，
+        // 17 / 40 会变成 0，核销率永远是 0 或 1。
+        var rate = received > 0
+            ? Math.Round((decimal)consumed / received, 4, MidpointRounding.AwayFromZero)
+            : 0m;
+
+        return new CouponReportAggregate(
+            decimal.ToInt64(issued),
+            received,
+            consumed,
+            rate,
+            Math.Round(discount, 2, MidpointRounding.AwayFromZero));
+    }
 }

@@ -2,6 +2,7 @@ using Collaboration.Domain.Common;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using PointService.Application.Features.Reports;
 
 namespace PointService.Application.Features.Operations;
 
@@ -130,6 +131,19 @@ public static class PointValidators
         services.AddScoped<IValidator<RefundPointsCommand>, RefundPointsValidator>();
         services.AddScoped<IValidator<EarnByOrderCommand>, EarnByOrderValidator>();
         services.AddScoped<IValidator<ExpirePointsCommand>, ExpirePointsValidator>();
+        services.AddScoped<IValidator<QueryPointReportCommand>, PointReportValidator>();
+    }
+
+    /// <summary>积分报表校验。</summary>
+    private sealed class PointReportValidator : AbstractValidator<QueryPointReportCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public PointReportValidator()
+        {
+            // 只认 1~4 四个档位。不校验的话非法档位会在区间换算里抛
+            // ArgumentOutOfRangeException 变成 500，而它本来就是个参数错误。
+            RuleFor(x => x.Range).InclusiveBetween(1, 4).WithMessage("报表时间范围不正确");
+        }
     }
 
     /// <summary>发放校验。</summary>

@@ -245,6 +245,36 @@
       ]
     },
     {
+      "UpstreamPathTemplate": "/gateway/reports/Point",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST"
+      ],
+      "DownstreamPathTemplate": "/reports/Point",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5082
+        }
+      ]
+    },
+    {
+      "UpstreamPathTemplate": "/gateway/reports/Marketing",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST"
+      ],
+      "DownstreamPathTemplate": "/reports/Marketing",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5072
+        }
+      ]
+    },
+    {
       "UpstreamPathTemplate": "/gateway/platforms/{everything}",
       "UpstreamHttpMethod": [
         "GET",

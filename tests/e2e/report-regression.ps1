@@ -13,6 +13,8 @@
 [CmdletBinding()]
 param(
     [string]$OrderService = 'http://127.0.0.1:5064',
+    [string]$PointService = 'http://127.0.0.1:5082',
+    [string]$MarketingService = 'http://127.0.0.1:5072',
     [switch]$StopOnFail
 )
 
@@ -168,6 +170,113 @@ Invoke-Case 'API-RPT-021' '🔴 负数 merchantId 被 MerchantId 规则挡住' {
     $r = PostExpectingReject @{ range = 4; merchantId = -1 }
     if ($null -eq $r) { return $false }
     return $r.StatusCode -eq 400 -and $r.Body -match 'MerchantId'
+}
+
+Write-Host "`n=== RPT 积分报表（积分服务）===" -ForegroundColor Cyan
+
+function PointReport([int]$Range) {
+    return Invoke-RestMethod -Uri "$PointService/reports/Point" -Method Post `
+        -Body (@{ range = $Range } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+}
+
+$script:point30 = PointReport 4
+
+Invoke-Case 'API-RPT-030' '积分报表五项指标齐全' {
+    $fields = @('earnedTotal', 'consumedTotal', 'expiredTotal', 'lockedTotal', 'currentBalance')
+    foreach ($f in $fields) {
+        if (-not ($script:point30.data.PSObject.Properties.Name -contains $f)) { return $false }
+    }
+    return $true
+}
+
+Invoke-Case 'API-RPT-031' '🔴 发放 / 消耗 / 过期都是非负整数' {
+    $d = $script:point30.data
+    if ($d.earnedTotal -lt 0) { return $false }
+    if ($d.consumedTotal -lt 0) { return $false }
+    if ($d.expiredTotal -lt 0) { return $false }
+    return ($d.earnedTotal -is [long]) -or ($d.earnedTotal -is [int])
+}
+
+Invoke-Case 'API-RPT-032' '🔴 当前总余额 = 可用 + 冻结（冻结已含在余额里）' {
+    $d = $script:point30.data
+    return $d.currentBalance -ge $d.lockedTotal
+}
+
+Invoke-Case 'API-RPT-033' '积分报表与工作台报表用同一套区间口径（今日起止一致）' {
+    $p = PointReport 1
+    $o = Report 1
+    if ($p.data.from -ne $o.data.from) { return $false }
+    return $p.data.to -eq $o.data.to
+}
+
+Invoke-Case 'API-RPT-034' '🔴 积分报表非法档位被 Range 规则挡住' {
+    try {
+        Invoke-RestMethod -Uri "$PointService/reports/Point" -Method Post `
+            -Body (@{ range = 7 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+        return $false
+    } catch {
+        return [int]$_.Exception.Response.StatusCode -eq 400 `
+            -and $_.ErrorDetails.Message -match 'Range'
+    }
+}
+
+Write-Host "`n=== RPT 营销效果报表（营销服务，券部分）===" -ForegroundColor Cyan
+
+function CouponReport([int]$Range) {
+    return Invoke-RestMethod -Uri "$MarketingService/reports/Marketing" -Method Post `
+        -Body (@{ range = $Range } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+}
+
+$script:coupon30 = CouponReport 4
+
+Invoke-Case 'API-RPT-040' '券报表五项指标齐全' {
+    $fields = @('issuedTotal', 'receivedTotal', 'consumedTotal', 'consumeRate', 'discountTotal')
+    foreach ($f in $fields) {
+        if (-not ($script:coupon30.data.PSObject.Properties.Name -contains $f)) { return $false }
+    }
+    return $true
+}
+
+Invoke-Case 'API-RPT-041' '🔴 核销数不超过领取数' {
+    return $script:coupon30.data.consumedTotal -le $script:coupon30.data.receivedTotal
+}
+
+Invoke-Case 'API-RPT-042' '🔴 核销率 = 核销数 / 领取数，且是 0~1 小数' {
+    $d = $script:coupon30.data
+    if ($d.receivedTotal -le 0) {
+        Write-Host "        （区间内无领取，跳过复算）" -ForegroundColor DarkGray
+        return $d.consumeRate -eq 0
+    }
+    $expected = [math]::Round($d.consumedTotal / $d.receivedTotal, 4)
+    if ([math]::Abs($d.consumeRate - $expected) -ge 0.0001) { return $false }
+    return $d.consumeRate -le 1
+}
+
+Invoke-Case 'API-RPT-043' '🔴 核销率不是整数除法的结果（曾因 long/long 截断恒为 0 或 1）' {
+    $d = $script:coupon30.data
+    if ($d.receivedTotal -le 0) { return $true }
+    # 只要领取数 > 1 且不是全用或全没用，核销率就必然是 0 与 1 之间的某个小数
+    if ($d.consumedTotal -eq 0 -or $d.consumedTotal -eq $d.receivedTotal) { return $true }
+    return ($d.consumeRate -gt 0) -and ($d.consumeRate -lt 1)
+}
+
+Invoke-Case 'API-RPT-044' '折扣总额非负' {
+    return $script:coupon30.data.discountTotal -ge 0
+}
+
+Invoke-Case 'API-RPT-045' '🔴 券报表非法档位被 Range 规则挡住' {
+    try {
+        Invoke-RestMethod -Uri "$MarketingService/reports/Marketing" -Method Post `
+            -Body (@{ range = 99 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+        return $false
+    } catch {
+        return [int]$_.Exception.Response.StatusCode -eq 400 `
+            -and $_.ErrorDetails.Message -match 'Range'
+    }
 }
 
 Write-Host ""

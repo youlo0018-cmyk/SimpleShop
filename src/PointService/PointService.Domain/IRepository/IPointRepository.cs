@@ -1,4 +1,5 @@
 using PointService.Domain.Entities;
+using PointService.Domain.Services;
 
 namespace PointService.Domain.IRepository;
 
@@ -128,4 +129,16 @@ public interface IPointRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>扣减结果。</returns>
     Task<PointOutcome> ExpireLotAsync(long lotId, CancellationToken ct = default);
+
+    /// <summary>按区间聚合积分流水，供积分报表使用。</summary>
+    /// <param name="from">区间起（含）。</param>
+    /// <param name="to">区间止（不含）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>发放 / 消耗 / 过期 / 冻结与当前总余额。</returns>
+    /// <remarks>
+    /// <b>按流水表聚合，不按账户余额倒推</b>：余额是<b>当前快照</b>，
+    /// 只反映「此刻有多少」，推不出「这段时间发了多少、消耗了多少」。
+    /// 而报表要的恰恰是区间内的发生额。
+    /// </remarks>
+    Task<PointReportAggregate> AggregateAsync(DateTime from, DateTime to, CancellationToken ct = default);
 }

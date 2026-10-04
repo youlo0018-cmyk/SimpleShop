@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using FluentValidation;
+using MarketingService.Application.Features.Reports;
 using MarketingService.Domain.Services;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
@@ -66,6 +67,21 @@ public static class CouponValidators
         services.AddScoped<IValidator<ConsumeCouponCommand>, CouponOrderValidator>();
         services.AddScoped<IValidator<ReleaseCouponCommand>, ReleaseCouponValidator>();
         services.AddScoped<IValidator<SettleCouponsCommand>, SettleCouponsValidator>();
+        services.AddScoped<IValidator<QueryCouponReportCommand>, CouponReportValidator>();
+    }
+
+    /// <summary>营销效果报表校验。</summary>
+    private sealed class CouponReportValidator : AbstractValidator<QueryCouponReportCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public CouponReportValidator()
+        {
+            // 只认 1~4 四档。不校验的话非法档位会在区间换算里抛异常变成 500，
+            // 而它本来就是个参数错误，应该返回带中文原因的 400。
+            RuleFor(x => x.Range).InclusiveBetween(1, 4).WithMessage("报表时间范围不正确");
+            RuleFor(x => x.MerchantId).GreaterThanOrEqualTo(0).WithMessage("商户信息不正确");
+            RuleFor(x => x.PlatformId).GreaterThanOrEqualTo(0).WithMessage("平台信息不正确");
+        }
     }
 
     /// <summary>领券校验。</summary>

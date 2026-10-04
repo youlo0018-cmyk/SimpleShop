@@ -4,6 +4,7 @@ using FreeSql;
 using Npgsql;
 using PointService.Domain.Entities;
 using PointService.Domain.IRepository;
+using PointService.Domain.Services;
 
 namespace PointService.Infrastructure.Repository;
 
@@ -651,4 +652,62 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
 
     private static PointOutcome Fail(long customerId, string error)
         => new(false, false, 0, 0, Error: error);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 流水里 <c>quantity</c> 是**带符号**的：发放 / 冻结为正，实扣 / 过期为负。
+    /// 所以正负要分开处理——直接把 quantity 求和会互相抵消，
+    /// 「发 100 扣 100」的结果是 0，看不出任何发生额。
+    /// </remarks>
+    public async Task<PointReportAggregate> AggregateAsync(
+        DateTime from, DateTime to, CancellationToken ct = default)
+    {
+        // 发放 = 所有让可用积分增加的动作。refund 也算发放：
+        // 钱退回来了，积分确实回到了用户手里。
+        string[] earnActions = [PointActions.Earn, PointActions.SignIn, PointActions.Refund];
+
+        var earned = await Db.Select<PointRecord>()
+            .Where(a => a.CreatedAt >= from && a.CreatedAt < to)
+            .Where(a => earnActions.Contains(a.Action))
+            .SumAsync(a => a.Quantity)
+            .ConfigureAwait(false);
+
+        // 实扣与过期在流水里是负数，取负号还原成「消耗了多少」的绝对值
+        var consumedRaw = await Db.Select<PointRecord>()
+            .Where(a => a.CreatedAt >= from && a.CreatedAt < to)
+            .Where(a => a.Action == PointActions.Consume)
+            .SumAsync(a => a.Quantity)
+            .ConfigureAwait(false);
+
+        var expiredRaw = await Db.Select<PointRecord>()
+            .Where(a => a.CreatedAt >= from && a.CreatedAt < to)
+            .Where(a => a.Action == PointActions.Expire)
+            .SumAsync(a => a.Quantity)
+            .ConfigureAwait(false);
+
+        // 冻结与余额是**当前快照**，不看区间：
+        // 「冻结总额」问的是「现在有多少积分被占着」，不是「这段时间冻结过多少」。
+        var currentFrozen = await Db.Select<PointAccount>().SumAsync(a => a.Frozen)
+            .ConfigureAwait(false);
+
+        var currentAvailable = await Db.Select<PointAccount>().SumAsync(a => a.Available)
+            .ConfigureAwait(false);
+
+        // FreeSql 的 SumAsync 对 bigint 列返回 **decimal**：PostgreSQL 里
+        // sum(bigint) 的结果类型是 numeric，不是 bigint。不显式转换的话，
+        // 编译不过；而写成 SumAsync<long> 让 FreeSql 自己转又会多一层不确定。
+        // 这里集中转换，顺便把「空表时 sum 返回 null」的情况一并归零。
+        return new PointReportAggregate(
+            ToLong(earned),
+            ToLong(-consumedRaw),
+            ToLong(-expiredRaw),
+            ToLong(currentFrozen),
+            ToLong(currentAvailable + currentFrozen));
+    }
+
+    /// <summary>把 SUM 的 decimal 结果转成 long，空值按 0。</summary>
+    /// <param name="value">SUM 结果。</param>
+    /// <returns>整数值。</returns>
+    private static long ToLong(decimal value)
+        => decimal.ToInt64(decimal.Round(value, MidpointRounding.AwayFromZero));
 }

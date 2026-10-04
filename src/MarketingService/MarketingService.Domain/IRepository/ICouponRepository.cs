@@ -1,4 +1,5 @@
 using MarketingService.Domain.Entities;
+using MarketingService.Domain.Services;
 
 namespace MarketingService.Domain.IRepository;
 
@@ -99,4 +100,19 @@ public interface ICouponRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>活动或 null。幂等只读。</returns>
     Task<CouponActivity?> GetActivityAsync(long activityId, CancellationToken ct = default);
+
+    /// <summary>按区间聚合券效果，供营销效果报表使用。</summary>
+    /// <param name="from">区间起（含）。</param>
+    /// <param name="to">区间止（不含）。</param>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>发放 / 领取 / 核销 / 核销率 / 折扣总额。</returns>
+    /// <remarks>
+    /// <b>领取按 receive_at、核销按 consume_at</b>，各自落在区间内才算数。
+    /// 混用同一个时间基准会让「月初领、月底用」的券凭空消失。
+    /// </remarks>
+    Task<CouponReportAggregate> AggregateAsync(
+        DateTime from, DateTime to, long merchantId, long platformId,
+        CancellationToken ct = default);
 }

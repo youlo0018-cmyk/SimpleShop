@@ -1,10 +1,15 @@
-namespace OrderService.Domain.Services;
+namespace Collaboration.Domain.Services;
 
 /// <summary>报表时间范围（BUSINESS.md 17 规定的四个档位）。</summary>
 /// <remarks>
 /// 用**枚举而不是自由起止时间**：后台就是这四个档，运营自己拼「9 月 1 号到 9 月 30 号」
 /// 会算出一堆口径不一致的报表（时区、是否含当天、跨月怎么算）。档位固定下来，
 /// 每个档位的口径就是唯一的一份实现，比较两天的数字才有意义。
+///
+/// <para><b>放在 Collaboration 而不是某个业务服务</b>：工作台报表在订单服务、
+/// 营销与秒杀效果报表在营销服务、积分报表在积分服务，三边都要同一套区间口径。
+/// 各自复制一份的话，改了其中一处，另外两个服务的「今日」就会和它对不上——
+/// 而运营同时开着三个报表页，看到自相矛盾的数字只会怀疑系统坏了。</para>
 /// </remarks>
 public static class ReportRanges
 {
