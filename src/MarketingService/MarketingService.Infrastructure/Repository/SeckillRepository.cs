@@ -54,6 +54,17 @@ public sealed class SeckillRepository : ISeckillRepository
             .ToListAsync(ct);
 
     /// <inheritdoc />
+    public async Task<List<SeckillSession>> ListExpiredRunningSessionsAsync(
+        DateTime nowUtc, int limit, CancellationToken ct = default)
+        => await _db.Select<SeckillSession>()
+            .Where(a => a.Status == SeckillSessionStatuses.Running && a.EndTime <= nowUtc)
+            // 按结束时间从早到晚：先处理「欠得最久」的，
+            // 免得某一轮 limit 用光后，早该结束的场次被一直往后排。
+            .OrderBy(a => a.EndTime).OrderBy(a => a.Id)
+            .Limit(limit)
+            .ToListAsync(ct);
+
+    /// <inheritdoc />
     public async Task<long> InsertSessionAsync(SeckillSession session, CancellationToken ct = default)
     {
         session.Id = SnowflakeId.NewId();

@@ -38,6 +38,11 @@ public static class ApiServiceCollectionExtensions
         AddProductPort(services, configuration);
         AddOrderPort(services, configuration);
 
+        // 库存回补器：手动中止与「到点自动结束」共用同一段回补代码。
+        // 注册成 Scoped 而不是 Transient：它持有仓储与 HttpClient，
+        // 一次请求内复用同一个实例即可，不需要每次新建。
+        services.AddScoped<SeckillStockReturner>();
+
         services.AddInfrastructure();
         return services;
     }

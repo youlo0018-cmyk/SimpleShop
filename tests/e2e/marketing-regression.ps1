@@ -650,6 +650,82 @@ Invoke-Case 'API-SKL-017' '🔴 数量上限被校验挡住（0 件不是有效�
     }
 }
 
+# ===== 到点自动结束（定时任务调用的同一个内部接口）=====
+# 少了这条链路，一个没人手动中止的场次会永远停在「进行中」：
+# 剩余库存永久锁在秒杀池里，而且没有任何报错，现象只是商品「一直缺货」。
+
+$script:expiredSessionId = 0
+$script:expiredQty = 6
+
+Invoke-Case 'API-SKLX-001' '建一个「已经过了结束时间」的场次（模拟到点没人管）' {
+    $now = [DateTime]::UtcNow
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Create' -Method Post `
+        -Body (@{
+            sessionName = "自动结束验证-$($script:suffix)"
+            startTime = $now.AddHours(-2).ToString('o')
+            endTime   = $now.AddHours(-1).ToString('o')
+            merchantId = 0
+            platformId = 0
+            sortOrder = 0
+        } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    # Create 返回的 data 就是场次 Id 本身（不是含 sessionId 的对象），
+    # 写成 $r.data.sessionId 会拿到 null，后面全部连锁失败
+    $script:expiredSessionId = [long]$r.data
+    return $r.success -and $script:expiredSessionId -gt 0
+}
+
+Invoke-Case 'API-SKLX-002' '给到期场次加商品并发布（库存被划走 50 → 44）' {
+    $add = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{
+            sessionId = $script:expiredSessionId; skuId = $script:sklSkuId
+            seckillPrice = 66.00; seckillStock = $script:expiredQty; perUserLimit = 1
+        } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    if (-not $add.success) { return $false }
+
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $pub = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Publish' -Method Post `
+        -Body (@{ sessionId = $script:expiredSessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    $after = (Get-SkuStock $script:sklSkuId).available
+
+    Write-Host ("        {0} 库存 {1} → {2}" -f $pub.message, $before, $after) -ForegroundColor DarkGray
+    return $pub.success -and $before - $after -eq $script:expiredQty
+}
+
+Invoke-Case 'API-SKLX-003' '🔴 P0 到点自动结束：状态转「已结束」且库存回补（44 → 50）' {
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/internal/marketing/seckill/sessions/FinishExpired' `
+        -Method Post -Body (@{ limit = 50 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60
+    $after = (Get-SkuStock $script:sklSkuId).available
+
+    Write-Host ("        {0} 库存 {1} → {2}" -f $r.message, $before, $after) -ForegroundColor DarkGray
+    return $r.success -and $r.data.scanned -ge 1 -and $r.data.finished -ge 1 `
+        -and $r.data.released -eq $script:expiredQty `
+        -and $after - $before -eq $script:expiredQty
+}
+
+Invoke-Case 'API-SKLX-004' '🔴 到点结束后的场次状态是 30「已结束」（不是取消 40）' {
+    $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/List' -Method Post `
+        -Body (@{ status = 0; page = 1; pageSize = 100 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $row = @($list.data.items | Where-Object { $_.sessionId -eq "$($script:expiredSessionId)" })[0]
+    return $row -and $row.status -eq 30 -and $row.statusName -eq '已结束' -and $row.stockTransferred -eq $false
+}
+
+Invoke-Case 'API-SKLX-005' '🔴 重复触发自动结束**不会**二次回补库存' {
+    $before = (Get-SkuStock $script:sklSkuId).available
+    $r = Invoke-RestMethod 'http://127.0.0.1:5072/internal/marketing/seckill/sessions/FinishExpired' `
+        -Method Post -Body (@{ limit = 50 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60
+    $after = (Get-SkuStock $script:sklSkuId).available
+
+    # 该场次已是「已结束」，查询条件是「仍在进行中」，所以这一轮扫不到它
+    return $r.success -and $r.data.finished -eq 0 -and $before -eq $after
+}
+
 Invoke-Case 'API-SKL-020' '准备抢购：再建一个场次，2 件秒杀库存' {
     # 抢购用例需要**进行中**的场次，而上面那个已经被中止了，所以另建一个。
     $script:grabSessionId = [long](New-SklSession)

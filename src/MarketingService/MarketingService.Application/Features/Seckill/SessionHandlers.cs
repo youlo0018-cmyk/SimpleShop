@@ -267,22 +267,20 @@ public sealed class PublishSessionHandler : IRequestHandler<PublishSessionComman
 public sealed class FinishSessionHandler : IRequestHandler<FinishSessionCommand, ApiResponse<SeckillFinishResult>>
 {
     private readonly ISeckillRepository _seckill;
-    private readonly IInventoryPort _inventory;
-    private readonly IDatabase _redis;
+    private readonly SeckillStockReturner _returner;
     private readonly ILogger<FinishSessionHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="seckill">秒杀仓储。</param>
-    /// <param name="inventory">库存端口。</param>
-    /// <param name="redis">Redis，用于清掉本场次残留的秒杀余量键。</param>
+    /// <param name="returner">库存回补器（手动中止与自动结束共用）。</param>
     /// <param name="logger">日志器。</param>
     public FinishSessionHandler(
-        ISeckillRepository seckill, IInventoryPort inventory,
-        IDatabase redis, ILogger<FinishSessionHandler> logger)
+        ISeckillRepository seckill,
+        SeckillStockReturner returner,
+        ILogger<FinishSessionHandler> logger)
     {
         _seckill = seckill;
-        _inventory = inventory;
-        _redis = redis;
+        _returner = returner;
         _logger = logger;
     }
 
@@ -338,44 +336,11 @@ public sealed class FinishSessionHandler : IRequestHandler<FinishSessionCommand,
                 "该场次未发布过，无需回补库存");
         }
 
-        var items = await _seckill.ListItemsAsync(session.Id, ct);
-        var failed = new List<string>();
-        var released = 0;
-
-        foreach (var item in items)
-        {
-            var remaining = Math.Max(0, item.SeckillStock - item.SoldCount);
-            if (remaining <= 0) continue;
-
-            // 业务单号带上 release 后缀：与划出时不同，所以库存侧不会把它当成同一次操作
-            var bizNo = $"SKL-RELEASE-{session.Id}-{item.SkuId}";
-            try
-            {
-                var ok = await _inventory.ReleaseAsync(item.SkuId, remaining, bizNo, ct);
-                if (!ok)
-                {
-                    failed.Add($"{item.SkuId}（回补失败）");
-                    continue;
-                }
-
-                released += remaining;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "场次 {SessionId} 回补 SKU {SkuId} 失败", session.Id, item.SkuId);
-                failed.Add($"{item.SkuId}（库存服务异常）");
-            }
-        }
-
-        // 回补完成后才清标志：中途挂掉时标志还在，重跑会继续回补（幂等），不会漏
-        // 清掉余量键：场次已经结束，这个数字不能再被谁读到。
-        // 不清的话下次重建同名场次时 KeyExists 会判定「已初始化」，余量就停留在旧值上。
-        foreach (var item in items)
-        {
-            await _redis.KeyDeleteAsync($"{SeckillStockKeys.Stock}{item.Id}").ConfigureAwait(false);
-        }
-
-        await _seckill.SetStockTransferredAsync(session.Id, false, ct).ConfigureAwait(false);
+        // 库存回补交给 SeckillStockReturner：手动中止与「到点自动结束」是同一条动作，
+        // 必须走同一段代码，否则两边迟早会改出不一致的行为。
+        var outcome = await _returner.ReturnAsync(session, ct).ConfigureAwait(false);
+        var failed = outcome.Failed;
+        var released = outcome.Released;
 
         // 注意：不能用 $"...{'中止' if ...}" —— '中止' 是两个字符，不是合法的 char 字面量。
         // 这里先把词算成一个字符串变量，插值里直接引用

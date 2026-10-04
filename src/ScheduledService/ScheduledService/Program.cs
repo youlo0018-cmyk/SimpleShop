@@ -25,7 +25,8 @@ var loaded = await ServiceBootstrap.LoadConfigurationAsync(
         "Services:OrderServiceBaseUrl",
         "Services:PointServiceBaseUrl",
         "Services:EvaluateServiceBaseUrl",
-        "Services:InventoryServiceBaseUrl"
+        "Services:InventoryServiceBaseUrl",
+        "Services:MarketingServiceBaseUrl"
     ],
     exemptBaseKeys: [ConfigurationValidator.DatabaseConnectionKey]);
 
@@ -42,6 +43,7 @@ var pointUrl = builder.Configuration["Services:PointServiceBaseUrl"]!;
 var productUrl = builder.Configuration["Services:ProductServiceBaseUrl"]!;
 var evaluateUrl = builder.Configuration["Services:EvaluateServiceBaseUrl"]!;
 var inventoryUrl = builder.Configuration["Services:InventoryServiceBaseUrl"]!;
+var marketingUrl = builder.Configuration["Services:MarketingServiceBaseUrl"]!;
 builder.Services.AddHttpClient<OrderTimeoutCloseJob>(client =>
 {
     client.BaseAddress = new Uri(orderUrl.TrimEnd('/') + "/");
@@ -67,6 +69,7 @@ builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<ProductSearchInd
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<EvaluateRecomputeJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<StockReleaseCompensateJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<OrphanLockReconcileJob>());
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<SeckillSessionFinishJob>());
 
 builder.Services.AddHttpClient<StockReleaseCompensateJob>(client =>
 {
@@ -111,6 +114,16 @@ builder.Services.AddHttpClient<EvaluateRecomputeJob>(client =>
 
     // 重算要扫全量评价并逐个回写商品表，比索引对账还慢
     client.Timeout = TimeSpan.FromSeconds(300);
+});
+
+// 秒杀场次到点自动结束：没有它，正常打完的场次会永远停在「进行中」，
+// 剩余库存永久锁在秒杀池里且没有任何报错（现象只是商品一直缺货）。
+builder.Services.AddHttpClient<SeckillSessionFinishJob>(client =>
+{
+    client.BaseAddress = new Uri(marketingUrl.TrimEnd('/') + "/");
+
+    // 单轮最多 50 个场次、逐个回补库存，比普通查询慢
+    client.Timeout = TimeSpan.FromSeconds(90);
 });
 
 builder.Services.AddHostedService<JobRunner>();

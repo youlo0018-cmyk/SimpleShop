@@ -508,6 +508,18 @@
 | API-SKL-017 | P0 | 数量上限被校验挡住 | 0 件不是有效配置 |
 | API-SKL-018 | P1 | 清理：删商品 → 删分类 | |
 
+**到点自动结束（`API-SKLX-001` ~ `005`）**——秒杀库存是发布时**划走**的，
+靠「结束时划回去」闭环。手动中止接口早就存在且测得很全，但**少了时间触发者**的话，
+正常打完的场次会永远停在「进行中」，剩余库存永久锁在秒杀池里，且**零报错零告警**，
+现象只是商品「一直缺货」。这一组专门验「没人管时它自己会结束」。
+
+| 用例 | 级别 | 校验点 | 断言 |
+|---|---|---|---|
+| API-SKLX-001 | P1 | 建一个**结束时间已在过去**的场次 | `Create` 的 `data` 就是场次 Id 本身（不是含 `sessionId` 的对象） |
+| API-SKLX-002 | P0 | 到期场次照样能发布并划走库存 | `Available` 减少，且场次转「进行中」 |
+| API-SKLX-003 | **P0** | 到点自动结束 | 调 `/internal/marketing/seckill/sessions/FinishExpired`，断言状态转 **30 已结束**（不是取消 40）、`Available` 全额恢复 |
+| API-SKLX-004 | P0 | 结束后的场次状态与库存标志 | `status = 30`、`stockTransferred = false` |
+| API-SKLX-005 | P0 | 重复触发**不二次回补** | 第二轮 `finished = 0` 且库存不变（否则凭空多出一批货） |
 **抢购链路（API-SKL-020 ~ 029）**：BUSINESS.md 12.5 要求 `Grab` 成功后由 OrderService 建单。
 难点在于秒杀的货在发布时已从常规库存划走，下单时**不能再锁一次常规库存**，
 所以 OrderService 增加了 `POST /internal/orders/seckill-create`（`InventoryPreDeducted = true` 跳过 ③ 锁库存，

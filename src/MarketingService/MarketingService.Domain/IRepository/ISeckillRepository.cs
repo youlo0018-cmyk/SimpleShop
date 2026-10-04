@@ -32,6 +32,19 @@ public interface ISeckillRepository
     Task<List<SeckillSession>> ListPublicSessionsAsync(
         DateTime nowUtc, long platformId, CancellationToken ct = default);
 
+    /// <summary>查「到点该结束但还没结束」的场次（定时任务用）。</summary>
+    /// <param name="nowUtc">当前时间。</param>
+    /// <param name="limit">最多取多少条。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>已过结束时间但仍是「进行中」的场次。</returns>
+    /// <remarks>
+    /// 这个查询是<b>定时结束场次</b>的唯一入口。少了它，一个到点没人管的场次
+    /// 会永远停在「进行中」：剩余库存永久锁在秒杀池里，常规库存再也回不来，
+    /// 而且没有任何报错——商品只是「一直缺货」，排查时完全看不出原因。
+    /// </remarks>
+    Task<List<SeckillSession>> ListExpiredRunningSessionsAsync(
+        DateTime nowUtc, int limit, CancellationToken ct = default);
+
     /// <summary>插入场次。</summary>
     /// <param name="session">场次。</param>
     /// <param name="ct">取消令牌。</param>

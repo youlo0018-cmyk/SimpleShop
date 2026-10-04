@@ -190,7 +190,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
 | `dotnet test`（单元测试） | **321/321** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **419/419**，14 个脚本全绿 |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **424/424**，14 个脚本全绿 |
 | └ `api-regression.ps1` | 15/15 |
 | └ `auth-regression.ps1` | 17/17 |
 | └ `cart-regression.ps1` | 13/13 |
@@ -199,7 +199,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | └ `gateway-regression.ps1` | 13/13 |
 | └ `inventory-regression.ps1` | 25/25 |
 | └ `log-regression.ps1` | 19/19 |
-| └ `marketing-regression.ps1` | 60/60 |
+| └ `marketing-regression.ps1` | 65/65 |
 | └ `merchantplatform-regression.ps1` | 30/30 |
 | └ `product-regression.ps1` | 62/62 |
 | └ `order-regression.ps1` | 50/50 |
@@ -276,6 +276,41 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-05：补上秒杀「到点自动结束」（一个静默的库存泄漏）
+
+上一条日志把整条 MQ 链路接通之后，回头核对规格时发现一个**测试全绿也盖不住**的洞。
+
+**现象**：秒杀发布时库存从常规池**划走**（BUSINESS.md 12.4），靠「结束时把剩余的划回去」闭环。
+`/marketing/seckill/sessions/Finish` 这个手动中止接口从一开始就存在、回补逻辑也测得很全
+（`API-SKL-014` 验证 40 → 50）。但**没有任何东西在时间到点时去调它**——
+ScheduledService 的 6 个任务里没有一个管秒杀场次。
+
+**后果**：一个正常打完的场次会永远停在「进行中」，剩余库存永久锁在秒杀池里。
+**零报错、零告警**，现象只是商品「一直缺货」，从外面完全看不出是这个原因。
+库存是划走了却没人还，等于凭空蒸发一批货。
+
+**改动**
+
+1. `ISeckillRepository.ListExpiredRunningSessionsAsync` —— 查「仍在进行中但已过结束时间」的场次，
+   按结束时间从早到晚取（免得某一轮 limit 用光后，早该结束的场次被一直往后排）。
+2. `FinishExpiredSessionsCommand` + `/internal/marketing/seckill/sessions/FinishExpired`。
+3. `SeckillSessionFinishJob`（60 秒一轮，`lock:job:seckill_session_finish` 多实例互斥）。
+4. 抽出 `SeckillStockReturner`：**手动中止与到点自动结束共用同一段回补代码**。
+   复制一份的后果是修一处漏一处。
+
+**两个关键细节**
+
+- 状态迁移用**条件更新带期望值**（`WHERE status = 20`）：运营可能正好在手动中止同一个场次，
+  两条路径撞车时只有一个能改成功。少了它会**回补两遍库存，凭空多出一批货**。
+- 批量循环里**逐个场次单独 try**：一起 try 的话第一个失败就跳出整轮，
+  「库存服务挂 5 分钟」会变成「这期间到期的所有场次全漏掉」——
+  而漏掉的场次已经不在查询条件（仍在进行中）里，**永远不会再被扫到**。
+
+**验证**：新增 `API-SKLX-001` ~ `005` 五条回归（`marketing-regression` 60 → 65 条全绿）。
+真实跑通：建一个结束时间已在过去的场次 → 发布（库存 50 → 44）→
+自动结束（状态转 30 已结束、库存 44 → 50）→ 再触发一次 `finished=0` 且库存不变。
+另外确认 `ScheduledService` 日志里该任务每 60 秒正常轮询一次。
 
 ### 2026-10-05：LogService — 日志链路闭环 + 死信重放（后端收官）
 
