@@ -4,7 +4,6 @@ using PaymentService.Application.Features.Payment;
 namespace PaymentService.Api;
 
 /// <summary>读 AgileConfig 的支付开关实现。</summary>
-/// <param name="configuration">应用配置。</param>
 public sealed class PaymentOptions : IPaymentOptions
 {
     /// <summary>构造选项。</summary>
