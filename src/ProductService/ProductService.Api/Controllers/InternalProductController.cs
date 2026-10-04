@@ -72,6 +72,21 @@ public sealed class InternalProductController : ControllerBase
         [FromBody] OffShelfProductsByMerchantCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>校验一批商品能否被装修配置引用（装修页手动选品用）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>可用与不可用的商品清单。</returns>
+    /// <remarks>
+    /// 装修是<b>直接面向顾客展示</b>的界面，手动指定商品的组件如果能挂未审核 / 未上架的商品，
+    /// 审核机制就被装修页绕过了——运营自己就能把没过审的内容摆到首页。
+    /// 判定：归属正确（本平台 / 本商户）+ 审核通过 + 已上架。
+    /// <b>注意</b>：活动与券的适用商品不受此限制，规格 16.4 明确写了不要卡它们。
+    /// </remarks>
+    [HttpPost("check-for-design")]
+    public Task<ApiResponse<CheckProductsForDesignResult>> CheckForDesign(
+        [FromBody] CheckProductsForDesignCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>按 SKU Id 集合取快照信息。</summary>
     /// <param name="skuIds">SKU Id 集合，逗号分隔，最多 200 个。</param>
     /// <returns>命中的 SKU 快照列表。没命中的 SKU 不会出现在结果里。</returns>

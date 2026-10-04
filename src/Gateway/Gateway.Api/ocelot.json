@@ -263,6 +263,23 @@
       ]
     },
     {
+      "UpstreamPathTemplate": "/gateway/design/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/design/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5070
+        }
+      ]
+    },
+    {
       "UpstreamPathTemplate": "/gateway/coupons/{everything}",
       "UpstreamHttpMethod": [
         "GET",

@@ -108,6 +108,58 @@ CREATE TABLE IF NOT EXISTS platform_config (
 CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_config_platform
     ON platform_config (platform_id) WHERE is_deleted = false;
 
+-- ===== 装修配置：平台（首页 / 我的页）与商户（店铺页）=====
+-- 草稿与已发布分成两列存，而不是「一份数据 + 状态标记」：
+-- 运营在草稿里随便改，线上那份一个字节都不能动。
+-- 存成两份字符串时「保存草稿不影响线上」是天然成立的，不需要额外的版本切换逻辑。
+CREATE TABLE IF NOT EXISTS platform_app_config (
+    id               bigint        NOT NULL,
+    created_at       timestamp     NOT NULL,
+    updated_at       timestamp     NULL,
+    is_deleted       boolean       NOT NULL DEFAULT false,
+    deleted_at       timestamp     NULL,
+    created_by_id    bigint        NOT NULL DEFAULT 0,
+    created_by_name  varchar(64)   NOT NULL DEFAULT '',
+    operation_id     bigint        NOT NULL DEFAULT 0,
+    operation_name   varchar(64)   NOT NULL DEFAULT '',
+    platform_id      bigint        NOT NULL DEFAULT 0,
+    merchant_id      bigint        NOT NULL DEFAULT 0,
+    -- 已发布版本号，每次发布 +1。0 表示从未发布过
+    version          int           NOT NULL DEFAULT 0,
+    -- 草稿 JSON（BUSINESS.md 16.5 的结构）
+    draft_json       text          NOT NULL DEFAULT '',
+    -- 已发布 JSON，小程序只读这一份
+    published_json   text          NOT NULL DEFAULT '',
+    CONSTRAINT pk_platform_app_config PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_app_config
+    ON platform_app_config (platform_id) WHERE is_deleted = false;
+
+-- 商户装修结构与平台一致，pages 只含 store。独立成表而不是加个 scope 字段：
+-- 两者的查询维度完全不同（一个按平台查、一个按商户查），
+-- 混在一张表里每次查询都得带上 scope 条件，索引也会退化。
+CREATE TABLE IF NOT EXISTS merchant_app_config (
+    id               bigint        NOT NULL,
+    created_at       timestamp     NOT NULL,
+    updated_at       timestamp     NULL,
+    is_deleted       boolean       NOT NULL DEFAULT false,
+    deleted_at       timestamp     NULL,
+    created_by_id    bigint        NOT NULL DEFAULT 0,
+    created_by_name  varchar(64)   NOT NULL DEFAULT '',
+    operation_id     bigint        NOT NULL DEFAULT 0,
+    operation_name   varchar(64)   NOT NULL DEFAULT '',
+    platform_id      bigint        NOT NULL DEFAULT 0,
+    merchant_id      bigint        NOT NULL DEFAULT 0,
+    version          int           NOT NULL DEFAULT 0,
+    draft_json       text          NOT NULL DEFAULT '',
+    published_json   text          NOT NULL DEFAULT '',
+    CONSTRAINT pk_merchant_app_config PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_merchant_app_config
+    ON merchant_app_config (merchant_id) WHERE is_deleted = false;
+
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO simpleshop_app;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO simpleshop_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO simpleshop_app;

@@ -1,6 +1,7 @@
 using Collaboration.Domain.MediatR;
 using FluentValidation;
 using MediatR;
+using MerchantPlatformService.Application.Features.Design;
 using MerchantPlatformService.Application.Features.Merchant;
 using MerchantPlatformService.Application.Features.Platform;
 using MerchantPlatformService.Application.Features.Region;
@@ -31,6 +32,7 @@ public static class ApiServiceCollectionExtensions
         PlatformValidators.AddPlatformValidators(services);
         MerchantValidators.AddMerchantValidators(services);
         RegionValidators.AddRegionValidators(services);
+        DesignValidators.AddDesignValidators(services);
 
         AddProductPort(services, configuration);
 
