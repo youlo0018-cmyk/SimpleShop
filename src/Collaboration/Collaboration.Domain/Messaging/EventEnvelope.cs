@@ -6,16 +6,11 @@ namespace Collaboration.Domain.Messaging;
 /// <remarks>
 /// <b>为什么要信封而不是直接发业务对象</b>：直接发业务 DTO 的话，消费方一改字段名，
 /// 历史消息就解析不出来（消息还在队列里躺着）。信封里的 SchemaVersion 就是为此留的。
-/// <para><b>为什么 Payload 是字符串</b>：载荷用 MessagePack 序列化后转 base64 存进信封。
+/// <para><b>为什么 Payload 是字符串</b>：载荷序列化后存成字符串。
 /// 换序列化库、或某个事件的载荷变复杂，都不影响信封本身的解析。</para>
 /// <para><b>幂等键由消费方自己定</b>（通常是业务单号），不在信封里统一给：
 /// 不同事件的幂等口径完全不同，强行统一只会让某一边别扭。</para>
 /// </remarks>
-/// <param name="EventId">事件 Id，消费方据此去重。</param>
-/// <param name="EventType">事件类型，取值见 <see cref="EventTopics"/>。</param>
-/// <param name="OccurredAt">发生时间 UTC。</param>
-/// <param name="SchemaVersion">载荷结构版本。</param>
-/// <param name="Payload">载荷，MessagePack 序列化后 base64。</param>
 public sealed class EventEnvelope
 {
     /// <summary>事件 Id，消费方据此去重。</summary>
@@ -30,7 +25,14 @@ public sealed class EventEnvelope
     /// <summary>载荷结构版本。</summary>
     public int SchemaVersion { get; set; } = 1;
 
-    /// <summary>载荷，MessagePack 序列化后 base64。</summary>
+    /// <summary>载荷，JSON 序列化后的字符串。</summary>
+    /// <remarks>
+    /// 保持成字符串而不是嵌套对象：换序列化库、或某个事件的载荷变复杂，
+    /// 都不影响信封本身的解析。历史上这里是 MessagePack + base64，
+    /// 已改为 JSON——MessagePack 的 StandardResolver 要求每个载荷类型都标
+    /// <c>[MessagePackObject]</c>，漏标一个就抛 FormatterNotRegisteredException，
+    /// 而 JSON 自描述，漏标也不会失败。
+    /// </remarks>
     [JsonPropertyName("payload")]
     public string Payload { get; set; } = string.Empty;
 }

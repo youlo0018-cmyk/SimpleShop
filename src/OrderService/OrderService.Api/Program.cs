@@ -34,10 +34,13 @@ builder.Services.AddAppServices(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
+builder.Services.AddAppEventLogging(builder.Configuration);
+
 var app = builder.Build();
 
 app.UseAppTenantContext();
 app.UseAppExceptionHandling();
+app.UseAppRequestLogging();
 app.MapHealthChecks("/health");
 app.MapControllers();
 app.Run();

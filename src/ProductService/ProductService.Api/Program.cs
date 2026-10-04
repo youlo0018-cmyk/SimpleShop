@@ -35,6 +35,8 @@ builder.Services.AddAppServices(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
 
+builder.Services.AddAppEventLogging(builder.Configuration);
+
 var app = builder.Build();
 
 // 启动时确保商品索引存在。
@@ -55,6 +57,7 @@ using (var scope = app.Services.CreateScope())
 
 app.UseAppTenantContext();
 app.UseAppExceptionHandling();
+app.UseAppRequestLogging();
 app.MapHealthChecks("/health");
 app.MapControllers();
 app.Run();

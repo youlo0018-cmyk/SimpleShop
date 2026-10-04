@@ -1,4 +1,5 @@
 using EvaluateService.Domain.Entities;
+using EvaluateService.Domain.Exceptions;
 
 namespace EvaluateService.Domain.IRepository;
 

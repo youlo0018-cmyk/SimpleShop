@@ -30,13 +30,6 @@ public interface IEventPublisher
 /// </remarks>
 public sealed class EventBus : IEventPublisher, IDisposable
 {
-    /// <summary>序列化选项：camelCase 与项目对外接口口径一致，消费方读到的键名可预期。</summary>
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
     private readonly RabbitMqOptions _options;
     private readonly ILogger<EventBus> _logger;
     private readonly object _sync = new();
@@ -58,25 +51,42 @@ public sealed class EventBus : IEventPublisher, IDisposable
     {
         try
         {
+            var eventId = Guid.NewGuid().ToString("N");
+
             var envelope = new EventEnvelope
             {
-                EventId = Guid.NewGuid().ToString("N"),
+                EventId = eventId,
                 EventType = eventType,
                 OccurredAt = DateTime.UtcNow,
                 SchemaVersion = 1,
-                // 🔴 载荷用 **JSON 而不是 MessagePack**：消息会长期躺在队列里，
-                // 消费方要能反序列化。MessagePack 的 StandardResolver 要求每个载荷类型
-                // 都标 [MessagePackObject] / [Key]，漏标一个就抛 FormatterNotRegisteredException——
-                // 本项目就是这么漏掉 ProductChangedEvent 的。JSON 自描述，漏标也不会失败。
-                Payload = JsonSerializer.Serialize(payload, JsonOptions)
+                // 口径统一走 EventJson，不在这里另写一份 JsonSerializerOptions。
+                // 载荷是 **JSON 文本**，消费端直接反序列化 envelope.Payload 即可，
+                // 不要再做 base64 解码。
+                Payload = EventJson.Serialize(payload)
             };
 
-            var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope, JsonOptions));
+            var body = Encoding.UTF8.GetBytes(EventJson.Serialize(envelope));
 
             lock (_sync)
             {
                 var channel = EnsureChannel();
-                channel.BasicPublish(EventTopics.Exchange, eventType, null, body);
+
+                var properties = channel.CreateBasicProperties();
+                properties.Persistent = true;
+
+                // eventId 同时写进信封与消息头：信封是给业务读的，消息头是给**消费端数重试次数**读的。
+                // 少了消息头这一份，消费端就只能拿 delivery tag 当 key，而它每次重投都会变，
+                // 于是「最多重试 N 次」会退化成「无限重试」。
+                //
+                // Persistent = true：日志丢了可以补，支付成功这类事件丢了就补不回来了。
+                // broker 重启时内存队列里的消息会一并消失。
+                properties.Headers = new Dictionary<string, object>
+                {
+                    ["eventId"] = Encoding.UTF8.GetBytes(eventId),
+                    ["eventType"] = Encoding.UTF8.GetBytes(eventType)
+                };
+
+                channel.BasicPublish(EventTopics.Exchange, eventType, properties, body);
             }
 
             return Task.FromResult(true);

@@ -88,6 +88,8 @@ $dbMap = @{
     # 网关不连数据库：留空即可，脚本会跳过写 ConnectionStrings:Default。
     # 硬塞一个连不上的连接串只会误导后来排查的人。
     'Gateway'                 = ''
+    # 日志服务的数据全在 Elasticsearch，没有任何业务表：留空。
+    'LogService'              = ''
 }
 
 function Get-ServiceConfigs([string]$name, [int]$redisDb) {
@@ -102,8 +104,31 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         $cfg['ConnectionStrings:Default'] = "Host=127.0.0.1;Port=5432;Database=$db;Username=simpleshop_app;Password=$dbPassword;Pooling=true;Maximum Pool Size=20"
     }
 
-    $cfg['Redis:ConnectionString']    = '127.0.0.1:6379'
-    $cfg['Redis:Database']            = "$redisDb"
+    # LogService 不连 Redis：它不做锁、不做缓存、也不需要雪花 Id
+    #（写 ES 时文档 Id 由 ES 自己生成，日志记录本来就不需要业务 Id）。
+    # 所以这两个键也不写，让它的 Program.cs 走显式豁免，
+    # 而不是配一个连上了却永远不用的 Redis。
+    if ($name -eq 'LogService') {
+        $cfg['LogIndex:Url']             = 'http://127.0.0.1:9200'
+        $cfg['LogIndex:PvIndex']         = 'simpleshop_log_pv'
+        $cfg['LogIndex:OperationIndex']  = 'simpleshop_log_operation'
+        $cfg['LogIndex:ExceptionIndex']  = 'simpleshop_log_exception'
+        $cfg['LogIndex:DeadLetterIndex'] = 'simpleshop_log_deadletter'
+
+        # 消费队列名必须与其它服务都不同，否则会互相抢消息。
+        # MaxAttempts=3：日志丢得起，但也不能无限重试把队列堵住。
+        $cfg['EventConsumer:QueueName']        = 'simpleshop.log'
+        $cfg['EventConsumer:MaxAttempts']      = '3'
+        $cfg['EventConsumer:PrefetchCount']    = '50'
+        $cfg['EventConsumer:RetryDelaySeconds'] = '2'
+
+        # 死信重放上限。超过就不再放：靠下游没配好而失败的消息，
+        # 重放一百次也是同样地失败，只会把刚恢复的下游再打挂。
+        $cfg['DeadLetter:MaxReplayCount'] = '3'
+    } else {
+        $cfg['Redis:ConnectionString'] = '127.0.0.1:6379'
+        $cfg['Redis:Database']         = "$redisDb"
+    }
     $cfg['Consul:Address']            = 'http://127.0.0.1:8500'
     $cfg['Consul:ServiceName']        = "$name"
     $cfg['RabbitMq:Host']             = 'localhost'
@@ -265,12 +290,18 @@ $redisDbMap = [ordered]@{
 if ($Service) {
     $serviceMap = [ordered]@{}
     foreach ($s in $Service) {
+        # LogService 是唯一的例外：它不连 Redis，不需要库号。
+        if ($s -eq 'LogService') { $serviceMap[$s] = 0; continue }
         if (-not $redisDbMap.Contains($s)) { throw "服务 $s 未分配 Redis 库号，请先在 redisDbMap 中登记。" }
         $serviceMap[$s] = $redisDbMap[$s]
     }
 } else {
     $serviceMap = $redisDbMap
 }
+
+# LogService 不在 redisDbMap 里（它根本不连 Redis），所以不在上面那轮循环里被播种。
+# 单独补一次：它需要 LogIndex / EventConsumer / DeadLetter 三段配置才能启动。
+if (-not $serviceMap.Contains('LogService')) { $serviceMap['LogService'] = 0 }
 
 # ---------- 认证：api 系列接口全部走 Basic（管理员账号 + 密码），不需要 JWT ----------
 $basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${AdminUser}:${AdminPassword}"))

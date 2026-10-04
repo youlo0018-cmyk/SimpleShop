@@ -430,6 +430,16 @@ public int OrderStatus { get; set; }
 | 45 | **用例要验证目标规则，而不是「被什么东西挡住了」** | 传 `orderItemId = 0` 会被参数校验先拦下，用例看到「返回 400、没有退款单」就判绿了——但真正要验的「退款窗口拦住部分退款」**从没被执行**。凡是「预期失败」的用例，要先确认失败原因确实是目标规则（断言错误信息里含该规则的特征词），而不是别的更早的校验 |
 | 46 | **「表和仓储方法都齐了」不等于「有人调用」** | 补偿表 `pending_stock_release` 与 `AddPendingReleaseAsync` / `GetDuePendingReleasesAsync` 早就建好，但**没有任何 Handler 调它们**——释放失败时库存直接丢失，且没有任何痕迹。判断一条补偿链路是否真的存在，要查的是**谁在写那张表**，不是表在不在。写完补偿表要立刻接上「写它的那一行代码」和「重试它的那一个任务」，两头缺一不可 |
 | 47 | **UTC 列被写进本地时间，症状是「任务跑了但什么都没发生」** | `next_retry_at` 这类 UTC 列一旦混进本地时间(+08)，`NextRetryAt <= UtcNow` 会判定「还没到重试时间」，补偿任务直接跳过——**日志里看不出任何异常**，因为它只是「没查到数据」。造测试数据要用**明确的过去时间**（如 `'2000-01-01'`），不要用 `now()`：数据库的 `now()` 返回带时区的时间，转进 `timestamp without time zone` 列后与应用写入的 UTC 值不同源 |
+| 48 | **ES 写入：没给 Id 就必须用 POST，不是 PUT** | `PUT /{index}/_doc` 是「按指定 Id 覆盖写」，不给 Id 会返回 **405**（`allowed: [POST]`）；想让 ES 自己生成文档 Id 只能用 `POST /{index}/_doc`。日志这种不需要业务 Id 的写入要用 POST，**并且失败必须抛异常**——静默吞掉等于 ack 掉这条消息，日志永久丢失且没人知道。真实踩过：整条 pv/operation 链路 100% 落进死信队列 |
+| 49 | **ES 8 不能按 `_id` 排序** | ES 8 默认关闭 `_id` 的 fielddata，`sort: [{_id: ...}]` 直接 400（`illegal_argument_exception`）。症状极具误导性：**索引写得好好的、`_count` 也有数、一搜就报错**，极易被误判成「数据没写进去」，排查方向从第一步就错了。想要稳定翻页用 `search_after` + PIT，**不要**为 `_id` 打开 fielddata（会让整个索引内存占用暴涨） |
+| 50 | **要 `term` 精确过滤的字段必须显式映射成 keyword** | 不写 mapping 时 ES 动态映射成 `text` + `.keyword` 子字段，而 `{"term":{"service":"X"}}` 打在 `text` 字段上**永远匹配不到**，返回空列表。症状是「日志明明写进去了，按服务名一条都查不出来」，同样会被误判成没写入。凡是会被 `term` / 排序 / 聚合用到的字段（id、编码、状态、类型）一律显式 `keyword`；只做全文模糊搜的（message、stackTrace）才留 `text` |
+| 51 | **禁止让 DI 直接注入 `HttpClient`** | 直接注入拿到的是一个**什么都没配**的 HttpClient：没有 `BaseAddress`、没有超时。症状是运行到某个相对地址请求时才抛 `URI must be an absolute URI or BaseAddress must be set`，而 **DI 校验发现不了**（类型确实能解析）。做法：注入 `IHttpClientFactory` 再 `CreateClient("名字")`。注意 `AddHttpClient("名字", ...)` 的具名注册就是为复用同一个连接池，别每个服务各注册一个匿名客户端 |
+| 52 | **`Configure<T>(section)` 注册的是 `IOptions<T>`，不是 `T`** | 直接把 Options 类注入 Handler，启动时会被 DI 校验拦下（Development 环境默认 `ValidateOnBuild=true`）。这个拦截是好事——总比等到用户点那个接口才 500 强。统一注入 `IOptions<T>` 再取 `.Value` |
+| 53 | **MQ 扫描队列时，`requeue: true` 是放回队头** | 想从死信队列里「捞出指定 EventId 的那一条」，对不上时若用 `BasicNack(requeue: true)`，消息回到**队头**，下一个 `BasicGet` 拿到的又是同一条，循环原地打转、后面全扫不到。真实踩过：死信队列里只要有一条不匹配的消息，重放就**永远失败**。正确做法是「重发到死信交换机 → ack 原消息」让队头腾出来；先 publish 再 ack，中途崩溃最多重复一次、不会丢 |
+| 54 | **发布端与消费端的序列化口径必须共用同一份定义** | 两端各写一个 `JsonSerializerOptions` 时，改了一处忘了另一处 →「消息发得出去、但消费端一条都解析不出来」，全部落进死信，而日志里只有一条毫无线索的 `FormatException`。真实踩过：发布端从 MessagePack+base64 换成 JSON 后，消费端还在 `Convert.FromBase64String`。做法：口径收进 `EventJson` 这一个类，并补一条**往返单测**（发布端写出来的信封，消费端能原样读回）把这类漂移钉死 |
+| 55 | **覆盖写文档时，人工维护的计数不能被重置** | 死信文档按 `EventId` 覆盖写，而「重放后又失败」会再次覆盖——如果新记录把 `ReplayCount` 重置成 0，计数永远停在 0，**重放上限形同虚设**，一条永远修不好的消息可以被无限重放。症状很隐蔽：单看一次重放是成功的。做法：覆盖前先读旧记录，**沿用**人工维护过的字段（重放次数、上次重放时间），只覆盖系统字段 |
+| 56 | **测试断言必须能读到 400 的响应体** | `Invoke-RestMethod` 遇 400 会抛异常，测试里只看到「400 Bad Request」。于是「校验按预期拦住了」和「服务整个挂了」在报告里长得一模一样——**前者是预期、后者是故障**，混淆它们等于把回归测试变成摆设。PowerShell 7 里要从 `$_.ErrorDetails.Message` 取响应体（`Exception.Response.GetResponseStream()` 此时已被读空并释放）。配套：断言要落到 `errors` 里的**具体字段名**，不能只看 `success=false` |
+| 57 | **「写了 ES」不等于「立刻查得到」** | ES 默认 `refresh_interval` 1 秒，写完立刻 `_search` / `_count` 拿到的是陈旧值。查一次就断言会把「还没刷新」误判成「没写进去」，写成失败的测试逼着人去改本来正确的代码。做法：断言一律**轮询等待**（带超时），而不是查一次就下结论。同理，**mapping 只在建索引时生效**——改了 mapping 必须先删索引重建 |
 
 ---
 

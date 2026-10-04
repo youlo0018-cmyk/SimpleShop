@@ -101,7 +101,7 @@
     {
       "name": "LogService",
       "port": 5088,
-      "implemented": false,
+      "implemented": true,
       "project": "src/LogService/LogService.Api/LogService.Api.csproj"
     }
   ]

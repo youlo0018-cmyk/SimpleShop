@@ -17,11 +17,19 @@ public static class EventBusRegistration
     ///
     /// <para>配置缺失时<b>不报错</b>：事件发布是旁路，少了它主流程仍应跑得通。
     /// 这时候塞一个 Null 实现，所有发布静默丢弃并留下明确日志。</para>
+    ///
+    /// <para><b>幂等</b>：已注册过就直接返回。多个扩展方法都可能调用它
+    /// （业务事件发布、日志中间件各自一处），重复注册会往容器里塞两个
+    /// IEventPublisher，而 DI 取到哪个是不确定的——
+    /// 结果是日志事件和业务事件各走一条 RabbitMQ 连接，
+    /// 连接数翻倍，出问题时更难查。</para>
     /// </remarks>
     public static IServiceCollection AddEventBus(
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        if (services.Any(d => d.ServiceType == typeof(IEventPublisher))) return services;
+
         var options = configuration.GetSection(RabbitMqOptions.SectionName).Get<RabbitMqOptions>();
 
         if (options is null || string.IsNullOrWhiteSpace(options.Host))

@@ -835,6 +835,51 @@ Redis 不可用时**不放行**：宁可这一场一个都卖不出去，也不�
 | API-JOB-006 | P1 | 秒杀场次结算 | 断言场次结束且库存回补 |
 | API-JOB-007 | P1 | 多实例互斥 | 断言只有一个实例执行 |
 
+### 2.8 LOG 日志与死信（对应 BUSINESS.md 18）
+
+脚本：`tests/e2e/log-regression.ps1`（19 条）。日志链路有三环，任意一环断了都表现为
+「后台查不到日志」，所以每条用例都要覆盖到具体环节，而不只是接口返回 200。
+
+| 用例 | 级别 | 校验点 | 断言 |
+|---|---|---|---|
+| API-LOG-001 | P1 | 生产 → 传输 → 落地：读请求产生 pv.log | 轮询等 ES 可检索后条数增加 |
+| API-LOG-002 | P1 | 写请求额外产生 operation.log | `simpleshop_log_operation` 出现该服务记录 |
+| API-LOG-002b | P0 | `service` 显式映射成 keyword | `service=LogService` 能精确命中，不返回别的服务 |
+| API-LOG-003 | P1 | pv 字段齐全 | 服务名/路径/方法/响应码/耗时/请求 Id 全部存在 |
+| API-LOG-004 | P1 | pv 列表返回统一信封 | `success=true` 且 `data` 非空 |
+| API-LOG-005 | P1 | 分页结构 | 含 `total` / `items` / `page` / `pageSize` |
+| API-LOG-006 | P1 | 关键字模糊搜索 | 命中项的路径都含关键字，不混入无关记录 |
+| API-LOG-007 | P1 | requestId 精确过滤 | 只返回 1 条且 requestId 一致 |
+| API-LOG-008 | P1 | operation 列表返回统一信封 | `success=true` 且 `data` 非空 |
+| API-LOG-009 | P1 | exception 列表返回统一信封 | `success=true` 且 `data` 非空 |
+| API-LOG-010 | P1 | 响应码过滤 | `minStatusCode=500` 时不返回 200 的记录 |
+| API-LOG-011 | P1 | 🔴 `pageSize=0` 被拒 | 断言 `errors` 含 **PageSize** 字段 |
+| API-LOG-012 | P1 | 🔴 `pageSize` 超上限被拒 | 防一次拉爆 ES；断言 `errors` 含 **PageSize** |
+| API-LOG-013 | P1 | 🔴 `page=0` 被拒 | 断言 `errors` 含 **Page** 字段 |
+| API-LOG-014 | P1 | 🔴 结束时间早于开始时间被拒 | 断言 `errors` 含 **To** 字段 |
+| API-LOG-015 | P0 | 🔴 死信重放 `eventId` 为空被拒 | 防路径穿越；断言 `errors` 含 **EventId** |
+| API-LOG-016 | P1 | 死信列表返回统一信封 | `success=true` 且 `data` 非空 |
+| API-LOG-017 | P0 | 🔴 重放不存在的死信 | 返回「不存在」而不是假成功 |
+| API-LOG-018 | P0 | 死信记录带失败原因 | 含 `errorMessage` / `errorType` / `attempts` / `replayCount` |
+
+**单元测试（`MessagingTests.cs`）** 覆盖无法靠接口验证的规则：
+
+| 用例 | 校验点 |
+|---|---|
+| `Envelope_RoundTrips_Through_PublishAndConsume_Format` | 发布端写出来的信封，消费端能原样读回（钉死序列化漂移） |
+| `Payload_Is_Raw_Json_Not_Base64` | 🔴 载荷必须是 JSON 文本；一旦改回 base64 立刻红 |
+| `Payload_Uses_CamelCase_Keys` | 键名为 camelCase，消费方读到的字段名可预期 |
+| `Deserialize_BadJson_Returns_Null_Instead_Of_Throwing` | 坏消息返回 null 而不是抛异常 |
+| `CanReplay_At_Max_Is_False` | 🔴 重放到上限后必须拒绝 |
+| `EffectiveMax_NonPositive_Falls_Back_To_Default` | 配 0 不会变成「永远不能重放」 |
+| `EventConsumer_DefaultMaxAttempts_Is_Finite_And_Positive` | 默认重试次数必须是有限正数，否则退避重试形同虚设 |
+| `DeadLetterQueueName_Derives_From_QueueName` | 死信队列名推导规则与消费端一致 |
+
+**必须手工跑一次（无法自动化，因为需要制造坏消息）**：发布一条载荷非法的 `pv.log`
+→ 确认重试 3 次后进 DLQ → 确认 ES 死信索引有记录且含失败原因 →
+调 `/logs/DeadLetter/Replay` 重放 → 确认第 4 次返回
+「该消息已重放 3 次，达到上限 3 次，不再重复重放」。
+
 ---
 
 ## 3. UI 功能回归（UI）

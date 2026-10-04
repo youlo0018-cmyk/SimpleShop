@@ -147,6 +147,8 @@ builder.Services
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
+builder.Services.AddAppEventLogging(builder.Configuration);
+
 var app = builder.Build();
 
 // 注册公开客户端。幂等：每次启动都对齐一次配置，改了 ClientId 不必手工改库。
@@ -157,6 +159,7 @@ using (var scope = app.Services.CreateScope())
 
 app.UseAppTenantContext();
 app.UseAppExceptionHandling();
+app.UseAppRequestLogging();
 app.MapHealthChecks("/health");
 app.MapControllers();
 app.Run();

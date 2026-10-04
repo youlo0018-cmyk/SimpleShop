@@ -16,9 +16,10 @@ public sealed class EvaluateRepository : CrudRepository<Evaluate>, IEvaluateRepo
     /// <param name="freeSql">已注册全局过滤的 FreeSql 单例。</param>
     public EvaluateRepository(IFreeSql freeSql) : base(freeSql) { }
 
-    /// <inheritdoc />
-    public async Task<Evaluate?> GetByIdAsync(long evaluateId, CancellationToken ct = default)
-        => await Db.Select<Evaluate>().Where(a => a.Id == evaluateId).FirstAsync(ct);
+    // 🔴 这里**不重写** GetByIdAsync：基类 CrudRepository 的实现与曾经的本类实现逐字相同
+    //（都是 Db.Select<Evaluate>().Where(a => a.Id == id).FirstAsync(ct)）。
+    // 保留一份一模一样的重写只会让编译器报 CS0108，并且给人一个错觉：
+    // 「评价的按 Id 查询有特殊逻辑」。接口照样由基类方法满足。
 
     /// <inheritdoc />
     public async Task<EvaluateWithRefs?> GetWithRefsAsync(long evaluateId, CancellationToken ct = default)

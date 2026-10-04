@@ -1,7 +1,8 @@
 # AI_HANDOFF.md — AI 协作与交接文档
 
 > 用途：新会话（或另一台机器）恢复上下文。开场说「读 AI_HANDOFF.md，按里面的进度继续」。
-> 状态：**需求已确认，代码未开始**。本文件同时是协作约定与进度日志。
+> 状态：**后端 15 个服务全部完成并跑通端到端**（17 个进程），剩后台前端（S8）与小程序前端（S9）。
+> 本文件同时是协作约定与进度日志。
 
 ## 目录
 
@@ -177,27 +178,33 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | Scheduled | 无端口 | ✅ 独立定时进程：**支付超时关单**（30 秒）+ **积分过期扣减**（每小时）+ **商品索引对账**（10 分钟）。Redis `lock:job:*` 多实例互斥 |
 | Evaluate | 5084 | ✅ SPU 级评价 + SKU 标记自动推导 + 图片 + 追评 + 商户/平台回复 + 后台隐藏 + 每日重算均分 |
 | MerchantPlatform | 5070 | ✅ 平台 / 商户 / 审核（拒绝连带下架商品并同步索引）/ 地区地址 / **装修（草稿 + 发布 + 组件注册表 + 选品可见性校验）** |
-| Payment / Log | 见 3.3 | ⬜ 未开始 |
+| Payment | 5066 | ✅ 支付单 / 模拟支付（成功或失败）/ 退款两段式审批 |
+| Log | 5088 | ✅ **无数据库**（数据全在 ES）+ 消费 pv/operation/exception 三类日志 + 后台查询 + **死信记录与按 EventId 精确重放（带次数上限）** |
 
-**S1、S2、S3（第一版）、S4、S5 已完成。** 15 个进程在跑（14 个 HTTP 服务 + ScheduledService）。
-下一步按依赖顺序：**PaymentService** → LogService → ScheduledService 补偿重试 / 孤儿预留对账 → 后台与小程序前端。
+**后端 15 个服务全部完成。** 17 个进程在跑（16 个 HTTP 服务 + ScheduledService）。
+下一步：**后台前端（S8）** → 小程序前端（S9）。
 
 **验证现状**
 
 | 套件 | 结果 |
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
-| `dotnet test`（单元测试） | **220/220** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **268/268**，9 个脚本全绿 |
+| `dotnet test`（单元测试） | **321/321** |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **419/419**，14 个脚本全绿 |
 | └ `api-regression.ps1` | 15/15 |
 | └ `auth-regression.ps1` | 17/17 |
-| └ `gateway-regression.ps1` | 13/13 |
-| └ `product-regression.ps1` | 62/62 |
 | └ `cart-regression.ps1` | 13/13 |
-| └ `inventory-regression.ps1` | 21/21 |
-| └ `marketing-regression.ps1` | 48/48 |
-| └ `point-regression.ps1` | 29/29 |
+| └ `design-regression.ps1` | 26/26 |
+| └ `evaluate-regression.ps1` | 38/38 |
+| └ `gateway-regression.ps1` | 13/13 |
+| └ `inventory-regression.ps1` | 25/25 |
+| └ `log-regression.ps1` | 19/19 |
+| └ `marketing-regression.ps1` | 60/60 |
+| └ `merchantplatform-regression.ps1` | 30/30 |
+| └ `product-regression.ps1` | 62/62 |
 | └ `order-regression.ps1` | 50/50 |
+| └ `payment-regression.ps1` | 22/22 |
+| └ `point-regression.ps1` | 29/29 |
 
 ### 4.2 已确定的关键决策
 
@@ -269,6 +276,63 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-05：LogService — 日志链路闭环 + 死信重放（后端收官）
+
+上一轮只写完了「消费端公共部分」，消费循环没有注册进任何服务，**三类日志没有任何生产方**。
+本轮把整条链路接通，并补上死信重放入口。
+
+**一、日志契约归位到 Collaboration**
+
+`PvLogEntry` / `OperationLogEntry` / `ExceptionLogEntry` 是**跨服务事件契约**，
+生产方是 16 个业务服务、消费方是 LogService。原先放在 `LogService.Domain`，
+等于让「只写日志的服务」成为所有服务的编译期依赖。现已移到 `Collaboration.Domain.Messaging`。
+
+**二、生产侧：请求 / 异常中间件（16 个服务全接入）**
+
+- `RequestLogMiddleware`：每个请求发 `pv.log`；写方法（POST/PUT/PATCH/DELETE）额外发 `operation.log`。
+  **探活请求不发**（否则日志里 99% 是探活记录）。
+- `GlobalExceptionMiddleware`：未处理异常发 `exception.log`。
+  **业务拒绝与参数校验失败不发**——它们是正常流程的一部分，全记成「未处理异常」会让异常列表没法用。
+- 两条中间件都**吞掉发布异常**：日志是旁路，让它把已经成功的业务请求拖成 500 是本末倒置。
+
+**三、序列化口径收敛成一个类**
+
+原先发布端与消费端各有一个 `JsonSerializerOptions`，导致「发布端改成 JSON、消费端还在
+`FromBase64String`」——每条事件都进死信。现统一走 `EventJson`，并补了一条往返单测把这类漂移钉死。
+
+**四、死信闭环**
+
+- 消费循环：`MaxAttempts` 次退避重试（`requeue` 回队尾，不阻塞消费线程），耗尽后
+  先记失败原因再 nack 进 DLQ；**连接断开要清空内存里的重试计数**，
+  否则一次网络抖动会让后面所有**新**消息都被当成「已经重试过」直接进死信。
+- `IDeadLetterNotifier` 是**端口**：消费循环保持「最不可能出错」的代码，任何存储细节都不漏进来。
+- 重放：**按 EventId 精确捞**，不做全量 requeue（死信里混着支付成功这类关键事件，全量重放会重复扣库存）。
+- **重放次数上限**：默认 3 次。靠下游没配好而失败的消息，重放一百次也是同样地失败，
+  只会把刚恢复的下游再打挂。
+
+**五、LogService 本身不连数据库也不连 Redis**
+
+数据全在 Elasticsearch（写 ES 时文档 Id 由 ES 生成，日志记录本来就不需要业务 Id），
+所以 `ConnectionStrings:Default` 与 `Redis:ConnectionString` 都**显式豁免**，
+而不是填一个连上却永远不用的假值。
+
+**验证**
+
+- 构建 0 warning 0 error；单元 **321/321**；端到端 **419/419**（14 个脚本，含新增 `log-regression.ps1` 19 条）
+- 真实跑通：pv / operation / exception 三类各落 ES 并可查（关键字 / requestId / service / 响应码过滤全部生效）
+- 死信全流程：坏消息 → 重试 3 次 → 进 DLQ → ES 记录含失败原因 → 按 EventId 重放成功 →
+  **第 4 次被上限拒绝**（"该消息已重放 3 次，达到上限 3 次"）
+
+**本轮修掉的 6 个真缺陷**（全部是「编译正常、零警告，只有真跑一次才暴露」那一类，
+已全部写进 `CODING_STANDARD.md` 第 6 节第 48~57 条）：
+
+1. 消费端对 JSON 载荷做 base64 解码 → 每条日志事件全进死信
+2. ES `PUT /_doc` 不带 Id → 405，整条链路写不进去
+3. 按 `_id` 排序 → ES 8 禁止，查询一律 400（却误判成「没写进去」）
+4. `service` 未显式映射成 keyword → `term` 查询永远匹配不到
+5. 直接注入 `HttpClient` 拿到的是无 `BaseAddress` 的空客户端 → 死信一条都记不上
+6. 死信文档覆盖写时把 `ReplayCount` 重置为 0 → **重放上限形同虚设**
 
 ### 2026-10-04：S3 — 孤儿预留对账（交易闭环最后一块）
 

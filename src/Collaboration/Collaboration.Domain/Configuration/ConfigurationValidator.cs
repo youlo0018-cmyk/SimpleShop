@@ -17,6 +17,14 @@ public static class ConfigurationValidator
     /// </remarks>
     public const string DatabaseConnectionKey = "ConnectionStrings:Default";
 
+    /// <summary>Redis 连接串键名。</summary>
+    /// <remarks>
+    /// 和 <see cref="DatabaseConnectionKey"/> 同理：确实不连 Redis 的服务显式豁免它。
+    /// LogService 就是这种——它的数据全在 Elasticsearch，Redis 派不上用场，
+    /// 为了满足基础校验而硬连一次，只会多一个「它到底用 Redis 干什么」的疑问。
+    /// </remarks>
+    public const string RedisConnectionKey = "Redis:ConnectionString";
+
     /// <summary>校验配置是否齐全，缺项则抛出并列出全部缺失键。</summary>
     /// <param name="config">已拉取的配置键值对。</param>
     /// <param name="extra">服务追加的必填键，可为空。</param>

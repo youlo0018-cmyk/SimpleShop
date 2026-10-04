@@ -38,6 +38,7 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
     /// <param name="brands">品牌仓储。</param>
     /// <param name="inventory">库存服务客户端，用于建商品时初始化 SKU 库存。</param>
     /// <param name="search">商品搜索索引，用于保存后同步到 ES。</param>
+    /// <param name="events">事件发布端口，用于发出 product.created / product.changed。</param>
     /// <param name="logger">日志器。</param>
     public SaveProductHandler(
         IProductRepository products,

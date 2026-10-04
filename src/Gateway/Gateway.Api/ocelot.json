@@ -212,6 +212,23 @@
       ]
     },
     {
+      "UpstreamPathTemplate": "/gateway/logs/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/logs/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5088
+        }
+      ]
+    },
+    {
       "UpstreamPathTemplate": "/gateway/platforms/{everything}",
       "UpstreamHttpMethod": [
         "GET",

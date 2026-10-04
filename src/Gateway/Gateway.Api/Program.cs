@@ -50,11 +50,14 @@ builder.Services.AddOcelot(builder.Configuration);
 
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
+builder.Services.AddAppEventLogging(builder.Configuration);
+
 var app = builder.Build();
 
 // 顺序：异常 → 安全（剥头 / 验签 / RBAC / 注头）→ 路由转发。
 // 顺序不能换：必须先剥掉入站的租户头再做任何判断，否则就是给伪造开门。
 app.UseAppExceptionHandling();
+app.UseAppRequestLogging();
 app.UseMiddleware<GatewaySecurityMiddleware>();
 app.MapHealthChecks("/health");
 
