@@ -122,6 +122,20 @@ public interface IStockRepository
     Task<(List<Stock> Items, long Total)> QueryPagedAsync(
         int page, int pageSize, string keyword, bool lowStockOnly, CancellationToken ct = default);
 
+    /// <summary>统计低于预警阈值的 SKU 数（工作台报表用）。</summary>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>预警 SKU 数。幂等只读。</returns>
+    /// <remarks>
+    /// 预警口径与列表页完全一致：<b>阈值大于 0 且可用量低于阈值</b>。
+    /// 阈值配 0（表示「不预警」）的 SKU 不计入——
+    /// 两处口径一旦不同，报表说「3 个预警」而列表点进去只有 2 个，
+    /// 运营会先去怀疑数据错了，而不是怀疑报表。
+    /// </remarks>
+    Task<long> CountLowStockAsync(
+        long merchantId, long platformId, CancellationToken ct = default);
+
     /// <summary>取某 SKU 的全部流水。</summary>
     /// <param name="skuId">SKU Id。</param>
     /// <param name="limit">最多取多少条。</param>

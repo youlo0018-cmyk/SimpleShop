@@ -229,6 +229,22 @@
       ]
     },
     {
+      "//说明": "报表按前缀拆到三个服务：工作台经营报表归订单服务（订单是它的口径），营销与秒杀效果报表归营销服务，积分报表归积分服务。刻意不用一条 /gateway/reports/* 通配全转给某个服务——那样每个服务都得实现它不拥有的那几张表。",
+      "UpstreamPathTemplate": "/gateway/reports/Report",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST"
+      ],
+      "DownstreamPathTemplate": "/reports/Report",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5064
+        }
+      ]
+    },
+    {
       "UpstreamPathTemplate": "/gateway/platforms/{everything}",
       "UpstreamHttpMethod": [
         "GET",

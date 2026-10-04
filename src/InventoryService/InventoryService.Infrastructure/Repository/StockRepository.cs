@@ -252,6 +252,15 @@ public sealed class StockRepository : CrudRepository<Stock>, IStockRepository
     }
 
     /// <inheritdoc />
+    public async Task<long> CountLowStockAsync(
+        long merchantId, long platformId, CancellationToken ct = default)
+        => await Db.Select<Stock>()
+            .Where(a => a.WarnThreshold > 0 && a.Available < a.WarnThreshold)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .CountAsync(ct);
+
+    /// <inheritdoc />
     public async Task<List<StockFlow>> GetFlowsAsync(long skuId, int limit, CancellationToken ct = default)
         => await _db.Select<StockFlow>()
             .Where(a => a.SkuId == skuId)

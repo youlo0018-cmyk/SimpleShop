@@ -259,7 +259,10 @@ public sealed class ConfirmReceiptHandler : MediatR.IRequestHandler<ConfirmRecei
         }
 
         var affected = await _store
-            .TryTransitStatusAsync(order.Id, OrderStatuses.PendingReceipt, OrderStatuses.Completed, ct)
+            // completedAt 与状态同一条 UPDATE 写入，供报表按完成时间统计
+            .TryTransitStatusAsync(
+                order.Id, OrderStatuses.PendingReceipt, OrderStatuses.Completed,
+                completedAt: DateTime.UtcNow, ct: ct)
             .ConfigureAwait(false);
 
         if (affected == 0)

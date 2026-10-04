@@ -167,12 +167,20 @@ Invoke-Case 'API-LOG-006' '关键字过滤生效（能筛出 LogService 自己�
     return ($r.data.items | Where-Object { $_.path -notlike '*logs/Pv*' }).Count -eq 0
 }
 
-Invoke-Case 'API-LOG-007' '按 requestId 精确过滤只返回一条' {
+Invoke-Case 'API-LOG-007' '按 requestId 过滤只返回该请求的日志' {
     $first = Post '/logs/Pv/List' @{ page = 1; pageSize = 1 }
     $rid = $first.data.items[0].requestId
     if (-not $rid) { return $false }
     $r = Post '/logs/Pv/List' @{ page = 1; pageSize = 20; requestId = $rid }
-    return $r.data.total -eq 1 -and $r.data.items[0].requestId -eq $rid
+    if ($r.data.total -lt 1) { return $false }
+
+    # 🔴 断言的是「返回的每一条都属于这个 requestId」，**不是**「只有一条」。
+    # 网关用 X-Correlation-Id 把一次请求的 Id 透传给下游，所以同一次调用
+    # 会在 Gateway 和下游服务各记一条 pv —— 返回 2 条才是正确行为。
+    # 这里原本断言 total -eq 1，全量回归时网关用例跑在前面就必红。
+    # 教训：断言要落在「契约保证的性质」上，不能落在「当前恰好的样子」上。
+    $wrong = @($r.data.items | Where-Object { $_.requestId -ne $rid })
+    return $wrong.Count -eq 0
 }
 
 Invoke-Case 'API-LOG-008' 'operation 列表返回成功信封' {

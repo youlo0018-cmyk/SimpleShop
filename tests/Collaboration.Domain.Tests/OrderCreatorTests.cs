@@ -557,8 +557,33 @@ public class OrderCreatorTests
             => Task.FromResult(new Dictionary<long, OrderItemAggregate>());
 
         public Task<int> TryTransitStatusAsync(
-            long orderId, int fromStatus, int toStatus, CancellationToken ct = default)
-            => Task.FromResult(1);
+            long orderId, int fromStatus, int toStatus, CancellationToken ct = default,
+            DateTime? paidAt = null, DateTime? completedAt = null)
+        {
+            // 记下状态迁移时传入的时间戳，供用例断言「支付时间确实被盖上了」。
+            // 之前这里直接返回 1，paid_at 写没写、写得对不对都没人能测——
+            // 而报表的 GMV 全靠它，少一个时间戳就是一块金额凭空消失。
+            LastPaidAt = paidAt;
+            LastCompletedAt = completedAt;
+            return Task.FromResult(1);
+        }
+
+        /// <summary>最后一次状态迁移传入的支付时间。</summary>
+        public DateTime? LastPaidAt;
+
+        /// <summary>最后一次状态迁移传入的完成时间。</summary>
+        public DateTime? LastCompletedAt;
+
+        /// <summary>报表聚合：下单链路的用例不依赖它，返回空聚合即可。</summary>
+        /// <param name="from">区间起。</param>
+        /// <param name="to">区间止。</param>
+        /// <param name="merchantId">商户 Id。</param>
+        /// <param name="platformId">平台 Id。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>全零聚合。</returns>
+        public Task<OrderAggregateRow> AggregateAsync(
+            DateTime from, DateTime to, long merchantId, long platformId, CancellationToken ct = default)
+            => Task.FromResult(new OrderAggregateRow(0, 0, 0, 0m));
 
         public Task<Order> SaveAsync(Order order, IReadOnlyCollection<OrderItem> items, CancellationToken ct = default)
         {

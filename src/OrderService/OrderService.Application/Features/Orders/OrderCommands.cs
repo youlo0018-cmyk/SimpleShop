@@ -3,6 +3,7 @@ using Collaboration.Domain.Validation;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using OrderService.Application.Features.Reports;
 using OrderService.Domain.Entities;
 
 namespace OrderService.Application.Features.Orders;
@@ -198,6 +199,23 @@ public static class OrderValidators
         services.AddScoped<IValidator<CancelOrderCommand>, OrderScopedValidator<CancelOrderCommand>>();
         services.AddScoped<IValidator<ConfirmReceiptCommand>, OrderScopedValidator<ConfirmReceiptCommand>>();
         services.AddScoped<IValidator<QueryOrderDetailCommand>, OrderDetailQueryValidator>();
+        services.AddScoped<IValidator<QueryBusinessReportCommand>, BusinessReportValidator>();
+    }
+
+    /// <summary>工作台报表校验。</summary>
+    private sealed class BusinessReportValidator
+        : AbstractValidator<QueryBusinessReportCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public BusinessReportValidator()
+        {
+            // 时间范围只认 1~4 四个档位。不校验的话，Range 传 0 或 99
+            // 会在 Resolve 里抛 ArgumentOutOfRangeException 变成 500，
+            // 而它本来就是个「参数不合法」，应该返回带中文原因的 400。
+            RuleFor(x => x.Range).InclusiveBetween(1, 4).WithMessage("报表时间范围不正确");
+            RuleFor(x => x.MerchantId).GreaterThanOrEqualTo(0).WithMessage("商户信息不正确");
+            RuleFor(x => x.PlatformId).GreaterThanOrEqualTo(0).WithMessage("平台信息不正确");
+        }
     }
 
     /// <summary>下单校验。</summary>

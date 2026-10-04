@@ -18,10 +18,16 @@ namespace InventoryService.Api.Controllers;
 public sealed class InternalInventoryController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IStockRepository _stocks;
 
     /// <summary>构造控制器。</summary>
     /// <param name="mediator">MediatR 入口。</param>
-    public InternalInventoryController(IMediator mediator) => _mediator = mediator;
+    /// <param name="stocks">库存仓储。报表的预警数直接读仓储，不走命令。</param>
+    public InternalInventoryController(IMediator mediator, IStockRepository stocks)
+    {
+        _mediator = mediator;
+        _stocks = stocks;
+    }
 
     /// <summary>初始化库存（商品创建时调用）。</summary>
     /// <param name="command">初始化命令。</param>
@@ -105,4 +111,31 @@ public sealed class InternalInventoryController : ControllerBase
     public Task<ApiResponse<ReleaseOrphanLocksResult>> ReleaseOrphans(
         [FromBody] ReleaseOrphanLocksCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>统计低于预警阈值的 SKU 数（工作台报表用）。</summary>
+    /// <param name="query">查询条件。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>预警 SKU 数。</returns>
+    /// <remarks>
+    /// 预警数是库存的口径，必须由库存服务自己算：订单服务跨库查不到预警阈值，
+    /// 硬让它自己数就得把阈值复制一份过去，运营改了阈值两边就对不上了。
+    /// </remarks>
+    [HttpPost("LowStock/Count")]
+    public async Task<ApiResponse<LowStockCountResult>> CountLowStock(
+        [FromBody] LowStockCountQuery query, CancellationToken ct)
+    {
+        var count = await _stocks.CountLowStockAsync(
+            query.MerchantId, query.PlatformId, ct).ConfigureAwait(false);
+
+        return ApiResults.Ok(new LowStockCountResult(checked((int)count)));
+    }
 }
+
+/// <summary>预警数查询条件。</summary>
+/// <param name="MerchantId">商户 Id，0 表示不限。</param>
+/// <param name="PlatformId">平台 Id，0 表示不限。</param>
+public sealed record LowStockCountQuery(long MerchantId = 0, long PlatformId = 0);
+
+/// <summary>预警数结果。</summary>
+/// <param name="Count">低于预警阈值的 SKU 数。</param>
+public sealed record LowStockCountResult(int Count);

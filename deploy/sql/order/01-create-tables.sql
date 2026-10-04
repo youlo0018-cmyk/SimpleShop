@@ -27,8 +27,20 @@ CREATE TABLE IF NOT EXISTS "order" (
     receiver_address varchar(256)  NOT NULL DEFAULT '',
     idempotency_key  varchar(64)   NOT NULL,
     remark           varchar(512)  NOT NULL DEFAULT '',
+    -- 🔴 支付时间与完成时间是**报表口径的分水岭**，不能拿 created_at 代替。
+    -- GMV 要的是「这段时间里收了多少钱」，按下单时间算会把「昨天下单今天付」
+    -- 算进昨天，而昨天的日报里这笔钱根本没收过——对账时对不上。
+    paid_at          timestamp     NULL,
+    completed_at     timestamp     NULL,
     CONSTRAINT pk_order PRIMARY KEY (id)
 );
+
+-- 🔴 这两列必须放在**建索引之前**。CREATE TABLE IF NOT EXISTS 对已存在的表是空操作，
+-- 老环境上 paid_at 并不存在；而下面 ALTER 才补它。
+-- 先建索引再补列的话，老环境会直接报 `column "paid_at" does not exist`，
+-- 整个建表脚本失败——而且报错完全指不到真正原因（看起来像索引写错了）。
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS paid_at timestamp NULL;
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS completed_at timestamp NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uk_order_no ON "order" (order_no) WHERE is_deleted = false;
 
@@ -41,6 +53,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_order_idempotency
 
 CREATE INDEX IF NOT EXISTS idx_order_customer ON "order" (customer_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_order_status ON "order" (status, created_at);
+
+-- 报表按「支付时间 + 商户」过滤用。没有这个索引，近 30 天报表会全表扫。
+CREATE INDEX IF NOT EXISTS idx_order_paid_at ON "order" (paid_at, merchant_id);
 
 -- 订单行。商品名 / 规格 / 单价都是**快照**：下单之后商品改名或改价不影响这张订单。
 -- 订单是对账凭据，显示的必须是当时买的是什么、多少钱。

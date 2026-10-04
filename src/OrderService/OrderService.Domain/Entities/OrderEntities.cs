@@ -78,6 +78,20 @@ public class Order : EntityBase
     /// <summary>备注。</summary>
     [Column(Name = "remark", StringLength = 512)]
     public string Remark { get; set; } = string.Empty;
+
+    /// <summary>支付时间 UTC，未支付为 null。</summary>
+    /// <remarks>
+    /// **报表不能拿 <c>created_at</c> 代替它**：GMV 要的是「这段时间收了多少钱」，
+    /// 按下单时间算会把「昨天下单、今天付款」算进昨天，
+    /// 于是昨天的日报里这笔钱根本没收过，与支付流水一“对就对不上”。
+    /// </remarks>
+    [Column(Name = "paid_at")]
+    public DateTime? PaidAt { get; set; }
+
+    /// <summary>完成时间 UTC（签收 / 核销完成），未完成为 null。</summary>
+    /// <remarks>「完成订单数」按它统计，而不是按状态等于 50 反推。</remarks>
+    [Column(Name = "completed_at")]
+    public DateTime? CompletedAt { get; set; }
 }
 
 /// <summary>订单行。</summary>

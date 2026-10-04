@@ -128,15 +128,70 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
 
     /// <inheritdoc />
     public async Task<int> TryTransitStatusAsync(
-        long orderId, int fromStatus, int toStatus, CancellationToken ct = default)
+        long orderId, int fromStatus, int toStatus,
+        CancellationToken ct = default,
+        DateTime? paidAt = null, DateTime? completedAt = null)
     {
         // 注意这里必须显式 Where + Set：FreeSql 3.5 下 Db.Update<T>(entity)
         // 在雪花主键（IsIdentity=false）上会生成空 SET，一条 SQL 都不发，
         // 返回 0 且不报错——接口回「成功」而状态纹丝不动（CRUD 基类里记了这个坑）。
-        return await _db.Update<Order>()
+        // 用链式 Set(a => a.字段 == 值) 而不是 SetDto：
+        // SetDto 会把 DTO 里**所有**成员都写进 SET，而这里只想写 2~4 个字段。
+        var query = _db.Update<Order>()
             .Where(a => a.Id == orderId && a.Status == fromStatus)
-            .Set(a => new Order { Status = toStatus, UpdatedAt = DateTime.UtcNow })
-            .ExecuteAffrowsAsync(ct);
+            .Set(a => a.Status == toStatus)
+            .Set(a => a.UpdatedAt == DateTime.UtcNow);
+
+        // 只有传了才写。直接把 null 赋进去会把已有的时间戳**擦成 null**——
+        // 比如「确认收货」时只传 completedAt，若无条件写 PaidAt = null，
+        // 就会把支付时间抹掉，那一单的 GMV 会从报表里消失。
+        if (paidAt.HasValue) query = query.Set(a => a.PaidAt == paidAt.Value);
+        if (completedAt.HasValue) query = query.Set(a => a.CompletedAt == completedAt.Value);
+
+        return await query.ExecuteAffrowsAsync(ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<OrderAggregateRow> AggregateAsync(
+        DateTime from, DateTime to, long merchantId, long platformId,
+        CancellationToken ct = default)
+    {
+        var orderCount = await _db.Select<Order>()
+            .Where(a => a.CreatedAt >= from && a.CreatedAt < to)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        // 「已支付」= 状态既不是待支付(10)也不是已取消(91)。
+        // 时间基准取 (paid_at ?? created_at)：paid_at 是后加的列，
+        // 上线前的订单它是 null。只按 paid_at 过滤的话，历史订单会从所有区间里消失，
+        // 表现为「报表金额比实际少一大截」却查不出原因。
+        var paidCount = await _db.Select<Order>()
+            .Where(a => (a.PaidAt ?? a.CreatedAt) >= from && (a.PaidAt ?? a.CreatedAt) < to)
+            .Where(a => a.Status != OrderStatuses.PendingPayment && a.Status != OrderStatuses.Cancelled)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        var gmv = await _db.Select<Order>()
+            .Where(a => (a.PaidAt ?? a.CreatedAt) >= from && (a.PaidAt ?? a.CreatedAt) < to)
+            .Where(a => a.Status != OrderStatuses.Refunded && a.Status != OrderStatuses.Cancelled)
+            .Where(a => a.Status != OrderStatuses.PendingPayment)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .SumAsync(a => a.PayableAmount)
+            .ConfigureAwait(false);
+
+        var completedCount = await _db.Select<Order>()
+            .Where(a => a.CompletedAt != null && a.CompletedAt >= from && a.CompletedAt < to)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        return new OrderAggregateRow(orderCount, paidCount, completedCount, gmv);
     }
 
 

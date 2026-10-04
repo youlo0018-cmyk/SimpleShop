@@ -119,6 +119,14 @@ public interface IInventoryPort
     Task ReplenishAsync(long skuId, int quantity, string bizNo, CancellationToken ct = default);
 }
 
+/// <summary>订单聚合结果，供工作台报表使用。</summary>
+/// <param name="OrderCount">下单数。</param>
+/// <param name="PaidOrderCount">支付订单数。</param>
+/// <param name="CompletedOrderCount">完成订单数。</param>
+/// <param name="Gmv">成交额。</param>
+public sealed record OrderAggregateRow(
+    long OrderCount, long PaidOrderCount, long CompletedOrderCount, decimal Gmv);
+
 /// <summary>④ 落单端口（本地写库）。</summary>
 public interface IOrderStore
 {
@@ -204,14 +212,48 @@ public interface IOrderStore
     /// <param name="fromStatus">期望的原状态。</param>
     /// <param name="toStatus">目标状态。</param>
     /// <param name="ct">取消令牌。</param>
+    /// <param name="paidAt">同时写入的支付时间，null 表示不改。</param>
+    /// <param name="completedAt">同时写入的完成时间，null 表示不改。</param>
     /// <returns>受影响行数；为 0 表示状态已被别人改过，本次不生效。</returns>
     /// <remarks>
     /// <b>并发控制靠的就是这个「受影响行数为 0」</b>，不是行锁：
     /// 条件里带上了读到的原状态，两个并发请求只有一个能把状态改掉。
     /// 客户端看到 0 就该回「订单状态已变更，请刷新」。
+    ///
+    /// <para><b>时间戳必须在同一条 UPDATE 里写</b>：拆成「先改状态、再单独更新 paid_at」
+    /// 的话，两步之间进程死掉就会留下一张「已支付但 paid_at 为 null」的订单，
+    /// 报表按支付时间统计时它会**从所有区间里消失**——GMV 凭空少一块，
+    /// 而订单状态看上去完全正常。</para>
+    ///
+    /// <para><b>ct 保持在第 4 位</b>：它后面再追加可选参数时，
+    /// 新参数只能排在 ct 之后。反过来（把可选参数插到 ct 前面）会要求
+    /// 所有位置传参的调用点改成具名参数，一次改动波及十几个文件，
+    /// 而收益仅仅是「新参数出现在签名更靠前的位置」。</para>
     /// </remarks>
     Task<int> TryTransitStatusAsync(
-        long orderId, int fromStatus, int toStatus, CancellationToken ct = default);
+        long orderId, int fromStatus, int toStatus,
+        CancellationToken ct = default,
+        DateTime? paidAt = null, DateTime? completedAt = null);
+
+    /// <summary>按区间聚合订单指标，供工作台报表使用。</summary>
+    /// <param name="from">区间起（含）。</param>
+    /// <param name="to">区间止（不含）。</param>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下单数 / 支付订单数 / 完成订单数 / 成交额。</returns>
+    /// <remarks>
+    /// <b>成交额按 paid_at 统计，其余按 created_at</b>。
+    /// 混用同一个时间基准是报表最常见的错：按下单时间算 GMV，
+    /// 会把「昨天下单今天付款」算进昨天，而昨天日报里这笔钱根本没收过。
+    ///
+    /// <para><b>历史订单的 paid_at 可能为空</b>（该列是后加的），
+    /// 所以按支付时间统计时要用 COALESCE(paid_at, created_at) 兜底，
+    /// 否则上线前的订单会从所有报表区间里凭空消失。</para>
+    /// </remarks>
+    Task<OrderAggregateRow> AggregateAsync(
+        DateTime from, DateTime to, long merchantId, long platformId,
+        CancellationToken ct = default);
 }
 
 /// <summary>订单行的聚合信息，供列表页一次取齐。</summary>
@@ -238,4 +280,35 @@ public readonly record struct OrderCreateOutcome(
     /// <summary>构造失败结果。</summary>
     public static OrderCreateOutcome Fail(int step, string error)
         => new(false, 0, null, false, step, error);
+}
+
+/// <summary>退款统计端口（工作台报表用，数据在支付服务）。</summary>
+public interface IRefundStatsPort
+{
+    /// <summary>按区间汇总审批通过的退款金额。</summary>
+    /// <param name="from">区间起（含）。</param>
+    /// <param name="to">区间止（不含）。</param>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>退款金额合计。</returns>
+    /// <remarks>
+    /// <b>支付服务不可用时返回 0 而不是抛异常</b>：报表少一个数字，
+    /// 比整个工作台打不开要好。真正的故障由支付服务自己的日志暴露，
+    /// 这里不该让一个附属指标把主页面一起拖死。
+    /// </remarks>
+    Task<decimal> SumApprovedAsync(
+        DateTime from, DateTime to, long merchantId, long platformId, CancellationToken ct = default);
+}
+
+/// <summary>库存预警数端口（工作台报表用，数据在库存服务）。</summary>
+public interface ILowStockPort
+{
+    /// <summary>统计低于预警阈值的 SKU 数。</summary>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>预警 SKU 数。库存服务不可用时返回 0。</returns>
+    /// <remarks>同 <see cref="IRefundStatsPort"/>：附属指标不该拖垮主页面。</remarks>
+    Task<int> CountLowStockAsync(long merchantId, long platformId, CancellationToken ct = default);
 }

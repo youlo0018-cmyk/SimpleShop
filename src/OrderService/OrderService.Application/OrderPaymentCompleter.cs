@@ -123,7 +123,12 @@ public sealed class OrderPaymentCompleter
         }
 
         var affected = await _store
-            .TryTransitStatusAsync(order.Id, OrderStatuses.PendingPayment, OrderStatuses.PendingShipment, ct)
+            // paidAt 与状态在**同一条 UPDATE** 里写：拆成两步的话，
+            // 两步之间进程死掉会留下「已支付但 paid_at 为 null」的订单，
+            // 报表按支付时间统计时它会从所有区间里消失，GMV 凭空少一块。
+            .TryTransitStatusAsync(
+                order.Id, OrderStatuses.PendingPayment, OrderStatuses.PendingShipment,
+                paidAt: DateTime.UtcNow, ct: ct)
             .ConfigureAwait(false);
 
         if (affected == 0)

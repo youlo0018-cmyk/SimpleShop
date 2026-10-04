@@ -120,4 +120,16 @@ public sealed class RefundRepository : CrudRepository<RefundOrder>, IRefundRepos
                 UpdatedAt = DateTime.UtcNow
             })
             .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<decimal> SumApprovedAmountAsync(
+        DateTime from, DateTime to, long merchantId, long platformId,
+        CancellationToken ct = default)
+        => await Db.Select<RefundOrder>()
+            .Where(a => a.Status == RefundStatuses.Refunded)
+            .Where(a => a.ApprovedAt != null && a.ApprovedAt >= from && a.ApprovedAt < to)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .SumAsync(a => a.Amount)
+            .ConfigureAwait(false);
 }

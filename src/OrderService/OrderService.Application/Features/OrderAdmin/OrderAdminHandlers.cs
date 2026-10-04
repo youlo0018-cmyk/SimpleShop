@@ -171,7 +171,8 @@ public sealed class DeliverVirtualHandler : MediatR.IRequestHandler<DeliverVirtu
         var affected = await _store.TryTransitStatusAsync(
             order.Id,
             Domain.Entities.OrderStatuses.PendingShipment,
-            Domain.Entities.OrderStatuses.Completed, ct).ConfigureAwait(false);
+            Domain.Entities.OrderStatuses.Completed,
+            completedAt: DateTime.UtcNow, ct: ct).ConfigureAwait(false);
 
         if (affected == 0)
         {

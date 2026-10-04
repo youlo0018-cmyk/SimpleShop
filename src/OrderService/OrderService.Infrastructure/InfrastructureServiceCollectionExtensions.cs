@@ -47,6 +47,13 @@ public static class InfrastructureServiceCollectionExtensions
         AddDownstream<IInventoryPort, HttpInventoryPort>(
             services, configuration, "Services:InventoryServiceBaseUrl", "库存服务");
 
+        // 工作台报表的两个附属指标：数据分别在支付服务与库存服务。
+        // 复用同一个 AddDownstream，超时与 fail-fast 口径与下单链路一致。
+        AddDownstream<IRefundStatsPort, HttpRefundStatsPort>(
+            services, configuration, "Services:PaymentServiceBaseUrl", "支付服务");
+        AddDownstream<ILowStockPort, HttpLowStockPort>(
+            services, configuration, "Services:InventoryServiceBaseUrl", "库存服务");
+
         return services;
     }
 

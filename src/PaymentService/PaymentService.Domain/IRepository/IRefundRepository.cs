@@ -63,6 +63,23 @@ public interface IRefundRepository
     /// <returns>影响行数。返回 0 表示已被别人处理过。</returns>
     Task<int> TryApproveAsync(long refundId, int expectedStatus, int newStatus,
         long approverId, string approverName, string rejectReason, CancellationToken ct = default);
+
+    /// <summary>按区间汇总「审批通过」的退款金额，供工作台报表使用。</summary>
+    /// <param name="from">区间起（含）。</param>
+    /// <param name="to">区间止（不含）。</param>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>退款金额合计；无记录返回 0。</returns>
+    /// <remarks>
+    /// <b>只统计审批通过（20）且按 approved_at 落在区间内</b>的两类：
+    /// 待审批的钱还没退出去，算进「退款金额」会让退款率虚高；
+    /// 按申请时间统计的话，月初申请月底批的单会整个落在这个月，
+    /// 而这笔钱是月底才退的——和 GMV 用支付时间是一个道理。
+    /// </remarks>
+    Task<decimal> SumApprovedAmountAsync(
+        DateTime from, DateTime to, long merchantId, long platformId,
+        CancellationToken ct = default);
 }
 
 /// <summary>退款单分页结果。</summary>
