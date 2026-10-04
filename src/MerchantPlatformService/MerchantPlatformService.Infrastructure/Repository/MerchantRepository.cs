@@ -52,6 +52,38 @@ public sealed class MerchantRepository : CrudRepository<Merchant>, IMerchantRepo
     }
 
     /// <inheritdoc />
+    public async Task<long> CountByPlatformAsync(long platformId, CancellationToken ct = default)
+        => await Db.Select<Merchant>()
+            .Where(a => a.PlatformId == platformId)
+            .CountAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<long, long>> CountGroupByPlatformAsync(
+        IReadOnlyCollection<long> platformIds, CancellationToken ct = default)
+    {
+        var result = new Dictionary<long, long>();
+        if (platformIds.Count == 0) return result;
+
+        var rows = await Db.Select<Merchant>()
+            .Where(a => platformIds.Contains(a.PlatformId))
+            .ToListAsync(a => a.PlatformId, ct);
+
+        foreach (var group in rows.GroupBy(a => a))
+        {
+            result[group.Key] = group.Count();
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<Merchant> ListEnabledByPlatform(long platformId, CancellationToken ct = default)
+        => Db.Select<Merchant>()
+            .Where(a => a.PlatformId == platformId && a.Status == PlatformStatuses.Enabled)
+            .OrderBy(a => a.Id)
+            .ToList();
+
+    /// <inheritdoc />
     public async Task<PagedMerchants> PageAsync(MerchantFilter filter, CancellationToken ct = default)
     {
         var query = Db.Select<Merchant>();

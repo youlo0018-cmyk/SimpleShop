@@ -57,6 +57,21 @@ public sealed class InternalProductController : ControllerBase
         [FromBody] SyncProductRatingsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>批量下架某商户的全部已上架商品（商户审核被拒 / 停用时调用）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下架与索引同步统计。</returns>
+    /// <remarks>
+    /// <b>必须同步搜索索引</b>：搜索走 ES、<b>不走 C 端可见性过滤</b>。
+    /// 不同步就会出现「商品页看不到但搜索搜得到，点进去才发现下架了」。
+    /// 索引同步失败不回滚下架——商品已经在库里下架，严重度远低于「违规商品还在卖」，
+    /// 失败计数返回给调用方并记警告，交给对账任务兜底。
+    /// </remarks>
+    [HttpPost("off-shelf-by-merchant")]
+    public Task<ApiResponse<OffShelfByMerchantResult>> OffShelfByMerchant(
+        [FromBody] OffShelfProductsByMerchantCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>按 SKU Id 集合取快照信息。</summary>
     /// <param name="skuIds">SKU Id 集合，逗号分隔，最多 200 个。</param>
     /// <returns>命中的 SKU 快照列表。没命中的 SKU 不会出现在结果里。</returns>

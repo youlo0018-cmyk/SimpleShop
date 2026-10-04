@@ -81,6 +81,28 @@ public interface IMerchantRepository
     /// <returns>成功返回 true。</returns>
     Task<bool> SoftDeleteAsync(long merchantId, CancellationToken ct = default);
 
+    /// <summary>统计某平台下的商户数（删除平台的拦截条件）。</summary>
+    /// <param name="platformId">平台 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>商户数。</returns>
+    Task<long> CountByPlatformAsync(long platformId, CancellationToken ct = default);
+
+    /// <summary>批量统计各平台的商户数（平台列表页展示用）。</summary>
+    /// <param name="platformIds">平台 Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>平台 Id → 商户数。没有商户的平台不在结果里。</returns>
+    /// <remarks>
+    /// 刻意做成批量：平台列表一页最多 100 条，逐个统计就是 100 次查询。
+    /// </remarks>
+    Task<IReadOnlyDictionary<long, long>> CountGroupByPlatformAsync(
+        IReadOnlyCollection<long> platformIds, CancellationToken ct = default);
+
+    /// <summary>按平台取全部启用商户（供下拉框使用）。</summary>
+    /// <param name="platformId">平台 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>启用商户列表。</returns>
+    IReadOnlyList<Merchant> ListEnabledByPlatform(long platformId, CancellationToken ct = default);
+
     /// <summary>分页查商户。</summary>
     /// <param name="filter">过滤条件。</param>
     /// <param name="ct">取消令牌。</param>

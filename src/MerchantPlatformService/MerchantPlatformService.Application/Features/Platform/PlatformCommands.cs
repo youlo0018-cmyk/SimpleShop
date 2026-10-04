@@ -80,6 +80,13 @@ public record QueryPlatformsCommand(
     string Keyword = "", int Status = 0, int Page = 1, int PageSize = 20)
     : IRequest<ApiResponse<PagedPlatformDtos>>;
 
+/// <summary>平台下拉框数据。</summary>
+/// <remarks>
+/// 单独一个接口而不是从 List 里筛：下拉框要的是<b>全部启用平台</b>且不分页，
+/// 而 List 带分页与关键词过滤。后台建商户时要选平台，这里是最频繁的下拉来源。
+/// </remarks>
+public record QueryPlatformOptionsQuery : IRequest<ApiResponse<List<PlatformOptionDto>>>;
+
 /// <summary>平台下拉项。</summary>
 /// <param name="Id">平台 Id。</param>
 /// <param name="Name">平台名称。<b>前端下拉直接显示它，不显示 Id</b>。</param>

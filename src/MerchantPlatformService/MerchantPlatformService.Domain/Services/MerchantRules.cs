@@ -128,13 +128,24 @@ public static partial class MerchantRules
     /// <c>Name</c> 是地区名称；<c>Children</c> 是下级地区，null 表示叶子节点。
     /// 写成 class 而不是 record：反序列化只需要一个带无参构造的 POCO，
     /// record 的主构造函数在这里没有收益却要多写两行样板。
+    ///
+    /// <para>🔴 <b>两个属性名必须显式标 [JsonPropertyName]</b>：地区数据是小程序与运营之间
+    /// 约定的 JSON 契约，键名是<b>小写</b> <c>name</c> / <c>children</c>。
+    /// 而 <c>JsonSerializer.Deserialize&lt;T&gt;(json)</c> 用的是默认选项，
+    /// <c>PropertyNameCaseInsensitive</c> 默认为 <b>false</b>——
+    /// 于是 PascalCase 的 <c>Name</c> 绑不上小写的 <c>name</c>，
+    /// 反序列化出来全是默认值，校验立刻报「每一级地区都必须填写名称」，
+    /// 而用户传的数据明明每一级都有名称。症状与病因隔了三层，极难往回找。
+    /// 凡是参与 JSON 契约的实体，键名一律显式标注，不依赖序列化器的默认行为。</para>
     /// </remarks>
     public sealed class RegionNode
     {
         /// <summary>地区名称。</summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = string.Empty;
 
         /// <summary>下级地区，null 表示叶子节点。</summary>
+        [System.Text.Json.Serialization.JsonPropertyName("children")]
         public RegionNode[]? Children { get; set; }
     }
 }

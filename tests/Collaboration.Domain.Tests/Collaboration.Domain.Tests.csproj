@@ -36,6 +36,8 @@
     <ProjectReference Include="..\..\src\MarketingService\MarketingService.Domain\MarketingService.Domain.csproj" />
     <!-- 只引用 Domain：评价的纯计算规则（规格文案 / 均分 / 追评窗口） -->
     <ProjectReference Include="..\..\src\EvaluateService\EvaluateService.Domain\EvaluateService.Domain.csproj" />
+    <!-- 只引用 Domain：平台 / 商户的纯规则（编码、校验、地区 JSON） -->
+    <ProjectReference Include="..\..\src\MerchantPlatformService\MerchantPlatformService.Domain\MerchantPlatformService.Domain.csproj" />
     <!-- 只引用 Domain：纯计算逻辑 -->
     <ProjectReference Include="..\..\src\OrderService\OrderService.Domain\OrderService.Domain.csproj" />
     <ProjectReference Include="..\..\src\OrderService\OrderService.Application\OrderService.Application.csproj" />
