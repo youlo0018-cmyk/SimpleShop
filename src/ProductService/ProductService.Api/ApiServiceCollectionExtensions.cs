@@ -1,4 +1,5 @@
 using Collaboration.Domain.MediatR;
+using Collaboration.Domain.Messaging;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.Configuration;
@@ -76,6 +77,7 @@ public static class ApiServiceCollectionExtensions
         });
 
         services.AddInfrastructure(configuration);
+    services.AddEventBus(configuration);
         return services;
     }
 }

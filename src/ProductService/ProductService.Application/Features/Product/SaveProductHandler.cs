@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using Collaboration.Domain.Infrastructure;
+using Collaboration.Domain.Messaging;
 using MediatR;
 using Microsoft.Extensions.Logging;
 // 本命名空间 Features.Product 会遮蔽同名实体 Product，枚举同样从别名命名空间取。
@@ -28,6 +29,7 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
     private readonly IBrandRepository _brands;
     private readonly IInventoryClient _inventory;
     private readonly IProductSearchIndex _search;
+    private readonly IEventPublisher _events;
     private readonly ILogger<SaveProductHandler> _logger;
 
     /// <summary>构造处理器。</summary>
@@ -43,6 +45,7 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
         IBrandRepository brands,
         IInventoryClient inventory,
         IProductSearchIndex search,
+        IEventPublisher events,
         ILogger<SaveProductHandler> logger)
     {
         _products = products;
@@ -50,6 +53,7 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
         _brands = brands;
         _inventory = inventory;
         _search = search;
+        _events = events;
         _logger = logger;
     }
 
@@ -376,6 +380,7 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
         // 索引靠补偿任务补齐（见 AI_HANDOFF 的「还没做」清单）。
         // 这里返回失败会让用户以为商品没保存，于是再点一次保存——那才是真的重复商品。
         await SyncSearchAsync(product, ct);
+        await PublishChangedAsync(product, ct);
 
         return ApiResults.Ok(product.Id, isCreate ? "创建成功" : "保存成功");
     }
@@ -399,6 +404,24 @@ public sealed class SaveProductHandler : IRequestHandler<SaveProductCommand, Api
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "同步商品到搜索索引失败：{ProductId}", product.Id);
+        }
+    }
+
+    /// <summary>发布商品变更事件。失败只记日志，不影响业务结果。</summary>
+    /// <param name="product">已保存的商品。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    private async Task PublishChangedAsync(ProductEntity product, CancellationToken ct)
+    {
+        try
+        {
+            await _events.PublishAsync(EventTopics.ProductChanged, new ProductChangedEvent(
+                product.Id, product.SpuName, product.PlatformId, product.MerchantId,
+                product.AuditStatus, product.Status), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "发布商品变更事件失败：{ProductId}", product.Id);
         }
     }
 }

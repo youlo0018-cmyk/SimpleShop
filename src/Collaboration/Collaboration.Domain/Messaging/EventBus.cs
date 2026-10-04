@@ -1,5 +1,7 @@
 using Collaboration.Domain.Configuration;
-using MessagePack;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 
@@ -28,6 +30,13 @@ public interface IEventPublisher
 /// </remarks>
 public sealed class EventBus : IEventPublisher, IDisposable
 {
+    /// <summary>序列化选项：camelCase 与项目对外接口口径一致，消费方读到的键名可预期。</summary>
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
     private readonly RabbitMqOptions _options;
     private readonly ILogger<EventBus> _logger;
     private readonly object _sync = new();
@@ -55,10 +64,14 @@ public sealed class EventBus : IEventPublisher, IDisposable
                 EventType = eventType,
                 OccurredAt = DateTime.UtcNow,
                 SchemaVersion = 1,
-                Payload = Convert.ToBase64String(MessagePackSerializer.Serialize(payload))
+                // 🔴 载荷用 **JSON 而不是 MessagePack**：消息会长期躺在队列里，
+                // 消费方要能反序列化。MessagePack 的 StandardResolver 要求每个载荷类型
+                // 都标 [MessagePackObject] / [Key]，漏标一个就抛 FormatterNotRegisteredException——
+                // 本项目就是这么漏掉 ProductChangedEvent 的。JSON 自描述，漏标也不会失败。
+                Payload = JsonSerializer.Serialize(payload, JsonOptions)
             };
 
-            var body = MessagePackSerializer.Serialize(envelope);
+            var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope, JsonOptions));
 
             lock (_sync)
             {

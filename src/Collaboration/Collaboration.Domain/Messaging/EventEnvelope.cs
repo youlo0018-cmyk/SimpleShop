@@ -1,4 +1,4 @@
-using MessagePack;
+using System.Text.Json.Serialization;
 
 namespace Collaboration.Domain.Messaging;
 
@@ -16,26 +16,21 @@ namespace Collaboration.Domain.Messaging;
 /// <param name="OccurredAt">发生时间 UTC。</param>
 /// <param name="SchemaVersion">载荷结构版本。</param>
 /// <param name="Payload">载荷，MessagePack 序列化后 base64。</param>
-[MessagePackObject]
 public sealed class EventEnvelope
 {
     /// <summary>事件 Id，消费方据此去重。</summary>
-    [Key(0)]
     public string EventId { get; set; } = string.Empty;
 
     /// <summary>事件类型，取值见 <see cref="EventTopics"/>。</summary>
-    [Key(1)]
     public string EventType { get; set; } = string.Empty;
 
     /// <summary>发生时间 UTC。</summary>
-    [Key(2)]
     public DateTime OccurredAt { get; set; }
 
     /// <summary>载荷结构版本。</summary>
-    [Key(3)]
     public int SchemaVersion { get; set; } = 1;
 
     /// <summary>载荷，MessagePack 序列化后 base64。</summary>
-    [Key(4)]
+    [JsonPropertyName("payload")]
     public string Payload { get; set; } = string.Empty;
 }
