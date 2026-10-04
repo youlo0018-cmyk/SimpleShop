@@ -261,6 +261,46 @@ public sealed class StockRepository : CrudRepository<Stock>, IStockRepository
             .ToListAsync(ct);
 
     /// <inheritdoc />
+    public async Task<List<OrphanLockCandidate>> GetOrphanLockCandidatesAsync(
+        DateTime olderThanUtc, int limit, CancellationToken ct = default)
+    {
+        var take = Math.Clamp(limit, 1, 1000);
+
+        // 第一步：取所有「早于阈值」的锁定流水
+        var locks = await _db.Select<StockFlow>()
+            .Where(a => a.Action == StockActions.Lock && a.CreatedAt < olderThanUtc)
+            .OrderBy(a => a.CreatedAt)
+            .OrderBy(a => a.Id)
+            .Limit(take * 2)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        if (locks.Count == 0) return [];
+
+        // 第二步：这些 bizNo 里，哪些已经被释放 / 扣减结算过了。
+        // 用「不存在后续结算流水」判断，而不是逐个算差值：
+        // 前者一条 IN 就能问完，且不受「释放数量与锁定数量是否相等」的脏数据影响
+        var bizNos = locks.Select(a => a.BizNo).Distinct().ToList();
+        var settled = await _db.Select<StockFlow>()
+            .Where(a => bizNos.Contains(a.BizNo)
+                && (a.Action == StockActions.Release || a.Action == StockActions.Deduct))
+            .ToListAsync(a => a.BizNo, ct)
+            .ConfigureAwait(false);
+
+        var settledSet = settled.ToHashSet(StringComparer.Ordinal);
+        var result = new List<OrphanLockCandidate>(take);
+
+        foreach (var flow in locks)
+        {
+            if (result.Count >= take) break;
+            if (settledSet.Contains(flow.BizNo)) continue;
+            result.Add(new OrphanLockCandidate(flow.BizNo, flow.SkuId, flow.Quantity, flow.CreatedAt));
+        }
+
+        return result;
+    }
+
+    /// <inheritdoc />
     public async Task<Dictionary<long, int>> GetLockedMapAsync(IReadOnlyCollection<long> skuIds, CancellationToken ct = default)
     {
         if (skuIds.Count == 0) return new Dictionary<long, int>();

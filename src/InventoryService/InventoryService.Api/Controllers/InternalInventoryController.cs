@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using InventoryService.Application.Features.Internal;
 using InventoryService.Application.Features.Operations;
+using InventoryService.Domain.IRepository;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
@@ -77,5 +78,31 @@ public sealed class InternalInventoryController : ControllerBase
     [HttpPost("compensate-releases")]
     public Task<ApiResponse<CompensateStockReleasesResult>> CompensateReleases(
         [FromBody] CompensateStockReleasesCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>列出疑似孤儿锁定：已超期、且从未被释放 / 扣减。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>候选清单。</returns>
+    /// <remarks>
+    /// 下单链路是「锁库存 → 建订单」。进程恰好死在两步之间时，库存会**永远锁着**
+    /// 而订单根本不存在，没有任何补偿路径能找得回来。这个接口就是那条路径的入口。
+    /// </remarks>
+    [HttpPost("reconcile/orphan-locks")]
+    public Task<ApiResponse<List<OrphanLockCandidate>>> OrphanLocks(
+        [FromBody] QueryOrphanLocksCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>释放已确认无对应订单的孤儿锁定。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>释放统计。</returns>
+    /// <remarks>
+    /// <b>库存服务不判断「有没有订单」</b>——那要问订单服务。
+    /// 调用方要先拿「确实没有订单」的结论再来释放，否则两个服务会耦在一起。
+    /// </remarks>
+    [HttpPost("reconcile/release-orphans")]
+    public Task<ApiResponse<ReleaseOrphanLocksResult>> ReleaseOrphans(
+        [FromBody] ReleaseOrphanLocksCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 }

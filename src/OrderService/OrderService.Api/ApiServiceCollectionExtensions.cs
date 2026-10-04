@@ -34,6 +34,7 @@ public static class ApiServiceCollectionExtensions
         QueryOrderForPaymentValidators.AddQueryOrderForPaymentValidators(services);
         MarkOrderRefundedValidators.AddMarkOrderRefundedValidators(services);
         CompletePaymentValidators.AddCompletePaymentValidators(services);
+    BatchOrderExistsValidators.AddBatchOrderExistsValidators(services);
 
         // 超时阈值是配置不是常量：不同业务等待时长不同，线上要临时调长时改配置比发版快
         services.Configure<OrderTimeoutOptions>(configuration.GetSection(OrderTimeoutOptions.SectionName));

@@ -24,6 +24,7 @@ public static class ApiServiceCollectionExtensions
 
         StockValidators.AddStockValidators(services);
     CompensateStockReleasesValidators.AddCompensateStockReleasesValidators(services);
+    ReconcileOrphanLocksValidators.AddReconcileOrphanLocksValidators(services);
 
         services.AddInfrastructure();
         return services;

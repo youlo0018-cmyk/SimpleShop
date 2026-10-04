@@ -9,6 +9,10 @@ using StackExchange.Redis;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// 孤儿对账要用两个不同 BaseAddress 的 HttpClient（见下方注册处）
+const string OrphanInventoryClient = "orphan_inventory";
+const string OrphanOrderClient = "orphan_order";
+
 // ---------- 与其它服务同一条启动链：先从 AgileConfig 取配置，再连 Redis ----------
 // 定时任务没有数据库，所以显式豁免 ConnectionStrings:Default。
 // 填一个连不上的连接串只会让后来排查的人以为它真的连了库。
@@ -62,6 +66,7 @@ builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<PointExpireJob>(
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<ProductSearchIndexSyncJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<EvaluateRecomputeJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<StockReleaseCompensateJob>());
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<OrphanLockReconcileJob>());
 
 builder.Services.AddHttpClient<StockReleaseCompensateJob>(client =>
 {
@@ -70,6 +75,27 @@ builder.Services.AddHttpClient<StockReleaseCompensateJob>(client =>
     // 补偿重试会逐条做库存变更 + 写流水，量大时比普通查询慢
     client.Timeout = TimeSpan.FromSeconds(120);
 });
+
+// 孤儿对账要同时问库存服务（哪些锁是候选）和订单服务（这些单号是否真的不存在），
+// 所以需要**两个 BaseAddress 不同的 HttpClient**。
+// 注意不能用 AddHttpClient<T>() 注册两次——typed client 只会保留最后一次，
+// 而任务构造函数要的是两个 HttpClient，DI 根本满足不了。改用命名客户端 + 工厂。
+builder.Services.AddHttpClient(OrphanInventoryClient, client =>
+{
+    client.BaseAddress = new Uri(inventoryUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(120);
+});
+
+builder.Services.AddHttpClient(OrphanOrderClient, client =>
+{
+    client.BaseAddress = new Uri(orderUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(120);
+});
+
+builder.Services.AddTransient(sp => new OrphanLockReconcileJob(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient(OrphanInventoryClient),
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient(OrphanOrderClient),
+    sp.GetRequiredService<ILogger<OrphanLockReconcileJob>>()));
 
 builder.Services.AddHttpClient<ProductSearchIndexSyncJob>(client =>
 {

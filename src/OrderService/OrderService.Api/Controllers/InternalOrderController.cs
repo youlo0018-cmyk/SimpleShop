@@ -97,4 +97,18 @@ public sealed class InternalOrderController : ControllerBase
     public Task<ApiResponse> CompletePayment(
         [FromBody] CompletePaymentCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>批量判断哪些订单号**确实不存在**（孤儿预留对账用）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>存在与不存在的订单号。</returns>
+    /// <remarks>
+    /// 下单链路是「锁库存 → 建订单」。进程死在两步之间时，库存会永远锁着而订单不存在。
+    /// 定时任务靠这个接口确认「确实没有订单」，才敢去释放那些库存——
+    /// 判错一次就是<b>释放真实订单所占的库存</b>，直接超卖。
+    /// </remarks>
+    [HttpPost("batch-exists")]
+    public Task<ApiResponse<BatchOrderExistsResult>> BatchExists(
+        [FromBody] BatchOrderExistsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 }

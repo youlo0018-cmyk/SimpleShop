@@ -129,6 +129,22 @@ public interface IStockRepository
     /// <returns>流水列表（倒序）。幂等只读。</returns>
     Task<List<StockFlow>> GetFlowsAsync(long skuId, int limit, CancellationToken ct = default);
 
+    /// <summary>找出疑似孤儿锁定：锁定时间已超过阈值，且没有任何后续的释放 / 扣减流水。</summary>
+    /// <param name="olderThanUtc">锁定早于这个时间（UTC）才算候选。</param>
+    /// <param name="limit">单次最多返回多少条。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>候选列表，按锁定时间从早到晚排。</returns>
+    /// <remarks>
+    /// <b>这里只管「有没有被结算过」，不管「有没有订单」</b>：那要问订单服务。
+    /// 库存服务只提供候选，最终释放由调用方拿着「确实没有订单」的结论来触发——
+    /// 否则库存服务就得反向依赖订单服务，两个服务耦在一起。
+    ///
+    /// <para><b>为什么需要它</b>：下单链路是「锁库存 → 建订单」。如果进程恰好死在两步之间，
+    /// 库存就永远锁着而订单根本不存在，没有任何补偿路径能把它找回来。</para>
+    /// </remarks>
+    Task<List<OrphanLockCandidate>> GetOrphanLockCandidatesAsync(
+        DateTime olderThanUtc, int limit, CancellationToken ct = default);
+
     /// <summary>按 SKU Id 集合统计各 SKU 处于锁定态的量（孤儿预留对账用）。</summary>
     /// <param name="skuIds">SKU Id 集合。</param>
     /// <param name="ct">取消令牌。</param>
