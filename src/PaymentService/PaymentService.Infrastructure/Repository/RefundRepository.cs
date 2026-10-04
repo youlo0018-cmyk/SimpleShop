@@ -62,12 +62,15 @@ public sealed class RefundRepository : CrudRepository<RefundOrder>, IRefundRepos
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<RefundOrderItem>> ListRefundedItemsAsync(
-        string orderNo, CancellationToken ct = default)
+        string orderNo, bool includePending = false, CancellationToken ct = default)
     {
-        // 只统计**已退款（20）**的退款单。待审批的还没生效，
-        // 算进「已退」会把可退余额提前吃掉，客户被拒之后再想退就没额度了
+        // 「已拒绝（90）」一律不算：拒绝无副作用，额度应该还回给客户
+        int[] statuses = includePending
+            ? [RefundStatuses.PendingApproval, RefundStatuses.Refunded]
+            : [RefundStatuses.Refunded];
+
         var refundIds = await Db.Select<RefundOrder>()
-            .Where(a => a.OrderNo == orderNo && a.Status == RefundStatuses.Refunded)
+            .Where(a => a.OrderNo == orderNo && statuses.Contains(a.Status))
             .ToListAsync(a => a.Id, ct)
             .ConfigureAwait(false);
 

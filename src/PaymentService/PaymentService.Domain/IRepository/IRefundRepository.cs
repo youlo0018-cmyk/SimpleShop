@@ -25,16 +25,22 @@ public interface IRefundRepository
     /// <returns>明细列表。</returns>
     Task<IReadOnlyList<RefundOrderItem>> ListItemsAsync(long refundId, CancellationToken ct = default);
 
-    /// <summary>取某订单**已退款**的明细（用于算可退余额）。</summary>
+    /// <summary>取某订单已占用的退款明细（用于算可退余额）。</summary>
     /// <param name="orderNo">订单号。</param>
+    /// <param name="includePending">是否把「待审批」也算作已占用。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>已退款明细列表。</returns>
+    /// <returns>退款明细列表。</returns>
     /// <remarks>
-    /// 只统计**已退款（20）**的：待审批的退款单还没生效，
-    /// 把它算进「已退」会让可退余额被提前吃掉，出现「申请时被拒之后钱却退不了了」。
+    /// <paramref name="includePending"/> 为 true 时把「待审批（10）」也算作已占用，
+    /// 这样同一订单开不出两张注定过不了的退款单，用户当场就能看到「可退余额不足」。
+    ///
+    /// <para><b>审批时必须传 false</b>：审批要校验的是「实际已退了多少」，
+    /// 把本单自己算进去就成了「它永远超自己」。</para>
+    ///
+    /// <para>「已拒绝（90）」一律不算——拒绝无副作用，额度应该还回给客户。</para>
     /// </remarks>
     Task<IReadOnlyList<RefundOrderItem>> ListRefundedItemsAsync(string orderNo,
-        CancellationToken ct = default);
+        bool includePending = false, CancellationToken ct = default);
 
     /// <summary>分页查退款单。</summary>
     /// <param name="status">状态过滤，0 表示不限。</param>

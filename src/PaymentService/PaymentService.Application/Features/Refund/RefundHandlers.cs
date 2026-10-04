@@ -52,7 +52,9 @@ public sealed class ApplyRefundHandler : IRequestHandler<ApplyRefundCommand, Api
                 $"当前订单状态是「{order.StatusName}」，{RefundRules.WindowDescription(strictest)}");
         }
 
-        var refundedItems = await _refunds.ListRefundedItemsAsync(orderNo, ct).ConfigureAwait(false);
+        // 申请时把「待审批」也算作已占用：否则同一订单能连开两张注定过不了的退款单，
+        // 用户填完原因提交才发现余额不够，白填一遍
+        var refundedItems = await _refunds.ListRefundedItemsAsync(orderNo, true, ct).ConfigureAwait(false);
         var alreadyRefunded = refundedItems.Sum(a => a.Amount);
 
         var (isWhole, total, itemAmounts, resolveError) = ResolveItems(request.Items, order, refundedItems);

@@ -164,7 +164,7 @@ public sealed class QueryOrderDetailHandler
             order.ReceiverName, order.ReceiverPhone, order.ReceiverAddress,
             order.Remark, order.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
             items.Select(a => new OrderItemDto(
-                a.SkuId, a.SpuId, a.ProductName, a.SkuSpecText,
+                a.Id, a.SkuId, a.SpuId, a.ProductName, a.SkuSpecText,
                 a.Price, a.Quantity, a.OriginalAmount,
                 a.ActivityDiscount, a.CouponDiscount, a.PayableAmount, a.DeliveryType,
                 a.SourceType)).ToList());

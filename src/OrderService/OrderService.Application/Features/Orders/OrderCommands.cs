@@ -150,6 +150,7 @@ public sealed record OrderDetailDto(
     string Remark, string CreatedAt, IReadOnlyList<OrderItemDto> Items);
 
 /// <summary>订单行。</summary>
+/// <param name="OrderItemId">订单行 Id。<b>部分退款按它定位退哪一行</b>，缺了这个字段部分退款无从下手。</param>
 /// <param name="SkuId">SKU Id。</param>
 /// <param name="SpuId">SPU Id。</param>
 /// <param name="ProductName">商品名快照。</param>
@@ -163,7 +164,7 @@ public sealed record OrderDetailDto(
 /// <param name="DeliveryType">配送方式。</param>
 /// <param name="SourceType">订单来源，见 <see cref="OrderSourceTypes"/>。后台订单列表要靠它区分秒杀单。</param>
 public sealed record OrderItemDto(
-    long SkuId, long SpuId, string ProductName, string SkuSpecText,
+    long OrderItemId, long SkuId, long SpuId, string ProductName, string SkuSpecText,
     decimal Price, int Quantity, decimal OriginalAmount,
     decimal ActivityDiscount, decimal CouponDiscount, decimal PayableAmount, int DeliveryType,
     int SourceType = 1);

@@ -38,11 +38,16 @@ public static class PaymentExecutor
             return ApiResults.Fail<PaymentDto>(BaseApiResponseCode.NotFound, "订单不存在或订单服务不可用");
         }
 
-        var payment = await payments.GetByOrderNoAsync(no, ct).ConfigureAwait(false);
+        // 没有支付单就**自动补一张**，而不是报错要求先调 Create。
+        // 规格 5.28 的后台入口就是直接 POST /payments/Simulate {orderNo, success}——
+        // 运营在订单列表点一下按钮就完事了，不该先跳去支付页建单再回来。
+        // 金额同样从订单反查，自动补的单同样不接受客户端传金额。
+        var payment = await payments.GetByOrderNoAsync(no, ct).ConfigureAwait(false)
+            ?? await CreateMissingAsync(payments, order, ct);
+
         if (payment is null)
         {
-            return ApiResults.Fail<PaymentDto>(
-                BaseApiResponseCode.NotFound, "支付单不存在，请先创建支付单");
+            return ApiResults.Fail<PaymentDto>(BaseApiResponseCode.InternalError, "支付单创建失败，请重试");
         }
 
         if (payment.Status == PaymentStatuses.Paid)
@@ -82,5 +87,29 @@ public static class PaymentExecutor
 
         var updated = await payments.GetByOrderNoAsync(no, ct).ConfigureAwait(false);
         return ApiResults.Ok(PaymentAssembler.Build(updated ?? payment, order.StatusName), "支付成功");
+    }
+
+    /// <summary>支付单不存在时按订单数据补建一张。</summary>
+    /// <param name="payments">支付仓储。</param>
+    /// <param name="order">订单信息。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>新建的支付单；创建失败返回 null。</returns>
+    private static async Task<PaymentOrder?> CreateMissingAsync(
+        IPaymentRepository payments, Services.OrderForPayment order, CancellationToken ct)
+    {
+        var payment = new PaymentOrder
+        {
+            PaymentNo = $"PAY{DateTime.UtcNow:yyyyMMddHHmmss}{Random.Shared.Next(100000, 1000000)}",
+            OrderId = order.OrderId,
+            OrderNo = order.OrderNo,
+            Amount = RefundRules.Round2(order.PayableAmount),
+            Status = PaymentStatuses.Pending,
+            Channel = PaymentChannels.Simulate,
+            PlatformId = order.PlatformId,
+            MerchantId = order.MerchantId
+        };
+
+        await payments.InsertOrGetAsync(payment, ct).ConfigureAwait(false);
+        return await payments.GetByOrderNoAsync(order.OrderNo, ct).ConfigureAwait(false);
     }
 }

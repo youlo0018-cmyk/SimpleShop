@@ -48,7 +48,9 @@ public sealed class ApproveRefundHandler : IRequestHandler<ApproveRefundCommand,
         var order = await _orders.GetForPaymentAsync(refund.OrderNo, ct).ConfigureAwait(false);
         if (order is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "订单不存在");
 
-        var refundedItems = await _refunds.ListRefundedItemsAsync(refund.OrderNo, ct).ConfigureAwait(false);
+        // 审批时**不能**把待审批的算进来：那会把本单自己算进去，
+        // 变成「这笔退款永远超过它自己」而永远批不过
+        var refundedItems = await _refunds.ListRefundedItemsAsync(refund.OrderNo, false, ct).ConfigureAwait(false);
         var alreadyRefunded = refundedItems.Sum(a => a.Amount);
 
         if (!RefundRules.WithinRefundableBalance(refund.Amount, order.PayableAmount, alreadyRefunded))

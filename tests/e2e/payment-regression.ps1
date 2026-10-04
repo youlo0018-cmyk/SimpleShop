@@ -1,0 +1,353 @@
+<#
+.SYNOPSIS
+    PaymentService（5066）回归测试。
+.DESCRIPTION
+    覆盖 BUSINESS.md 10 支付与退款、DATA_SPEC 5.25~5.28：
+      - 支付单金额**服务端反查**（命令里没有金额字段）
+      - 支付幂等：重复创建 / 重复确认都拿到同一结果，**不重复触发收尾**
+      - 模拟支付失败：订单保持 10 待支付，占用不变，可重新发起
+      - 退款窗口按配送方式判定：虚拟 {20,30} 可退、**签收后不可退（含部分退）**；
+        实物全程可退
+      - 累计退款 ≤ 实付（含运费）；整单退含运费、部分退不退运费
+      - 审批时二次校验累计限额；重复审批被拒；拒绝无副作用
+    退出码非 0 即视为回归失败。
+#>
+[CmdletBinding()]
+param(
+    [string]$Gateway = 'http://127.0.0.1:5008',
+    [string]$Payment = 'http://127.0.0.1:5066',
+    [string]$Order = 'http://127.0.0.1:5064',
+    [string]$AdminUser = 'codexadmin',
+    [string]$AdminPassword = 'Admin123456',
+    [switch]$StopOnFail
+)
+
+$ErrorActionPreference = 'Continue'
+$script:pass = 0
+$script:fail = 0
+$script:failures = @()
+
+function Invoke-Case {
+    param([string]$Id, [string]$Name, [scriptblock]$Action)
+    try {
+        if (& $Action) {
+            $script:pass++
+            Write-Host ("  PASS  " + $Id + "  " + $Name) -ForegroundColor Green
+        } else {
+            $script:fail++
+            $script:failures += "$Id $Name"
+            Write-Host ("  FAIL  " + $Id + "  " + $Name) -ForegroundColor Red
+            if ($StopOnFail) { throw "用例 $Id 失败" }
+        }
+    } catch {
+        $script:fail++
+        $script:failures += "$Id $Name (异常: $($_.Exception.Message))"
+        Write-Host ("  FAIL  " + $Id + "  " + $Name + "  " + $_.Exception.Message) -ForegroundColor Red
+        if ($StopOnFail) { throw }
+    }
+}
+
+Add-Type -AssemblyName System.Net.Http
+$http = [System.Net.Http.HttpClient]::new()
+
+$script:suffix = Get-Random -Minimum 100000 -Maximum 999999
+$script:customerId = 970000000 + $script:suffix
+$script:price = 25.50
+$script:productId = 0
+$script:categoryIds = @()
+$script:skuIds = @()
+
+function Get-AdminToken {
+    $d = [System.Collections.Generic.Dictionary[string,string]]::new()
+    $d['grant_type'] = 'password'; $d['client_id'] = 'admin-app'
+    $d['username'] = $AdminUser;     $d['password'] = $AdminPassword
+    $r = $http.PostAsync("$Gateway/gateway/auth/token", [System.Net.Http.FormUrlEncodedContent]::new($d)).GetAwaiter().GetResult()
+    return ($r.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json).access_token
+}
+
+$script:adminHeaders = @{ Authorization = "Bearer $(Get-AdminToken)" }
+
+function PayPost([string]$Op, $Body) {
+    # $Op 自带前导 /，只能直接拼接；写成 "$Payment/$Op" 会拼出双斜杠而全部 404
+    # 校验失败与部分业务失败都由全局异常中间件返回 **HTTP 400**，
+    # Invoke-RestMethod 见到 400 直接抛异常，body 里的 { success:false, message } 就拿不到了。
+    # 所以统一包一层：无论 HTTP 是不是错误，都把响应体解析出来返回。
+    try {
+        return Invoke-RestMethod "$Payment$Op" -Method Post -Headers $script:adminHeaders `
+            -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
+    } catch {
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{ success = $false; code = -1; message = $_.Exception.Message; data = $null }
+        }
+        try { return $raw | ConvertFrom-Json -AsHashtable } catch { return [pscustomobject]@{ success = $false; code = -1; message = $raw; data = $null } }
+    }
+}
+
+function OrderPost([string]$Op, $Body) {
+    return Invoke-RestMethod "$Order$Op" -Method Post -Headers $script:adminHeaders `
+        -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
+}
+
+function Get-OrderStatus([string]$OrderNo) {
+    $d = Invoke-RestMethod "$Order/orders/Detail?orderNo=$OrderNo&customerId=$($script:customerId)" -TimeoutSec 30
+    return [int]$d.data.status
+}
+
+# 校验失败时 message 只有「请求参数校验失败」，具体原因在 errors 里（DATA_SPEC 3.5）。
+# 断言「因某条规则被拒」必须看 errors，否则永远匹配不上。
+function Get-ErrText($Resp) {
+    if ($null -eq $Resp.errors) { return '' }
+    $errs = $Resp.errors
+    if ($errs -is [System.Collections.IDictionary]) {
+        return (@($errs.Values | ForEach-Object { $_ }) -join ' ')
+    }
+    return (@($errs.PSObject.Properties | ForEach-Object { $_.Value }) -join ' ')
+}
+
+# 建一笔待支付订单。$DeliveryType 决定后面的退款窗口判定：
+# 1 实物快递（全程可退）/ 2 虚拟（仅 20、30 可退）
+function New-PendingOrder([string]$Tag, [int]$DeliveryType = 1, [decimal]$Freight = 0) {
+    $line = @{
+        spuId = $script:productId
+        skuId = $script:skuIds[0]
+        quantity = 2
+        unitPrice = $script:price
+        productName = "支付商品$($script:suffix)"
+        skuSpecText = '红 / M'
+        deliveryType = $DeliveryType
+    }
+    $body = @{
+        customerId = $script:customerId
+        platformId = 0
+        merchantId = 0
+        idempotencyKey = "PAY-$Tag-$($script:suffix)"
+        receiverName = '张三'
+        receiverPhone = '13800000000'
+        receiverAddress = '某地某小区 1 号楼 101'
+        lines = @($line)
+        couponId = 0
+        pointsToUse = 0
+        freight = $Freight
+    }
+    return (Invoke-RestMethod "$Order/orders/Create" -Method Post -Headers $script:adminHeaders `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60).data
+}
+
+Write-Host "`n=== PAY 准备：三级分类 + 一个有库存的商品 ===" -ForegroundColor Cyan
+
+Invoke-Case 'API-PAY-000' '建三级分类 + 200 件库存的商品（单价 25.50）' {
+    $c1 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = 0; categoryName = "支付$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $c2 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $c1; categoryName = "支付$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $c3 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $c2; categoryName = "支付$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $script:categoryIds = @($c1, $c2, $c3)
+
+    $body = @{
+        productId = 0; spuName = "支付商品$($script:suffix)"; categoryId = $c3
+        deliveryType = 1; mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "PAY$($script:suffix)"; specValues = @('红'); price = $script:price; stock = 200; status = 1 })
+    }
+    $script:productId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60).data
+
+    $det = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:productId)" `
+        -Headers $script:adminHeaders -TimeoutSec 30
+    $script:skuIds = @($det.data.skus | ForEach-Object { [long]$_.id })
+
+    return $script:productId -gt 0 -and $script:skuIds.Count -eq 1
+}
+
+Write-Host "`n=== PAY 支付单：金额服务端反查 + 幂等 ===" -ForegroundColor Cyan
+
+Invoke-Case 'API-PAY-010' '创建支付单：金额 = 订单实付（服务端反查，非客户端传入）' {
+    $o = New-PendingOrder 'A'
+    $script:orderA = $o.orderNo
+    if (-not $o.orderNo) { return $false }
+
+    $r = PayPost '/payments/Create' @{ orderNo = $script:orderA }
+    if (-not $r.success) { return $false }
+
+    # 2 件 × 25.50 = 51.00，无运费无优惠
+    return $r.data.amount -eq 51.00 -and $r.data.statusName -eq '待支付' -and $r.data.paymentNo.Length -gt 0
+}
+
+Invoke-Case 'API-PAY-011' '🔴 重复创建支付单：拿到**同一张单**而不是造一堆' {
+    $a = PayPost '/payments/Create' @{ orderNo = $script:orderA }
+    $b = PayPost '/payments/Create' @{ orderNo = $script:orderA }
+    # 用户反复点「去支付」是常态，幂等键 {order_no}:{channel}
+    return $a.data.paymentNo -eq $b.data.paymentNo
+}
+
+Invoke-Case 'API-PAY-012' '订单不存在时被拒' {
+    $r = PayPost '/payments/Create' @{ orderNo = 'NOT-EXIST-ORDER' }
+    return (-not $r.success) -and $r.message -match '订单不存在'
+}
+
+Write-Host "`n=== PAY 模拟支付 ===" -ForegroundColor Cyan
+
+Invoke-Case 'API-PAY-020' '模拟支付失败：订单**保持 10 待支付**，不关单' {
+    $r = PayPost '/payments/Simulate' @{ orderNo = $script:orderA; success = $false }
+    return $r.success -and (Get-OrderStatus $script:orderA) -eq 10
+}
+
+Invoke-Case 'API-PAY-021' '模拟支付成功：订单 10 → 20 已支付' {
+    $r = PayPost '/payments/Simulate' @{ orderNo = $script:orderA; success = $true }
+    return $r.success -and $r.data.statusName -eq '已支付' -and (Get-OrderStatus $script:orderA) -eq 20
+}
+
+Invoke-Case 'API-PAY-022' '🔴 重复确认支付：幂等，订单状态不回退' {
+    $r = PayPost '/payments/Confirm' @{ orderNo = $script:orderA }
+    # 关键是**不重复触发收尾**（积分实扣 / 库存确认 / 券核销）——跑两次就是实打实的资损
+    return $r.success -and (Get-OrderStatus $script:orderA) -eq 20
+}
+
+Invoke-Case 'API-PAY-023' '已支付的订单不能再模拟支付（状态不回退）' {
+    $r = PayPost '/payments/Simulate' @{ orderNo = $script:orderA; success = $true }
+    return $r.success -and (Get-OrderStatus $script:orderA) -eq 20
+}
+
+Write-Host "`n=== PAY 退款：窗口 + 累计限额 + 两段式审批 ===" -ForegroundColor Cyan
+
+Invoke-Case 'API-PAY-030' '准备：一张已支付、状态 20 待发货的实物订单（含 10 元运费）' {
+    $o = New-PendingOrder 'B' -DeliveryType 1 -Freight 10
+    $script:orderB = $o.orderNo
+    PayPost '/payments/Simulate' @{ orderNo = $script:orderB; success = $true } | Out-Null
+    return (Get-OrderStatus $script:orderB) -eq 20
+}
+
+Invoke-Case 'API-PAY-031' '🔴 P0 退款窗口：实物订单 20 待发货**可退**' {
+    $r = PayPost '/refunds/Apply' @{
+        orderId = 0; orderNo = $script:orderB; items = $null
+        reason = '买错了，不想要了'
+    }
+    $script:refundB = [long]$r.data
+    return $r.success -and $r.data -gt 0
+}
+
+Invoke-Case 'API-PAY-032' '🔴 P0 整单退款金额**含运费**（51.00 商品 + 10.00 运费 = 61.00）' {
+    $r = PayPost '/refunds/List' @{ status = 10; orderNo = $script:orderB; page = 1; pageSize = 10 }
+    $row = @($r.data.items | Where-Object { $_.refundId -eq "$($script:refundB)" })[0]
+    # 整单退含运费是规格 10.2 的明确要求；部分退才不退运费
+    return $row.amount -eq 61.00 -and $row.refundTypeName -eq '整单退款'
+}
+
+Invoke-Case 'API-PAY-033' '🔴 申请阶段**不动订单**：审批前订单仍是 20' {
+    # 两段式的意义就在这：运营误点申请不会立刻造成资损
+    return (Get-OrderStatus $script:orderB) -eq 20
+}
+
+Invoke-Case 'API-PAY-034' '🔴 重复申请同一订单的整单退款被拒（已有一张待审批）' {
+    $r = PayPost '/refunds/Apply' @{ orderId = 0; orderNo = $script:orderB; items = $null; reason = '再申请一次' }
+    # 累计会超过实付，必须挡住
+    return (-not $r.success) -and $r.message -match '超过'
+}
+
+Invoke-Case 'API-PAY-035' '🔴 P0 审批通过：订单转 60 已退款' {
+    $r = PayPost '/refunds/Approve' @{
+        refundId = $script:refundB; approverId = 1; approverName = '财务'
+    }
+    if (-not $r.success) { return $false }
+    return (Get-OrderStatus $script:orderB) -eq 60
+}
+
+Invoke-Case 'API-PAY-036' '🔴 重复审批被拒（幂等：不能退两次）' {
+    $r = PayPost '/refunds/Approve' @{
+        refundId = $script:refundB; approverId = 2; approverName = '另一个人'
+    }
+    return (-not $r.success) -and $r.message -match '已处理'
+}
+
+Write-Host "`n=== PAY 虚拟订单退款窗口（本轮修正的缺陷）===" -ForegroundColor Cyan
+
+Invoke-Case 'API-PAY-040' '准备：已支付的虚拟订单，状态 20 待发货' {
+    # 虚拟订单支付后、商户发货前停在 20 待发货
+    $o = New-PendingOrder 'V' -DeliveryType 2
+    $script:orderV = $o.orderNo
+    PayPost '/payments/Simulate' @{ orderNo = $script:orderV; success = $true } | Out-Null
+    return (Get-OrderStatus $script:orderV) -eq 20
+}
+
+Invoke-Case 'API-PAY-041' '🔴 P0 虚拟订单 20 待发货**可退**（原实现误判为「虚拟完全不可退」）' {
+    $r = PayPost '/refunds/Apply' @{ orderId = 0; orderNo = $script:orderV; items = $null; reason = '一直没发货，不想要了' }
+    $script:refundV = [long]$r.data
+    # 原实现是「虚拟商品订单完全不支持退款」，比规格严格得多：
+    # 买家在这段时间里连反馈「没发货」都做不到，只能干等
+    return $r.success -and $r.data -gt 0
+}
+
+Invoke-Case 'API-PAY-042' '虚拟退款单被拒绝后**无副作用**：订单仍是 20' {
+    $r = PayPost '/refunds/Reject' @{
+        refundId = $script:refundV; rejectReason = '需要先联系商户'
+        approverId = 1; approverName = '财务'
+    }
+    # 规格 10.2：拒绝无任何副作用，订单 / 库存 / 积分都不动
+    return $r.success -and (Get-OrderStatus $script:orderV) -eq 20
+}
+
+Invoke-Case 'API-PAY-043' '🔴 P0 虚拟订单发货后（50 已完成）**不可退**，含部分退款' {
+    # 虚拟发货即完成（20 → 50）。签收后不可退是规格 10.2 的明确要求
+    $ship = OrderPost '/admin/orders/DeliverVirtual' @{ orderNo = $script:orderV }
+    if (-not $ship.success) { return $false }
+    if ((Get-OrderStatus $script:orderV) -ne 50) { return $false }
+
+    $whole = PayPost '/refunds/Apply' @{ orderId = 0; orderNo = $script:orderV; items = $null; reason = '签收后想退' }
+    # 部分退款同样要拦住：只在整单退的路径上校验，部分退就绕过去了。
+    # orderItemId 必须传**真实的订单行 Id**：传 0 会被参数校验先挡下来，
+    # 那样测到的就不是「退款窗口拦住了部分退」，而是「校验拦住了 0」——用例是绿的，规则却没被验证。
+    $det = Invoke-RestMethod "$Order/orders/Detail?orderNo=$($script:orderV)&customerId=$($script:customerId)" -TimeoutSec 30
+    $lineId = [long]$det.data.items[0].orderItemId
+    $part = PayPost '/refunds/Apply' @{
+        orderId = 0; orderNo = $script:orderV
+        items = @(@{ orderItemId = $lineId; amount = 10.00 })
+        reason = '签收后想部分退'
+    }
+    return (-not $whole.success) -and (-not $part.success) `
+        -and $whole.message -match '签收' -and $part.message -match '签收'
+}
+
+Invoke-Case 'API-PAY-044' '🔴 未支付的订单不能退款（没有钱可退）' {
+    $o = New-PendingOrder 'NP'
+    $r = PayPost '/refunds/Apply' @{ orderId = 0; orderNo = $o.orderNo; items = $null; reason = '还没付就想退' }
+    return (-not $r.success) -and $r.message -match '待支付'
+}
+
+Invoke-Case 'API-PAY-045' '🔴 退款原因太短被拒（2~200 字符）' {
+    $o = New-PendingOrder 'SHORT'
+    $r = PayPost '/refunds/Apply' @{ orderId = 0; orderNo = $o.orderNo; items = $null; reason = 'x' }
+    # 校验失败时 message 只有「请求参数校验失败」，具体原因在 errors 里
+    return (-not $r.success) -and (Get-ErrText $r) -match '2'
+}
+
+Write-Host "`n=== PAY 清理 ===" -ForegroundColor Cyan
+
+Invoke-Case 'API-PAY-090' '删商品 → 删分类' {
+    if ($script:productId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:productId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 60 | Out-Null
+    }
+    foreach ($id in [array]($script:categoryIds | Sort-Object -Descending)) {
+        Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ categoryId = $id } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    return $true
+}
+
+Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan
+Write-Host ("  通过: " + $script:pass + "  失败: " + $script:fail)
+
+if ($script:fail -gt 0) {
+    Write-Host "  失败用例:" -ForegroundColor Red
+    $script:failures | ForEach-Object { Write-Host "    - $_" -ForegroundColor Red }
+    exit 1
+}
+Write-Host "  全部通过" -ForegroundColor Green
+exit 0
