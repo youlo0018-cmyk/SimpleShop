@@ -20,7 +20,8 @@ var loaded = await ServiceBootstrap.LoadConfigurationAsync(
     [
         "Services:OrderServiceBaseUrl",
         "Services:PointServiceBaseUrl",
-        "Services:EvaluateServiceBaseUrl"
+        "Services:EvaluateServiceBaseUrl",
+        "Services:InventoryServiceBaseUrl"
     ],
     exemptBaseKeys: [ConfigurationValidator.DatabaseConnectionKey]);
 
@@ -36,6 +37,7 @@ var orderUrl = builder.Configuration["Services:OrderServiceBaseUrl"]!;
 var pointUrl = builder.Configuration["Services:PointServiceBaseUrl"]!;
 var productUrl = builder.Configuration["Services:ProductServiceBaseUrl"]!;
 var evaluateUrl = builder.Configuration["Services:EvaluateServiceBaseUrl"]!;
+var inventoryUrl = builder.Configuration["Services:InventoryServiceBaseUrl"]!;
 builder.Services.AddHttpClient<OrderTimeoutCloseJob>(client =>
 {
     client.BaseAddress = new Uri(orderUrl.TrimEnd('/') + "/");
@@ -59,6 +61,15 @@ builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<OrderTimeoutClos
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<PointExpireJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<ProductSearchIndexSyncJob>());
 builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<EvaluateRecomputeJob>());
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<StockReleaseCompensateJob>());
+
+builder.Services.AddHttpClient<StockReleaseCompensateJob>(client =>
+{
+    client.BaseAddress = new Uri(inventoryUrl.TrimEnd('/') + "/");
+
+    // 补偿重试会逐条做库存变更 + 写流水，量大时比普通查询慢
+    client.Timeout = TimeSpan.FromSeconds(120);
+});
 
 builder.Services.AddHttpClient<ProductSearchIndexSyncJob>(client =>
 {

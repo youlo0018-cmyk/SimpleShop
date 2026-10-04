@@ -70,6 +70,18 @@ function Get-Snapshot([long]$SkuId) {
 Write-Host "`n=== INI 库存三计数语义 ===" -ForegroundColor Cyan
 $script:sku = 700000000000 + $script:suffix
 
+# 补偿记录必须直接写库造：「释放失败」这件事按定义就是接口调不通（会抛异常），
+# 没法从 API 侧触发。测试要验证的是「已经失败过一次之后能不能救回来」，
+# 所以只能把失败后的状态直接摆好。
+$script:compSku = 790000000000 + $script:suffix
+$script:compPendingId = 790000000001 + $script:suffix
+
+# 直连 psql 跑一条查询，返回第一列。
+function Invoke-Psql([string]$Sql) {
+    $raw = docker exec simpleshop-postgres psql -U postgres -d simpleshopinventory -t -A -F '|' -c $Sql
+    return [pscustomobject]@{ data = ($raw | Select-Object -First 1) }
+}
+
 Invoke-Case 'API-INI-001' '初始化：available 0→10' {
     $r = Invoke-Internal 'Init' @{ skuId = $script:sku; quantity = 10; productName = '回归商品'; skuSpecText = '红 / M'; warnThreshold = 5; bizNo = "INIT-$($script:sku)" }
     return $r.success -and $r.data.available -eq 10 -and $r.data.locked -eq 0 -and $r.data.deducted -eq 0
@@ -274,6 +286,52 @@ Invoke-Case 'API-INI-042' '编辑商品不会重置库存（编辑页不提供�
 
     # 编辑时 stock 传了 0，但库存不该被改成 0
     return (Get-Snapshot ([long]$red.id)).available -eq 25
+}
+
+Write-Host "`n=== INI 释放补偿（释放失败后由定时任务救回来）===" -ForegroundColor Cyan
+
+Invoke-Case 'API-INI-050' '🔴 P0 补偿重试把锁住的库存释放回来' {
+    $init = Invoke-Internal 'Init' @{ skuId = $script:compSku; quantity = 30; productName = '补偿测试'; bizNo = "COMP-INIT-$($script:suffix)" }
+    if (-not $init.success) { return $false }
+    $lock = Invoke-Internal 'Apply' @{ skuId = $script:compSku; action = 'lock'; quantity = 10; bizNo = "COMP-LOCK-$($script:suffix)" }
+    if (-not $lock.success) { return $false }
+
+    # next_retry_at 用**明确的过去时间**。用 now() 会被当成本地时间(+08)写进 UTC 列，
+    # 而应用按 UtcNow 比较，这条记录就会「看起来还没到重试时间」被直接跳过——
+    # 症状是「补偿任务跑了但什么都没发生」，日志里完全看不出原因
+    $biz = "COMP-REL-$($script:suffix)"
+    Invoke-Psql "INSERT INTO pending_stock_release (id, created_at, is_deleted, biz_no, sku_id, quantity, reason, status, retry_count, last_error, next_retry_at, platform_id, merchant_id) VALUES ($($script:compPendingId), now(), false, '$biz', $($script:compSku), 10, '回归构造', 0, 0, '', '2000-01-01 00:00:00', 0, 0);" | Out-Null
+
+    $before = Get-Snapshot $script:compSku
+    $c = Invoke-Internal 'compensate-releases' @{ limit = 200 }
+    if (-not $c.success) { return $false }
+
+    $after = Get-Snapshot $script:compSku
+    Write-Host ("        补偿前 locked={0} available={1} → 补偿后 locked={2} available={3}" -f $before.locked, $before.available, $after.locked, $after.available) -ForegroundColor DarkGray
+    return $before.locked -eq 10 -and $after.locked -eq 0 -and $after.available -eq 30
+}
+
+Invoke-Case 'API-INI-051' '🔴 补偿成功后记录转「已处理」，再跑一轮不会重复释放' {
+    $biz = "COMP-REL-$($script:suffix)"
+    $st = Invoke-Psql "SELECT status FROM pending_stock_release WHERE biz_no = '$biz';"
+    if ([int]$st.data.Trim() -ne 1) { return $false }
+    $before = Get-Snapshot $script:compSku
+    Invoke-Internal 'compensate-releases' @{ limit = 200 } | Out-Null
+    $after = Get-Snapshot $script:compSku
+    return $before.locked -eq $after.locked -and $before.available -eq $after.available
+}
+
+Invoke-Case 'API-INI-052' '🔴 重试的 bizNo 带后缀，不会被首次流水的幂等键挡住' {
+    $biz = "COMP-REL-$($script:suffix)"
+    $n = Invoke-Psql "SELECT count(*) FROM stock_flow WHERE sku_id = $($script:compSku) AND action = 'release' AND biz_no LIKE '$biz#R%';"
+    # 幂等键是 {biz_no}:{action}。用原单号重试会命中首次那条流水被判「已处理过」而什么都没做，
+    # 于是补偿记录一直重试一直失败——症状是「库存永远回不来」，日志里却看不出为什么
+    return [int]$n.data.Trim() -ge 1
+}
+
+Invoke-Case 'API-INI-053' '清理：删补偿记录' {
+    Invoke-Psql "DELETE FROM pending_stock_release WHERE biz_no LIKE 'COMP-REL-$($script:suffix)%';" | Out-Null
+    return $true
 }
 
 Invoke-Case 'API-INI-043' '清理测试商品与分类' {

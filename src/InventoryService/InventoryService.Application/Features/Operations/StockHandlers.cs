@@ -4,6 +4,7 @@ using Collaboration.Domain.Infrastructure;
 using InventoryService.Domain.Entities;
 using InventoryService.Domain.IRepository;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace InventoryService.Application.Features.Operations;
 
@@ -16,10 +17,16 @@ namespace InventoryService.Application.Features.Operations;
 public sealed class ApplyStockHandler : IRequestHandler<ApplyStockCommand, ApiResponse<StockChangeResult>>
 {
     private readonly IStockRepository _stocks;
+    private readonly ILogger<ApplyStockHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="stocks">库存仓储。</param>
-    public ApplyStockHandler(IStockRepository stocks) => _stocks = stocks;
+    /// <param name="logger">日志器。</param>
+    public ApplyStockHandler(IStockRepository stocks, ILogger<ApplyStockHandler> logger)
+    {
+        _stocks = stocks;
+        _logger = logger;
+    }
 
     /// <summary>执行变更。</summary>
     /// <param name="request">变更命令，格式已由校验器保证。</param>
@@ -32,7 +39,23 @@ public sealed class ApplyStockHandler : IRequestHandler<ApplyStockCommand, ApiRe
             request.SkuId, request.Action, request.Quantity, request.BizNo,
             request.Remark, request.PlatformId, request.MerchantId);
 
-        var outcome = await _stocks.ApplyAsync(operation, ctx.UserId, ctx.UserName, ct);
+        StockApplyOutcome outcome;
+        try
+        {
+            outcome = await _stocks.ApplyAsync(operation, ctx.UserId, ctx.UserName, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 释放是「取消订单 / 超时关单 / 下单失败回滚」的兜底动作，它自己挂掉时
+            // 库存会**永久锁住**——商品一直卖不出去，而且没有任何痕迹说明发生过什么。
+            // 记一条待补偿交给定时任务重试，是唯一能让它自己回来的办法。
+            if (operation.Action == StockActions.Release || operation.Action == StockActions.SeckillRelease)
+            {
+                await RecordPendingReleaseAsync(operation, ex.Message, ct);
+            }
+
+            throw;
+        }
 
         if (!outcome.Succeeded)
         {
@@ -52,6 +75,41 @@ public sealed class ApplyStockHandler : IRequestHandler<ApplyStockCommand, ApiRe
         // 重复请求是正常业务（订单重试、消息重投），回 200 并说明已处理过，
         // 不能报错让上游以为这次失败了。
         return ApiResults.Ok(result, outcome.AlreadyApplied ? "该业务单已处理过，返回首次结果" : "操作成功");
+    }
+
+    /// <summary>记一条待补偿的释放，让定时任务之后重试。</summary>
+    /// <param name="operation">失败的释放操作。</param>
+    /// <param name="error">失败原因。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <remarks>
+    /// <b>这里自己也不能抛</b>：补偿记录写不进去说明数据库已经出问题了，
+    /// 再抛一次只会把原始异常盖掉，而原始异常（释放失败）才是排查的起点。
+    /// 所以吞掉异常并留一条日志。
+    /// </remarks>
+    private async Task RecordPendingReleaseAsync(StockOperation operation, string error, CancellationToken ct)
+    {
+        try
+        {
+            await _stocks.AddPendingReleaseAsync(new PendingStockRelease
+            {
+                BizNo = operation.BizNo,
+                SkuId = operation.SkuId,
+                Quantity = operation.Quantity,
+                Reason = operation.Remark,
+                LastError = error.Length > 500 ? error[..500] : error,
+                NextRetryAt = DateTime.UtcNow,
+                PlatformId = operation.PlatformId,
+                MerchantId = operation.MerchantId
+            }, ct).ConfigureAwait(false);
+        }
+        catch (Exception inner) when (inner is not OperationCanceledException)
+        {
+            // 连补偿记录都写不进去，说明数据库已经出问题了。这里绝不能再抛——
+            // 抛出去会把「释放失败」这个真正的根因盖掉，而那才是排查的起点
+            _logger.LogError(inner,
+                "库存释放失败且补偿记录也写不进去：{BizNo} {SkuId} × {Qty}",
+                operation.BizNo, operation.SkuId, operation.Quantity);
+        }
     }
 }
 

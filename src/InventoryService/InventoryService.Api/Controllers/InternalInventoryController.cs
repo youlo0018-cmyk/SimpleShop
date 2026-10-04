@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using InventoryService.Application.Features.Internal;
 using InventoryService.Application.Features.Operations;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
@@ -62,4 +63,19 @@ public sealed class InternalInventoryController : ControllerBase
         }
 
         return await _mediator.Send(new QueryStocksByIdsCommand(ids), ct);
-    }}
+    }
+
+    /// <summary>重试补偿表里到期的库存释放（ScheduledService 每轮调用）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>本轮处理统计。</returns>
+    /// <remarks>
+    /// 释放库存是取消订单 / 超时关单的**兜底动作**，它自己失败时库存就永久锁住——
+    /// 商品一直卖不出去，而且没有任何痕迹说明发生过什么。释放失败会写
+    /// <c>pending_stock_release</c>，这个接口负责把它们重试回来。
+    /// </remarks>
+    [HttpPost("compensate-releases")]
+    public Task<ApiResponse<CompensateStockReleasesResult>> CompensateReleases(
+        [FromBody] CompensateStockReleasesCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+}

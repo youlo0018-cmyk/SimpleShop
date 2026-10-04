@@ -1,5 +1,6 @@
 using Collaboration.Domain.MediatR;
 using FluentValidation;
+using InventoryService.Application.Features.Internal;
 using InventoryService.Application.Features.Operations;
 using InventoryService.Infrastructure;
 using MediatR;
@@ -22,6 +23,7 @@ public static class ApiServiceCollectionExtensions
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         StockValidators.AddStockValidators(services);
+    CompensateStockReleasesValidators.AddCompensateStockReleasesValidators(services);
 
         services.AddInfrastructure();
         return services;
