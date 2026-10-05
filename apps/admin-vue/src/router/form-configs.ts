@@ -39,7 +39,9 @@ export const FORMS = {
     createEndpoint: '/gateway/users/Create',
     updateEndpoint: '/gateway/users/Update',
     idField: 'userId',
-    listSource: { url: '/gateway/users/List', method: 'POST' },
+    // users/List 是 [HttpGet]。用 POST 会 405 —— 编辑账号页整个加载不出来，
+    // 而症状只是控制台一条 405 + 一个空表单，很容易被当成「数据还没建」。
+    listSource: { url: '/gateway/users/List', method: 'GET' },
     listRoute: '/users',
     fields: [
       { field: 'userName', label: '登录名', required: true, pattern: '^[A-Za-z0-9_]{3,32}$', patternMessage: '登录名为 3-32 位字母、数字或下划线', readonlyInEdit: true, help: '创建后不可修改' },

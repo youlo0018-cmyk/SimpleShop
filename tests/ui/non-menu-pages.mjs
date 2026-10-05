@@ -39,7 +39,19 @@ async function call(token, path, method, payload) {
     init.body = JSON.stringify(payload || {});
   }
   const r = await fetch(`${GATEWAY}${path}`, init);
-  return r.json().catch(() => null);
+  const j = await r.json().catch(() => null);
+
+  // 取 id 的接口失败必须**报错而不是返回 null**。
+  // 返回 null 会一路变成「SKIP：这页没数据」——报告照样全绿，
+  // 而实际上这一页根本没被测过。动词写错（GET 端点用 POST）就是踩这个坑。
+  if (!r.ok) {
+    throw new Error(`取 id 失败 ${r.status} ${method} ${path}：${JSON.stringify(j || {}).slice(0, 160)}`);
+  }
+  if (!j || !j.success) {
+    throw new Error(`取 id 失败 ${method} ${path}：${JSON.stringify(j || {}).slice(0, 160)}`);
+  }
+
+  return j;
 }
 
 export const PAGES = [
@@ -58,7 +70,10 @@ export const PAGES = [
 export async function collectIds(token) {
   const [users, platforms, customers, merchants, products, promotions, sessions, refunds] =
     await Promise.all([
-      call(token, '/gateway/users/List', 'POST', { page: 1, pageSize: 1 }),
+      // users/List 是 [HttpGet]。这里原本写成 POST，于是 405 → 取不到数据 →
+      // 「编辑账号」被标成 SKIP，报告全绿而这一页**根本没被测过**。
+      // 教训：取 id 的接口用错动词不会让测试失败，只会让它悄悄少测一页。
+      call(token, '/gateway/users/List?page=1&pageSize=1', 'GET'),
       call(token, '/gateway/platforms/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/admin/customers/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/merchants/List', 'POST', { page: 1, pageSize: 1 }),
