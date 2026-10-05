@@ -50,6 +50,33 @@ const FLOWS = [
       { desc: '详情内金额构成可见', expect: '.card__title', shot: 'flow-order-detail-money' },
     ],
   },
+  {
+    // 直接盯「点页签会不会 400」这个回归。
+    // 商户 / 商品的查询命令里 status（启停，1/2）与 auditStatus（审核）是两个字段，
+    // 而页签值是审核状态。修好之前，点「已通过」会发 status=20 被后端拒掉 ——
+    // 而只加载首屏（status=0）时完全正常，所以单页巡检查不出来。
+    name: '商户列表 -> 切页签 -> 审核状态筛选',
+    start: '#/merchants',
+    steps: [
+      { desc: '进入商户列表', goto: '#/merchants', shot: 'flow-merchant-tab-1-list' },
+      { desc: '切到「已通过」页签不报 400', clickTab: '已通过', shot: 'flow-merchant-tab-2-approved' },
+      { desc: '切到「已拒绝」页签不报 400', clickTab: '已拒绝', shot: 'flow-merchant-tab-3-rejected' },
+    ],
+  },
+  {
+    // 危险动作的确认对话框：打开 -> 拒绝原因必填被拦 -> 填了再放行 -> 取消。
+    // 最后一步**取消**是刻意的：UI 回归不该真的改业务数据，
+    // 否则每跑一次就少一批待审核商户，审核队列会被测试清空。
+    name: '商户审核 -> 点拒绝 -> 确认框与必填校验',
+    start: '#/merchants/audit',
+    steps: [
+      { desc: '进入商户审核页（默认待审核）', goto: '#/merchants/audit', shot: 'flow-audit-1-list' },
+      { desc: '点「拒绝」弹出确认框', clickText: '拒绝', clickScope: '.el-table', expect: '.el-dialog', shot: 'flow-audit-2-dialog' },
+      { desc: '确认框里有「拒绝原因」输入框', expect: '.el-dialog textarea', shot: 'flow-audit-3-reason' },
+      { desc: '填入原因', fill: '.el-dialog textarea', fillValue: '资料不完整，缺少营业执照', shot: 'flow-audit-4-filled' },
+      { desc: '取消以免改动业务数据', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-audit-5-cancelled' },
+    ],
+  },
 ];
 
 const slug = (s) =>
@@ -319,6 +346,50 @@ async function runFlow(page, flow) {
         } else {
           // 没有行数据时不算失败：空列表本来就点不出详情
           currentErrors.push(`流程步骤「${step.desc}」找不到可点击的行（列表为空）`);
+        }
+      } else if (step.clickText) {
+        // 按可见文字点按钮。审核、通过、拒绝这些动作没有稳定的 class，
+        // 用文字反而更贴近「用户看到什么就点什么」。
+        // ⚠️ 匹配不到必须**报失败**而不是静默跳过：
+        // 静默跳过的话，这个步骤的截图永远是上一页，
+        // 报告还显示 ok，测试等于什么都没测。
+        // ⚠️ 必须限定 scope。确认对话框没打开时它也在 DOM 里（el-dialog 只是隐藏），
+        // 而对话框的确定按钮文字恰好也叫「拒绝」——不限定就会点到那个隐藏按钮上，
+        // 表现为「元素存在但不可见，点了 30 秒超时」。
+        // ⚠️ 还必须加 :visible。操作列是 fixed="right"，
+        // Element Plus 会为固定列渲染一份**隐藏的副本**用于测量，
+        // 它在 DOM 里排在真身前面 —— 不加 :visible 就会选中那份永远不可点的副本。
+        // 这个坑的表现是「同一个按钮 sometimes 能点 sometimes 不能」，取决于列宽测量时机。
+        const scope = step.clickScope ? step.clickScope : 'body';
+        const btn = page.locator(`${scope} button:has-text("${step.clickText}"):visible`).first();
+        if ((await btn.count()) === 0) {
+          currentErrors.push(`流程步骤「${step.desc}」找不到按钮「${step.clickText}」`);
+        } else {
+          try {
+            await btn.click({ timeout: 8000 });
+          } catch {
+            // 元素存在但不可见（例如只有隐藏的那一个）也算失败，
+            // 不能当成「点过了」——否则这一步的截图会停在原地而报告显示成功。
+            currentErrors.push(`流程步骤「${step.desc}」按钮「${step.clickText}」存在但不可点击`);
+          }
+        }
+      } else if (step.fill) {
+        const box = page.locator(step.fill).first();
+        if ((await box.count()) === 0) {
+          currentErrors.push(`流程步骤「${step.desc}」找不到输入框 ${step.fill}`);
+        } else {
+          await box.fill(step.fillValue || '');
+        }
+      } else if (step.clickTab) {
+        // 页签不是 <button>，Element Plus 渲染成 role="tab" 的可点元素。
+        // 用 button:has-text() 匹配不到，会被误判成「找不到按钮」。
+        const tab = page.locator(`.el-tabs__item:has-text("${step.clickTab}")`).first();
+        if ((await tab.count()) === 0) {
+          currentErrors.push(`流程步骤「${step.desc}」找不到页签「${step.clickTab}」`);
+        } else {
+          await tab.click({ timeout: 8000 });
+          // 等列表刷新完再截图，否则截到的是切换前那一帧
+          await page.waitForTimeout(600);
         }
       }
 

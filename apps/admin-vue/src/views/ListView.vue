@@ -186,7 +186,14 @@ const paged = ref(false);
 // 用独立 ref 而不是塞进一个 reactive 对象：模板里要直接绑定 v-model，
 // reactive 的字段在模板作用域里取不到（会报 Property does not exist），
 // 为此还得额外定义一堆 computed 转发，纯属绕路。
-const status = ref(0);
+// defaultStatus 在 **setup 阶段**读，而不是 onMounted 里再赋值。
+// 在 onMounted 里赋值的话，组件会先用「全部」渲染一帧、发一次不带筛选的请求，
+// 之后页签才切过去 —— 那一帧里审核按钮全部隐藏（showWhen 不成立），
+// 点「拒绝」就会报「按钮存在但不可点击」。
+// 症状是「有时能点有时不能」，极难定位。
+// 安全性依据：AdminLayout 的 RouterView 带 :key="route.path"，
+// 换路由必然是新实例，所以 setup 阶段读 props 不会拿到上一个页面的配置。
+const status = ref(Number(props.config?.defaultStatus || 0));
 const keyword = ref('');
 const page = ref(1);
 const pageSize = ref(20);
@@ -325,17 +332,7 @@ async function submitConfirm() {
 }
 
 watch([status, config], () => reload());
-onMounted(() => {
-  // defaultStatus：让「审核」这类专用页一进来就落在待审核上，
-  // 而不是先显示全量再让用户自己点一下页签。
-  // 用配置声明而不是新写一个组件，是因为两者的表格、筛选、分页完全一样，
-  // 只差一个默认页签 —— 为此复制一套组件就是两份要同步维护的代码。
-  const initial = Number(config.value.defaultStatus || 0);
-  if (initial && tabs.value.some((t: any) => t.value === initial)) {
-    status.value = initial;
-  }
-  load();
-});
+onMounted(load);
 </script>
 
 <style scoped>
