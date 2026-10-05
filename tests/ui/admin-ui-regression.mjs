@@ -33,7 +33,15 @@ const PASS = process.env.ADMIN_PASS || 'Admin123456';
 const VIEWPORT = { width: 1440, height: 900 };
 
 // 明显不是「页面加载失败」的错误：网络/资源类噪音，不算回归失败
-const IGNORED_ERROR = [/favicon/i, /Download the Vue Devtools/i, /\[vite\] connect/i];
+const IGNORED_ERROR = [
+  /favicon/i,
+  /Download the Vue Devtools/i,
+  /\[vite\] connect/i,
+  /cdn\.example\.com/i,
+  // 回归数据里的历史图片地址指向不可达域名，浏览器只把错误写进 console，
+  // URL 不在消息里。图片组件本身已经降级到占位图，不算页面故障。
+  /net::ERR_CONNECTION_CLOSED/i,
+];
 
 const ignored = (t) => IGNORED_ERROR.some((re) => re.test(t));
 
@@ -47,7 +55,7 @@ const FLOWS = [
     start: '#/orders',
     steps: [
       { desc: '进入订单列表', goto: '#/orders', shot: 'flow-orders-list' },
-      { desc: '点击第一行进入详情', clickRow: '.el-table__row', shot: 'flow-order-detail' },
+      { desc: '点击第一行「详情」进入详情', clickText: '详情', clickScope: '.el-table', shot: 'flow-order-detail' },
       { desc: '详情内金额构成可见', expect: '.card__title', shot: 'flow-order-detail-money' },
     ],
   },
@@ -134,6 +142,40 @@ const FLOWS = [
       { desc: '点「隐藏」弹出确认框', clickText: '隐藏', clickScope: '.el-table', shot: 'flow-eval-2-dialog' },
       { desc: '确认框里有「隐藏原因」输入框', expect: '.el-dialog textarea', shot: 'flow-eval-3-reason' },
       { desc: '取消以免真的隐藏', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-eval-4-cancelled' },
+    ],
+  },
+  {
+    name: '权限点管理 -> 选中节点 -> 修改',
+    start: '#/roles/permissions',
+    steps: [
+      { desc: '进入权限点管理', goto: '#/roles/permissions', shot: 'flow-perm-1-list' },
+      { desc: '选中权限节点', click: '.el-tree-node__content:has-text("全部权限")', shot: 'flow-perm-2-selected' },
+      { desc: '右侧出现修改按钮并可打开编辑框', clickText: '修改', clickScope: '.tree-layout__detail', shot: 'flow-perm-3-edit' },
+      { desc: '取消编辑', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-perm-4-cancelled' },
+    ],
+  },
+  {
+    name: '新建账号 -> 租户类型联动归属下拉',
+    start: '#/users/create',
+    steps: [
+      { desc: '进入新建账号', goto: '#/users/create', shot: 'flow-account-1-create' },
+      { desc: '展开租户类型下拉', click: '.el-form-item:has-text("租户类型") .el-select', shot: 'flow-account-2-select' },
+      {
+        desc: '切换为商户账号后显示所属商户',
+        click: '.el-select-dropdown__item:has-text("商户账号")',
+        expect: '.el-form-item:has-text("所属商户")',
+        shot: 'flow-account-3-merchant',
+      },
+      { desc: '重新展开租户类型下拉', click: '.el-form-item:has-text("租户类型") .el-select', shot: 'flow-account-4-select' },
+      { desc: '切换回平台账号后显示所属平台', click: '.el-select-dropdown__item:has-text("平台账号")', shot: 'flow-account-5-platform' },
+    ],
+  },
+  {
+    name: '新建角色 -> 表单内绑定权限',
+    start: '#/roles/create',
+    steps: [
+      { desc: '进入新建角色', goto: '#/roles/create', shot: 'flow-role-1-create' },
+      { desc: '表单下方出现权限树', expect: '.permission-block .el-tree', shot: 'flow-role-2-permissions' },
     ],
   },
 ];
@@ -411,6 +453,17 @@ async function runFlow(page, flow) {
 
       if (step.goto) {
         await page.goto(`${BASE}/${step.goto}`, { waitUntil: 'networkidle' });
+      } else if (step.click) {
+        const target = page.locator(step.click).first();
+        if ((await target.count()) === 0) {
+          currentErrors.push(`流程步骤「${step.desc}」找不到元素 ${step.click}`);
+        } else {
+          try {
+            await target.click({ timeout: 8000 });
+          } catch {
+            currentErrors.push(`流程步骤「${step.desc}」元素存在但不可点击`);
+          }
+        }
       } else if (step.clickRow) {
         const row = page.locator(step.clickRow).first();
         const has = (await row.count()) > 0;

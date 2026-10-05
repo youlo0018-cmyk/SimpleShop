@@ -265,7 +265,7 @@ public sealed class QueryCouponRecordsHandler
     {
         var page = await _coupons.PageUserCouponsAsync(
             request.Page, request.PageSize, request.Status,
-            request.TemplateId, request.OrderNo, request.Keyword, 0, ct).ConfigureAwait(false);
+            request.TemplateId, request.OrderNo, request.Keyword, request.CustomerId, ct).ConfigureAwait(false);
 
         var templateIds = page.Items
             .Where(a => a.TemplateId > 0)

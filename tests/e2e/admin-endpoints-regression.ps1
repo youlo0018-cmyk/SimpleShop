@@ -562,21 +562,74 @@ Invoke-Case 'API-ADM-083' 'roles/Detail 返回角色与已绑定权限点' {
     $r.success -and $r.data.roleName -and @($r.data.permissionIds).Count -gt 0
 }
 
-Invoke-Case 'API-ADM-084' 'permissions/Update 禁止编辑内置权限点' {
-    $r = Post-Ep '/gateway/permissions/Update' @{
-        permissionId = 3001
-        name = '被篡改的权限名'
-        code = 'user:read'
+Invoke-Case 'API-ADM-084' 'permissions/Update 可以编辑自定义权限点' {
+    $code = 'regtest' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
+    $created = Post-Ep '/gateway/permissions/Create' @{
+        name = '回归权限'
+        code = "$code`:read"
         apiPath = '/gateway/users/List'
-        sortOrder = 1
-        description = '不应生效'
+        parentId = 2103
+        sortOrder = 999
+        description = '临时权限'
     }
-    (-not $r.Success) -and $r.Message -match '内置'
+    if (-not $created.Success) { return $false }
+
+    $updated = Post-Ep '/gateway/permissions/Update' @{
+        permissionId = $created.data
+        name = '回归权限已修改'
+        code = "$code`:read"
+        apiPath = '/gateway/users/List'
+        sortOrder = 998
+        description = '已修改'
+    }
+    $deleted = Post-Ep '/gateway/permissions/Delete' @{ permissionId = $created.data }
+    $updated.Success -and $deleted.Success
 }
 
 Invoke-Case 'API-ADM-085' 'admin/orders/Cancel 不存在的订单返回 404' {
     $r = Post-Ep '/gateway/admin/orders/Cancel' @{ orderNo = 'NO_SUCH_ORDER_FOR_REGRESSION' }
     (-not $r.Success) -and $r.Code -eq 404
+}
+
+Invoke-Case 'API-ADM-086' '客户列表返回唯一客户编码' {
+    $r = Post-Ep '/gateway/admin/customers/List' @{ page = 1; pageSize = 20 }
+    $items = @($r.data.items)
+    $r.Success -and $items.Count -gt 0 -and
+        @($items | Where-Object { -not $_.customerNo }).Count -eq 0
+}
+
+Invoke-Case 'API-ADM-087' '商品列表支持按商户过滤' {
+    $all = Invoke-RestMethod "$Gateway/gateway/products/List?page=1&pageSize=100" `
+        -Headers $auth -TimeoutSec 25
+    $row = @($all.data | Where-Object { [long]$_.merchantId -gt 0 })[0]
+    if (-not $row) { return $true }
+
+    $filtered = Invoke-RestMethod "$Gateway/gateway/products/List?page=1&pageSize=100&merchantId=$($row.merchantId)" `
+        -Headers $auth -TimeoutSec 25
+    $items = @($filtered.data)
+    $items.Count -gt 0 -and
+        @($items | Where-Object { $_.merchantId -ne $row.merchantId }).Count -eq 0
+}
+
+Invoke-Case 'API-ADM-088' '订单列表支持客户、商户、手机号与时间区间筛选' {
+    $all = Post-Ep '/gateway/admin/orders/List' @{ page = 1; pageSize = 50 }
+    $row = @($all.data.items | Where-Object { [long]$_.merchantId -gt 0 -and $_.receiverPhone })[0]
+    if (-not $row) { return $true }
+
+    $byCustomer = Post-Ep '/gateway/admin/orders/List' @{ page = 1; pageSize = 50; customerId = $row.customerId }
+    $byMerchant = Post-Ep '/gateway/admin/orders/List' @{ page = 1; pageSize = 50; merchantId = $row.merchantId }
+    $byPhone = Post-Ep '/gateway/admin/orders/List' @{ page = 1; pageSize = 50; keyword = $row.receiverPhone }
+    $byTime = Post-Ep '/gateway/admin/orders/List' @{
+        page = 1; pageSize = 50
+        from = '2000-01-01T00:00:00Z'
+        to = '2100-01-01T00:00:00Z'
+    }
+
+    @($byCustomer.data.items).Count -gt 0 -and
+        @($byCustomer.data.items | Where-Object { $_.customerId -ne $row.customerId }).Count -eq 0 -and
+        @($byMerchant.data.items | Where-Object { $_.merchantId -ne $row.merchantId }).Count -eq 0 -and
+        @($byPhone.data.items | Where-Object { $_.receiverPhone -ne $row.receiverPhone }).Count -eq 0 -and
+        @($byTime.data.items).Count -gt 0
 }
 
 # 收尾：把临时账号停用。

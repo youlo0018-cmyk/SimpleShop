@@ -52,7 +52,8 @@ public sealed class CreateOrderHandler
             request.ReceiverName.Trim(), request.ReceiverPhone.Trim(), request.ReceiverAddress.Trim(),
             lines,
             request.CouponId, request.PointsToUse, request.Remark.Trim(),
-            new FreightRule(OrderAmountCalculator.Round2(request.Freight))), ct).ConfigureAwait(false);
+            new FreightRule(OrderAmountCalculator.Round2(request.Freight)),
+            CustomerNo: ctx.CustomerNo), ct).ConfigureAwait(false);
 
         if (!outcome.Succeeded)
         {

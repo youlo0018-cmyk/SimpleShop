@@ -15,7 +15,9 @@ namespace OrderService.Application.Features.OrderAdmin;
 /// <param name="MerchantId">商户 Id，来自租户上下文；超管可传 0 表示不限。</param>
 public record QueryAdminOrdersCommand(
     int Status = 0, string Keyword = "", int Page = 1, int PageSize = 20,
-    long PlatformId = 0, long MerchantId = 0) : IRequest<ApiResponse<PagedResult<AdminOrderListItemDto>>>;
+    long PlatformId = 0, long MerchantId = 0,
+    long CustomerId = 0, string CustomerNo = "",
+    DateTime? From = null, DateTime? To = null) : IRequest<ApiResponse<PagedResult<AdminOrderListItemDto>>>;
 
 /// <summary>后台订单详情。</summary>
 /// <param name="OrderId">订单 Id。</param>
@@ -85,7 +87,9 @@ public record RefundOrderCommand(string OrderNo, string Remark) : IRequest<ApiRe
 public sealed record AdminOrderListItemDto(
     long OrderId, string OrderNo, long CustomerId, int Status, string StatusName,
     decimal PayableAmount, int ItemQuantity,
-    string ReceiverName, string ReceiverPhone, string CreatedAt);
+    string ReceiverName, string ReceiverPhone, string CreatedAt,
+    bool HasPhysical, bool HasVirtual, bool HasSelfPickup,
+    string CustomerNo, long MerchantId);
 
 /// <summary>取货码结果。</summary>
 /// <param name="OrderNo">订单号。</param>
@@ -143,6 +147,11 @@ public static class OrderAdminValidators
             RuleFor(x => x.Page).GreaterThanOrEqualTo(1).WithMessage("页码必须大于 0");
             RuleFor(x => x.PageSize).InclusiveBetween(1, 100).WithMessage("每页条数必须在 1 ~ 100 之间");
             RuleFor(x => x.Keyword).MaximumLength(64).WithMessage("搜索关键字最多 64 个字符");
+            RuleFor(x => x.CustomerId).GreaterThanOrEqualTo(0).WithMessage("客户 Id 不能为负数");
+            RuleFor(x => x.CustomerNo).MaximumLength(64).WithMessage("客户编码最多 64 个字符");
+            RuleFor(x => x.To).GreaterThanOrEqualTo(x => x.From)
+                .When(x => x.From.HasValue && x.To.HasValue)
+                .WithMessage("结束时间不能早于开始时间");
             RuleFor(x => x.Status).Must(OrderStatusCodes.IsKnown)
                 .WithMessage("订单状态不正确");
         }

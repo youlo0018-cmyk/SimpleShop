@@ -16,6 +16,9 @@ public sealed record ProductQuery
     /// <summary>按品牌过滤。0 表示不过滤。</summary>
     public long BrandId { get; init; }
 
+    /// <summary>按商户过滤。0 表示不过滤。</summary>
+    public long MerchantId { get; init; }
+
     /// <summary>按上下架状态过滤。0 表示不过滤。</summary>
     public int Status { get; init; }
 

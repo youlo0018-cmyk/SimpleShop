@@ -34,6 +34,8 @@ public sealed class QueryAdminOrdersHandler
 
         var (orders, total) = await _store.ListAsync(
             request.Status, request.Keyword, platformId, merchantId,
+            request.CustomerId, request.CustomerNo?.Trim() ?? string.Empty,
+            request.From, request.To,
             request.Page, request.PageSize, ct).ConfigureAwait(false);
 
         var aggregates = await _store
@@ -46,7 +48,9 @@ public sealed class QueryAdminOrdersHandler
                 a.Id, a.OrderNo, a.CustomerId, a.Status, OrderStatusMachine.NameOf(a.Status),
                 a.PayableAmount, agg.ItemQuantity,
                 a.ReceiverName, a.ReceiverPhone,
-                a.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"));
+                a.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+                agg.HasPhysical, agg.HasVirtual, agg.HasSelfPickup,
+                a.CustomerNo, a.MerchantId);
         }).ToList();
 
         return ApiResults.Ok(new PagedResult<AdminOrderListItemDto>(

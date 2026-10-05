@@ -11,6 +11,10 @@ public class Brand : AdminEntityBase
     [Column(Name = "brand_name", StringLength = 64)]
     public string BrandName { get; set; } = string.Empty;
 
+    /// <summary>品牌编码，选填；填写时全局唯一。</summary>
+    [Column(Name = "brand_code", StringLength = 64)]
+    public string BrandCode { get; set; } = string.Empty;
+
     /// <summary>品牌 Logo URL。</summary>
     [Column(Name = "logo", StringLength = 512)]
     public string Logo { get; set; } = string.Empty;

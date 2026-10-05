@@ -40,6 +40,7 @@ public sealed class ProductRepository : CrudRepository<Product>, IProductReposit
 
         if (query.CategoryId > 0) select = select.Where(a => a.CategoryId == query.CategoryId);
         if (query.BrandId > 0) select = select.Where(a => a.BrandId == query.BrandId);
+        if (query.MerchantId > 0) select = select.Where(a => a.MerchantId == query.MerchantId);
         if (query.Status > 0) select = select.Where(a => a.Status == query.Status);
         if (query.AuditStatus > 0) select = select.Where(a => a.AuditStatus == query.AuditStatus);
 

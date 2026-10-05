@@ -22,8 +22,9 @@ public sealed class CustomerTokenService
 
     /// <summary>签发客户令牌。</summary>
     /// <param name="customerId">客户 Id，写入 sub 声明。</param>
+    /// <param name="customerNo">客户唯一编码，写入 customer_no 声明。</param>
     /// <returns>JWT 字符串。无副作用。</returns>
-    public string Issue(long customerId)
+    public string Issue(long customerId, string customerNo)
     {
         var now = DateTime.UtcNow;
         var descriptor = new SecurityTokenDescriptor
@@ -37,6 +38,7 @@ public sealed class CustomerTokenService
             Claims = new Dictionary<string, object>
             {
                 ["sub"] = customerId.ToString(),
+                ["customer_no"] = customerNo,
                 ["tenant_type"] = CustomerTenantType
             }
         };

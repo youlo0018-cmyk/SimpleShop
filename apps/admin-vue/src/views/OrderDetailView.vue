@@ -75,6 +75,38 @@
         </section>
       </div>
 
+      <section class="panel payment-info">
+        <h3 class="card__title">支付信息</h3>
+        <div v-if="payments.length">
+          <div v-for="item in payments" :key="item.paymentNo" class="row">
+            <span class="row__label">{{ item.paymentNo }}</span>
+            <span>{{ item.statusName }} · ¥{{ formatAmount(item.amount) }}</span>
+          </div>
+        </div>
+        <div v-else class="empty-text">暂无支付单</div>
+      </section>
+
+      <section class="panel refund-info">
+        <div class="section-head">
+          <h3 class="card__title">退款记录</h3>
+          <el-button v-if="canRefund" type="danger" plain @click="refund">发起退款</el-button>
+        </div>
+        <div v-if="refunds.length">
+          <div v-for="item in refunds" :key="item.refundId" class="refund-row">
+            <div>
+              <strong>{{ item.refundNo }}</strong>
+              <p>{{ item.reason }}</p>
+              <span>{{ item.statusName }} · ¥{{ formatAmount(item.amount) }}</span>
+            </div>
+            <div v-if="Number(item.status) === 10" class="refund-row__actions">
+              <el-button type="primary" size="small" @click="approveRefund(item)">通过</el-button>
+              <el-button type="danger" size="small" @click="rejectRefund(item)">拒绝</el-button>
+            </div>
+          </div>
+        </div>
+        <div v-else class="empty-text">暂无退款单</div>
+      </section>
+
       <section class="panel">
         <h3 class="card__title">商品明细</h3>
         <el-table :data="order.items || []" class="table">
@@ -144,6 +176,8 @@ const loading = ref(true);
 const loaded = ref(false);
 
 const order = reactive<any>({});
+const payments = ref<any[]>([]);
+const refunds = ref<any[]>([]);
 
 const hasDelivery = (type: number) =>
   (order.items || []).some((item: any) => Number(item.deliveryType) === type);
@@ -167,6 +201,16 @@ async function load() {
       silent: true,
     });
     Object.assign(order, data || {});
+    [payments.value, refunds.value] = await Promise.all([
+      request('/gateway/admin/payments/List', {
+        body: { page: 1, pageSize: 20, keyword: order.orderNo },
+        silent: true,
+      }).then((result: any) => result?.items || []).catch(() => []),
+      request('/gateway/refunds/List', {
+        body: { page: 1, pageSize: 20, keyword: order.orderNo },
+        silent: true,
+      }).then((result: any) => result?.items || []).catch(() => []),
+    ]);
   } catch {
     Object.keys(order).forEach((k) => delete order[k]);
   } finally {
@@ -270,6 +314,40 @@ async function refund() {
   }
 }
 
+async function approveRefund(item: any) {
+  try {
+    await ElMessageBox.confirm(`确认通过退款单 ${item.refundNo}？`, '通过退款', {
+      confirmButtonText: '确认退款',
+      cancelButtonText: '取消',
+      type: 'warning',
+    });
+    await request('/gateway/refunds/Approve', { body: { refundId: item.refundId } });
+    ElMessage.success('退款已通过');
+    await load();
+  } catch {
+    // 用户取消或 request 已提示
+  }
+}
+
+async function rejectRefund(item: any) {
+  try {
+    const result = await ElMessageBox.prompt('填写拒绝原因', '拒绝退款', {
+      inputType: 'textarea',
+      inputValidator: (value) => (value?.trim().length >= 2 ? true : '拒绝原因至少 2 个字符'),
+      confirmButtonText: '拒绝',
+      cancelButtonText: '取消',
+      type: 'warning',
+    });
+    await request('/gateway/refunds/Reject', {
+      body: { refundId: item.refundId, rejectReason: result.value.trim() },
+    });
+    ElMessage.success('退款已拒绝');
+    await load();
+  } catch {
+    // 用户取消或 request 已提示
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -316,6 +394,40 @@ onMounted(load);
   grid-template-columns: 1fr 1fr;
   gap: var(--space-4);
   margin-bottom: var(--space-4);
+}
+
+.payment-info,
+.refund-info {
+  margin-bottom: var(--space-4);
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.refund-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 0.5px solid var(--hairline);
+}
+
+.refund-row:last-child {
+  border-bottom: none;
+}
+
+.refund-row p {
+  margin: var(--space-1) 0;
+  color: var(--text-2);
+}
+
+.refund-row__actions {
+  display: flex;
+  gap: var(--space-2);
 }
 
 .strong {

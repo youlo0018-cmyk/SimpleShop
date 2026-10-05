@@ -20,5 +20,6 @@ public record RegisterResult(
     string Token,
     string CustomerName,
     string NickName,
+    string CustomerNo,
     bool PointGranted);
 

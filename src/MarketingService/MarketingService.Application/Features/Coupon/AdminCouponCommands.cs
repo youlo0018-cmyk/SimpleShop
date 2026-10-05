@@ -104,6 +104,7 @@ public record QueryCouponRecordsCommand(
     int PageSize = 20,
     int Status = 0,
     long TemplateId = 0,
+    long CustomerId = 0,
     string OrderNo = "",
     string Keyword = "") : IRequest<ApiResponse<PagedResult<CouponRecordItem>>>;
 
@@ -324,6 +325,7 @@ public static class AdminCouponValidators
             RuleFor(x => x.PageSize).InclusiveBetween(1, MaxPageSize).WithMessage("每页条数不正确");
             RuleFor(x => x.Status).InclusiveBetween(0, 4).WithMessage("券状态不正确");
             RuleFor(x => x.TemplateId).GreaterThanOrEqualTo(0).WithMessage("券模板信息不正确");
+            RuleFor(x => x.CustomerId).GreaterThanOrEqualTo(0).WithMessage("客户信息不正确");
             RuleFor(x => x.OrderNo).MaximumLength(64).WithMessage("订单号过长");
             RuleFor(x => x.Keyword).MaximumLength(32).WithMessage("券码关键词过长");
         }

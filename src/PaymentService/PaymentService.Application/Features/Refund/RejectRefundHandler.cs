@@ -73,7 +73,7 @@ public sealed class QueryRefundsHandler : IRequestHandler<QueryRefundsCommand, A
         {
             var details = await _refunds.ListItemsAsync(refund.Id, ct);
             items.Add(new RefundDto(
-                refund.Id, refund.RefundNo, refund.OrderNo, refund.Amount,
+                refund.Id, refund.RefundNo, refund.OrderId, refund.OrderNo, refund.Amount,
                 refund.RefundType, RefundTypes.NameOf(refund.RefundType),
                 refund.Status, RefundStatuses.NameOf(refund.Status),
                 refund.Reason, refund.RejectReason, refund.ApproverName,

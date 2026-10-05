@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS brand (
     platform_id   bigint        NOT NULL DEFAULT 0,
     merchant_id   bigint        NOT NULL DEFAULT 0,
     brand_name    varchar(64)   NOT NULL,
+    brand_code    varchar(64)   NOT NULL DEFAULT '',
     logo          varchar(512)  NOT NULL DEFAULT '',
     sort_order    int           NOT NULL DEFAULT 0,
     status        int           NOT NULL DEFAULT 1,
@@ -57,6 +58,9 @@ CREATE TABLE IF NOT EXISTS brand (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uk_brand_name
     ON brand (brand_name) WHERE is_deleted = false;
+ALTER TABLE brand ADD COLUMN IF NOT EXISTS brand_code varchar(64) NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_brand_code
+    ON brand (brand_code) WHERE is_deleted = false AND brand_code <> '';
 CREATE INDEX IF NOT EXISTS idx_brand_platform ON brand (platform_id, status);
 
 -- 物流公司字典（DATA_SPEC 5.23）

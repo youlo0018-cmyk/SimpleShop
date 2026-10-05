@@ -23,7 +23,7 @@ public sealed class BrandRepository : CrudRepository<Brand>, IBrandRepository
         if (!string.IsNullOrWhiteSpace(keyword))
         {
             var kw = keyword.Trim();
-            select = select.Where(a => a.BrandName.Contains(kw));
+            select = select.Where(a => a.BrandName.Contains(kw) || a.BrandCode.Contains(kw));
         }
 
         if (!includeDisabled) select = select.Where(a => a.Status == 1);
@@ -40,6 +40,13 @@ public sealed class BrandRepository : CrudRepository<Brand>, IBrandRepository
         => await Db.Select<Brand>()
             .Where(a => a.BrandName == brandName && a.Id != excludeId)
             .AnyAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<bool> ExistsByCodeAsync(string brandCode, long excludeId = 0, CancellationToken ct = default)
+        => !string.IsNullOrWhiteSpace(brandCode) &&
+           await Db.Select<Brand>()
+               .Where(a => a.BrandCode == brandCode && a.Id != excludeId)
+               .AnyAsync(ct);
 
     /// <inheritdoc />
     public async Task<long> CountProductsAsync(long brandId, CancellationToken ct = default)

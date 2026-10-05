@@ -11,6 +11,8 @@ declare module '@/api/request' {
     params?: Record<string, unknown>;
     /** true 时不弹错误提示，由调用方自己处理 */
     silent?: boolean;
+    /** true 时返回完整 ApiResponse 信封，调用方可以读取 message */
+    raw?: boolean;
   }
   export function getToken(): string;
   export function setToken(token: string): void;

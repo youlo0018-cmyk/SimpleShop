@@ -47,22 +47,17 @@
             <el-form-item label="划线原价" :error="errors.originalPrice">
               <el-input v-model.number="m.originalPrice" type="number" placeholder="0 表示不展示" />
             </el-form-item>
-            <el-form-item label="主图 URL" :error="errors.mainImage">
-              <el-input v-model="m.mainImage" placeholder="请上传后粘贴图片地址" />
+            <el-form-item label="商品主图" :error="errors.mainImage">
+              <ImageUploader v-model="m.mainImage" hint="建议 1:1，支持 JPG / PNG / WebP" />
             </el-form-item>
-            <el-form-item label="上下架">
-              <el-select v-model="m.status" class="control">
-                <el-option :value="1" label="上架" />
-                <el-option :value="2" label="下架" />
-              </el-select>
+            <el-form-item label="轮播图">
+              <ImageUploader v-model="m.images" multiple hint="可上传多张，按上传顺序展示" />
             </el-form-item>
           </div>
-          <el-form-item label="商品描述">
-            <el-input v-model="m.description" type="textarea" :rows="3" placeholder="选填，最多 4000 字" />
-          </el-form-item>
         </el-form>
 
         <h3 class="sec">规格项</h3>
+        <p class="sec__hint">每个规格项至少填一个值，例如颜色：红、蓝；尺码：S、M。SKU 会按组合自动生成。</p>
         <div v-for="(sp, si) in specs" :key="si" class="spec">
           <div class="spec__head">
             <el-input v-model="sp.specName" class="spec__name" placeholder="规格项名，如 颜色" />
@@ -102,6 +97,11 @@
           <el-table-column v-for="(sp, si) in specs" :key="si" :label="sp.specName || '规格'" min-width="120">
             <template #default="{ row }">{{ row.specValues[si] }}</template>
           </el-table-column>
+          <el-table-column label="SKU 编码" width="180">
+            <template #default="{ row }">
+              <el-input v-model="row.skuCode" size="small" placeholder="必填，唯一" />
+            </template>
+          </el-table-column>
           <el-table-column label="售价" width="130">
             <template #default="{ row }">
               <el-input v-model.number="row.price" type="number" size="small" />
@@ -112,6 +112,11 @@
               <el-input v-model.number="row.stock" type="number" size="small" />
             </template>
           </el-table-column>
+          <el-table-column label="SKU 图片" width="150">
+            <template #default="{ row }">
+              <ImageUploader v-model="row.image" hint="" />
+            </template>
+          </el-table-column>
           <el-table-column label="启用" width="90">
             <template #default="{ row }">
               <el-switch v-model="row.enabled" />
@@ -119,6 +124,9 @@
           </el-table-column>
         </el-table>
         <p v-if="errors.skus" class="err">{{ errors.skus }}</p>
+
+        <h3 class="sec">商品描述</h3>
+        <RichTextEditor v-model="m.description" placeholder="填写商品卖点、材质、使用说明等内容" />
 
         <div class="actions">
           <el-button @click="cancel">取消</el-button>
@@ -134,6 +142,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import request from '@/api/request';
+import ImageUploader from '@/components/ImageUploader.vue';
+import RichTextEditor from '@/components/RichTextEditor.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -154,7 +164,7 @@ const m = reactive<any>({
   deliveryType: 1,
   originalPrice: 0,
   mainImage: '',
-  status: 2,
+  images: [] as string[],
   description: '',
 });
 
@@ -165,7 +175,14 @@ const brands = ref<any[]>([]);
 type Spec = { specName: string; specValues: string[]; adding?: boolean; draft?: string };
 const specs = reactive<Spec[]>([{ specName: '颜色', specValues: [], adding: true, draft: '' }]);
 
-type SkuRow = { specValues: string[]; price: number; stock: number; enabled: boolean };
+type SkuRow = {
+  specValues: string[];
+  skuCode: string;
+  price: number;
+  stock: number;
+  image: string;
+  enabled: boolean;
+};
 const skus = ref<SkuRow[]>([]);
 
 // 笛卡尔积：规格项组合出 SKU。规格是 0 项时给一行「无规格」，
@@ -173,7 +190,7 @@ const skus = ref<SkuRow[]>([]);
 function regenerate() {
   const active = specs.filter((s) => s.specName.trim() && s.specValues.length > 0);
   if (!active.length) {
-    skus.value = [{ specValues: [], price: 0, stock: 0, enabled: true }];
+    skus.value = [{ specValues: [], skuCode: '', price: 0, stock: 0, image: '', enabled: true }];
     return;
   }
 
@@ -193,8 +210,10 @@ function regenerate() {
     const old = previous.get(values.join('|'));
     return {
       specValues: values,
+      skuCode: old?.skuCode ?? '',
       price: old?.price ?? 0,
       stock: old?.stock ?? 0,
+      image: old?.image ?? '',
       enabled: old?.enabled ?? true,
     };
   });
@@ -249,6 +268,17 @@ function flatten(node: any, path: number[] = []): any[] {
   return out;
 }
 
+function parseImages(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function load() {
   loading.value = true;
   try {
@@ -256,7 +286,12 @@ async function load() {
       request('/gateway/categories/Tree', { method: 'GET', silent: true }),
       request('/gateway/brands/List', { method: 'GET', silent: true }),
     ]);
-    categoryTree.value = Array.isArray(tree) ? tree : (tree?.items || []);
+    const mapTree = (nodes: any[]): any[] => (nodes || []).map((node) => ({
+      id: node.id,
+      name: node.categoryName || node.name,
+      children: mapTree(node.children || []),
+    }));
+    categoryTree.value = mapTree(Array.isArray(tree) ? tree : (tree?.items || []));
     brands.value = (Array.isArray(brandRows) ? brandRows : (brandRows?.items || []))
       .map((b: any) => ({ value: Number(b.id ?? b.Id), label: b.brandName ?? b.BrandName ?? '' }));
 
@@ -277,7 +312,7 @@ async function load() {
       deliveryType: Number(d.deliveryType ?? 1),
       originalPrice: Number(d.originalPrice ?? 0),
       mainImage: d.mainImage ?? '',
-      status: Number(d.status ?? 2),
+      images: parseImages(d.images),
       description: d.description ?? '',
     });
 
@@ -290,8 +325,10 @@ async function load() {
 
     const rows = (d.skus || []).map((s: any) => ({
       specValues: s.specValues || (s.specValueTexts || []),
+      skuCode: s.skuCode ?? '',
       price: Number(s.price ?? 0),
       stock: Number(s.stock ?? 0),
+      image: s.image ?? '',
       enabled: Number(s.status ?? 1) === 1,
     }));
     if (rows.length) skus.value = rows;
@@ -315,6 +352,10 @@ function validate() {
 
   if (!skus.value.length) errors.skus = '至少要有一个 SKU';
   for (const row of skus.value) {
+    if (!row.skuCode?.trim()) {
+      errors.skus = '每个 SKU 都必须填写 SKU 编码';
+      break;
+    }
     if (!(Number(row.price) > 0)) {
       errors.skus = '每个 SKU 的售价都必须大于 0';
       break;
@@ -341,16 +382,18 @@ async function submit() {
       deliveryType: m.deliveryType,
       mainImage: m.mainImage.trim(),
       originalPrice: m.originalPrice || 0,
-      status: m.status,
+      status: 2,
       description: m.description || '',
+      images: JSON.stringify(m.images || []),
       specs: specs
         .filter((s) => s.specName.trim() && s.specValues.length > 0)
         .map((s) => ({ specName: s.specName.trim(), specValues: s.specValues })),
       skus: skus.value.map((row, i) => ({
-        skuCode: `SKU-${Date.now()}-${i + 1}`,
+        skuCode: row.skuCode.trim(),
         specValues: row.specValues,
         price: Number(row.price) || 0,
         stock: Number(row.stock) || 0,
+        image: row.image || '',
         status: row.enabled ? 1 : 2,
       })),
     };

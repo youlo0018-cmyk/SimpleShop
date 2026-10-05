@@ -97,6 +97,7 @@ public record QueryProductsCommand(
     string Keyword = "",
     long CategoryId = 0,
     long BrandId = 0,
+    long MerchantId = 0,
     int Status = 0,
     int AuditStatus = 0) : IRequest<ApiResponse<List<ProductListItem>>>;
 
@@ -160,7 +161,8 @@ public record ProductListItem(
     decimal MaxPrice,
     int AuditStatus,
     int Status,
-    long Sales);
+    long Sales,
+    long MerchantId);
 
 /// <summary>商品命令的校验器注册。</summary>
 public static class ProductValidators

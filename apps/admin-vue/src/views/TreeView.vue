@@ -29,58 +29,78 @@
         <div v-for="i in 6" :key="i" class="skeleton-row" />
       </div>
 
-      <el-tree
-        v-else-if="filtered.length"
-        :data="filtered"
-        :props="{ children: 'children', label: config.labelField }"
-        node-key="id"
-        default-expand-all
-        :expand-on-click-node="false"
-      >
-        <template #default="{ data }">
-          <span class="node">
-            <span class="node__main">
-              <span class="node__label">{{ data[config.nameField || config.labelField] }}</span>
-              <span v-if="config.codeField && data[config.codeField]" class="node__code mono">
-                {{ data[config.codeField] }}
+      <div v-else-if="filtered.length" class="tree-layout">
+        <div class="tree-layout__tree">
+          <el-tree
+            :data="filtered"
+            :props="{ children: 'children', label: config.labelField }"
+            node-key="id"
+            :default-expand-all="false"
+            :expand-on-click-node="false"
+            @node-click="selectNode"
+          >
+            <template #default="{ data }">
+              <span class="node">
+                <span class="node__main">
+                  <span class="node__label">{{ data[config.nameField || config.labelField] }}</span>
+                  <span v-if="config.codeField && data[config.codeField]" class="node__code mono">
+                    {{ data[config.codeField] }}
+                  </span>
+                </span>
+                <span v-if="config.statusField" class="pill" :class="statusClass(data)">
+                  {{ statusTextOf(data) }}
+                </span>
               </span>
-              <span v-if="config.sortField" class="node__sort">排序 {{ data[config.sortField] ?? 0 }}</span>
-            </span>
-            <span class="node__actions">
-              <span v-if="config.statusField" class="pill" :class="statusClass(data)">
-                {{ statusTextOf(data) }}
+            </template>
+          </el-tree>
+        </div>
+
+        <aside class="tree-layout__detail">
+          <template v-if="selected">
+            <div class="detail-title">
+              <h3>{{ selected[config.nameField || config.labelField] }}</h3>
+              <span v-if="config.statusField" class="pill" :class="statusClass(selected)">
+                {{ statusTextOf(selected) }}
               </span>
+            </div>
+            <div class="detail-grid">
+              <div v-for="field in config.fields || []" :key="field.name" class="detail-row">
+                <span>{{ field.label }}</span>
+                <strong>{{ selected[field.name] || '—' }}</strong>
+              </div>
+            </div>
+            <div class="detail-actions">
               <el-button
-                v-if="canAddChild(data) && hasPermission(config.createPermission)"
-                link
-                type="primary"
-                @click.stop="openCreate(data)"
+                v-if="canAddChild(selected) && hasPermission(config.createPermission)"
+                @click="openCreate(selected)"
               >
                 新增下级
               </el-button>
               <el-button
-                v-if="canEdit(data) && hasPermission(config.updatePermission)"
-                link
+                v-if="canEdit(selected) && hasPermission(config.updatePermission)"
                 type="primary"
-                @click.stop="openEdit(data)"
+                @click="openEdit(selected)"
               >
-                编辑
-              </el-button>
-              <el-button v-if="config.statusEndpoint && hasPermission(config.updatePermission)" link @click.stop="toggleStatus(data)">
-                {{ Number(data[config.statusField]) === 1 ? '停用' : '启用' }}
+                修改
               </el-button>
               <el-button
-                v-if="canDelete(data) && hasPermission(config.deletePermission)"
-                link
+                v-if="config.statusEndpoint && hasPermission(config.updatePermission)"
+                @click="toggleStatus(selected)"
+              >
+                {{ Number(selected[config.statusField]) === 1 ? '停用' : '启用' }}
+              </el-button>
+              <el-button
+                v-if="canDelete(selected) && hasPermission(config.deletePermission)"
                 type="danger"
-                @click.stop="askDelete(data)"
+                @click="askDelete(selected)"
               >
                 删除
               </el-button>
-            </span>
-          </span>
-        </template>
-      </el-tree>
+            </div>
+          </template>
+          <div v-else class="detail-empty">选择左侧节点查看详情</div>
+        </aside>
+      </div>
 
       <div v-else class="empty">
         <div class="empty__title">{{ config.emptyHint || '暂无数据' }}</div>
@@ -151,6 +171,7 @@ const config = computed(() => props.config);
 const loading = ref(true);
 const keyword = ref('');
 const nodes = ref<any[]>([]);
+const selected = ref<any>(null);
 const editor = reactive({
   open: false,
   saving: false,
@@ -213,11 +234,15 @@ function canAddChild(data: any) {
 }
 
 function canEdit(data: any) {
-  return !config.value.builtinField || !data[config.value.builtinField];
+  return Boolean(data);
 }
 
 function canDelete(data: any) {
-  return canEdit(data);
+  return !config.value.builtinField || !data[config.value.builtinField];
+}
+
+function selectNode(data: any) {
+  selected.value = data;
 }
 
 function openCreate(parent: any) {
@@ -357,6 +382,84 @@ onMounted(load);
   display: grid;
   gap: var(--space-3);
   padding: var(--space-6);
+}
+
+.tree-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  min-height: 560px;
+}
+
+.tree-layout__tree {
+  min-width: 0;
+  padding: var(--space-4);
+}
+
+.tree-layout__detail {
+  border-left: 0.5px solid var(--hairline);
+  padding: var(--space-5);
+}
+
+.detail-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.detail-title h3 {
+  margin: 0;
+  font-size: var(--text-title-3);
+}
+
+.detail-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 0.5px solid var(--hairline);
+  color: var(--text-2);
+  font-size: var(--text-foot);
+}
+
+.detail-row strong {
+  max-width: 210px;
+  overflow: hidden;
+  color: var(--text-1);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.detail-empty {
+  padding-top: 160px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+@media (max-width: 1100px) {
+  .tree-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tree-layout__detail {
+    border-top: 0.5px solid var(--hairline);
+    border-left: none;
+  }
 }
 
 .node {

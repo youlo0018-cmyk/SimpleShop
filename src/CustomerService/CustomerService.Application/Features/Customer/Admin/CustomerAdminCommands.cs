@@ -41,6 +41,6 @@ public record ChangeCustomerStatusCommand(long CustomerId, int Status)
 /// 不是枚举数字 / 时间戳 / JSON 原文。
 /// </remarks>
 public sealed record AdminCustomerDto(
-    long CustomerId, string CustomerName, string NickName, string Phone, string Avatar,
+    long CustomerId, string CustomerNo, string CustomerName, string NickName, string Phone, string Avatar,
     int Gender, string GenderName, int Status, string StatusName,
     string? LastLoginAt, string CreatedAt);

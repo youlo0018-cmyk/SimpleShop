@@ -31,6 +31,9 @@ public sealed class TenantContext
     /// <summary>当前操作人姓名，用于写入创建人与操作人快照。匿名时为空字符串。</summary>
     public string UserName { get; set; } = string.Empty;
 
+    /// <summary>客户唯一编码；后台与游客为空字符串。</summary>
+    public string CustomerNo { get; set; } = string.Empty;
+
     /// <summary>当前权限点集合，由令牌解析。权限只认显式绑定，无绑定即无权限（fail-closed）。</summary>
     public IReadOnlyList<string> Permissions { get; set; } = Array.Empty<string>();
 

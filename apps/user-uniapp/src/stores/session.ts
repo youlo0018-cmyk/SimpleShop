@@ -10,6 +10,7 @@ import {
 
 export interface CustomerProfile {
   customerId: string;
+  customerNo?: string;
   customerName: string;
   nickName: string;
   avatar: string;
@@ -17,6 +18,7 @@ export interface CustomerProfile {
 
 interface LoginResult {
   customerId: string;
+  customerNo: string;
   token: string;
   customerName: string;
   nickName: string;
@@ -25,6 +27,7 @@ interface LoginResult {
 
 interface RegisterResult {
   customerId: string;
+  customerNo: string;
   token: string;
   customerName: string;
   nickName: string;
@@ -53,6 +56,7 @@ export const useSessionStore = defineStore('customer-session', {
       this.token = result.token;
       this.profile = {
         customerId: result.customerId,
+        customerNo: result.customerNo,
         customerName: result.customerName,
         nickName: result.nickName,
         avatar: result.avatar,
@@ -69,6 +73,7 @@ export const useSessionStore = defineStore('customer-session', {
       this.token = result.token;
       this.profile = {
         customerId: result.customerId,
+        customerNo: result.customerNo,
         customerName: result.customerName,
         nickName: result.nickName,
         avatar: '',

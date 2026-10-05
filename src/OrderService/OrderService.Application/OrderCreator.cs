@@ -54,7 +54,8 @@ public readonly record struct CreateOrderRequest(
     IReadOnlyList<OrderLineRequest> Lines,
     long CouponId = 0, long PointsToUse = 0, string Remark = "",
     FreightRule Freight = default,
-    bool InventoryPreDeducted = false);
+    bool InventoryPreDeducted = false,
+    string CustomerNo = "");
 
 /// <summary>下单编排：加客户锁 → ①占券 → ②锁积分 → ③锁库存 → ④落单，失败逆序回滚。</summary>
 /// <remarks>
@@ -277,6 +278,7 @@ public sealed class OrderCreator
             {
                 OrderNo = orderNo,
                 CustomerId = request.CustomerId,
+                CustomerNo = request.CustomerNo,
                 PlatformId = request.PlatformId,
                 MerchantId = request.MerchantId,
                 Status = amount.PayableAmount == 0m

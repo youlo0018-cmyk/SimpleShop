@@ -40,6 +40,9 @@ public sealed class TenancyOptions
         /// <summary>商户 Id，平台账号为 0。</summary>
         public const string MerchantId = "X-Claim-MerchantId";
 
+        /// <summary>客户唯一编码，仅客户令牌有值。</summary>
+        public const string CustomerNo = "X-Claim-CustomerNo";
+
         /// <summary>权限点集合，可重复出现或在单值内用逗号分隔。</summary>
         public const string Permissions = "X-Claim-Permissions";
 

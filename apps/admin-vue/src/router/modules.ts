@@ -157,7 +157,15 @@ export const adminRoutes: RouteRecordRaw[] = [
       formRoute('create', 'platform-create', '新建平台', 'platform:create', 'platform'),
       formRoute('edit/:id', 'platform-edit', '编辑平台', 'platform:update', 'platform'),
       formRoute('app-config/:id', 'platform-app-config', '小程序配置', 'platform:update', 'appConfig'),
-      configRoute('regions', 'platform-regions', '地区地址配置', 'region:update', 'regions'),
+      {
+        path: 'regions',
+        name: 'platform-regions',
+        component: () => import('@/views/RegionConfigView.vue'),
+        meta: { title: '地区地址配置', perm: 'region:update' },
+      },
+      listRoute('logistics-companies', 'logistics-company-list', '物流公司', 'logistics:manage', 'logisticsCompanies'),
+      formRoute('logistics-companies/create', 'logistics-company-create', '新建物流公司', 'logistics:manage', 'logisticsCompany'),
+      formRoute('logistics-companies/edit/:id', 'logistics-company-edit', '编辑物流公司', 'logistics:manage', 'logisticsCompany'),
     ],
   },
   {
@@ -197,7 +205,7 @@ export const adminRoutes: RouteRecordRaw[] = [
         path: 'create',
         name: 'product-create',
         component: () => import('@/views/ProductFormView.vue'),
-        meta: { title: '新建商品', perm: 'product:create' },
+        meta: { title: '新建商品', perm: 'product:create', hiddenInMenu: true },
       },
       {
         path: 'edit/:id',
@@ -205,13 +213,14 @@ export const adminRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/ProductFormView.vue'),
         meta: { title: '编辑商品', perm: 'product:update' },
       },
+      {
+        path: 'inventory/:id',
+        name: 'product-inventory',
+        component: () => import('@/views/InventoryAdjustView.vue'),
+        meta: { title: '调整库存', perm: 'inventory:update', hiddenInMenu: true },
+      },
       listRoute('audit', 'product-audit', '商品审核', 'product:audit', 'productAudits'),
     ],
-  },
-  {
-    path: 'inventory',
-    meta: { title: '库存', icon: 'Coin', perm: 'inventory:read' },
-    children: [listRoute('', 'stock-list', '库存管理', 'inventory:read', 'inventory')],
   },
   {
     path: 'search-index',
@@ -249,17 +258,7 @@ export const adminRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/PickupVerifyView.vue'),
         meta: { title: '取货码核销', perm: 'order:pickup' },
       },
-      // 物流公司字典归在「订单」模块下（BUSINESS.md 5.2 的 logistics:manage 挂在订单组），
-      // 而不是单开一个一级菜单：它是发货表单的下拉数据源，不是一个独立业务域。
-      listRoute('logistics-companies', 'logistics-company-list', '物流公司', 'logistics:manage', 'logisticsCompanies'),
-      formRoute('logistics-companies/create', 'logistics-company-create', '新建物流公司', 'logistics:manage', 'logisticsCompany'),
-      formRoute('logistics-companies/edit/:id', 'logistics-company-edit', '编辑物流公司', 'logistics:manage', 'logisticsCompany'),
     ],
-  },
-  {
-    path: 'payments',
-    meta: { title: '支付', icon: 'Wallet', perm: 'payment:read' },
-    children: [listRoute('', 'payment-list', '支付列表', 'payment:read', 'payments')],
   },
   {
     path: 'refunds',
@@ -290,6 +289,7 @@ export const adminRoutes: RouteRecordRaw[] = [
       listRoute('activities', 'coupon-activity-list', '券活动', 'coupon-activity:read', 'couponActivities'),
       formRoute('activities/create', 'coupon-activity-create', '新建券活动', 'coupon-activity:create', 'couponActivity'),
       formRoute('activities/edit/:id', 'coupon-activity-edit', '编辑券活动', 'coupon-activity:update', 'couponActivity'),
+      listRoute('records', 'coupon-record-list', '券核销记录', 'coupon-record:read', 'couponRecords'),
       configRoute('config', 'coupon-config', '优惠优先级配置', 'marketing-config:update', 'promotionPriority'),
     ],
   },

@@ -47,6 +47,10 @@ public sealed class ChangeProductAuditHandler : IRequestHandler<ChangeProductAud
         }
 
         product.AuditStatus = request.AuditStatus;
+        if (request.AuditStatus == ProductEnums.AuditStatuses.Approved)
+        {
+            product.Status = ProductEnums.ListingStatuses.OnShelf;
+        }
         if (request.AuditStatus == ProductEnums.AuditStatuses.Rejected && !string.IsNullOrWhiteSpace(request.Reason))
         {
             // 驳回理由追加到备注里。不覆盖原备注：那里可能有运营自己写的说明。
@@ -345,6 +349,7 @@ public sealed class QueryProductsHandler : IRequestHandler<QueryProductsCommand,
             Keyword = request.Keyword ?? string.Empty,
             CategoryId = request.CategoryId,
             BrandId = request.BrandId,
+            MerchantId = request.MerchantId,
             Status = request.Status,
             AuditStatus = request.AuditStatus
         };
@@ -362,7 +367,8 @@ public sealed class QueryProductsHandler : IRequestHandler<QueryProductsCommand,
             a.MaxPrice,
             a.AuditStatus,
             a.Status,
-            a.Sales)).ToList();
+            a.Sales,
+            a.MerchantId)).ToList();
 
         return ApiResults.Ok(list);
     }

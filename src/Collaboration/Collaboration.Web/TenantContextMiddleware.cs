@@ -99,6 +99,7 @@ public sealed class TenantContextMiddleware
             Access = access,
             UserId = userId,
             UserName = ReadString(http, TenancyOptions.Headers.UserName),
+            CustomerNo = ReadString(http, TenancyOptions.Headers.CustomerNo),
             TenantType = tenantType,
             PlatformId = ReadLong(http, TenancyOptions.Headers.PlatformId),
             MerchantId = ReadLong(http, TenancyOptions.Headers.MerchantId),

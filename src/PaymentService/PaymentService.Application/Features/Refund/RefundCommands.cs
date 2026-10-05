@@ -41,6 +41,7 @@ public record QueryRefundsCommand(int Status = 0, string OrderNo = "", int Page 
 /// <summary>退款单视图。</summary>
 /// <param name="RefundId">退款单 Id。</param>
 /// <param name="RefundNo">退款单号。</param>
+/// <param name="OrderId">订单 Id。</param>
 /// <param name="OrderNo">订单号。</param>
 /// <param name="Amount">申请金额。</param>
 /// <param name="RefundType">退款类型：1 整单 / 2 部分。</param>
@@ -52,7 +53,11 @@ public record QueryRefundsCommand(int Status = 0, string OrderNo = "", int Page 
 /// <param name="ApproverName">审批人。</param>
 /// <param name="CreatedAt">申请时间。</param>
 /// <param name="Items">退款明细。</param>
-public sealed record RefundDto(long RefundId, string RefundNo, string OrderNo, decimal Amount, int RefundType, string RefundTypeName, int Status, string StatusName, string Reason, string RejectReason, string ApproverName, string CreatedAt, IReadOnlyList<RefundItemDto> Items);
+public sealed record RefundDto(
+    long RefundId, string RefundNo, long OrderId, string OrderNo, decimal Amount,
+    int RefundType, string RefundTypeName, int Status, string StatusName,
+    string Reason, string RejectReason, string ApproverName, string CreatedAt,
+    IReadOnlyList<RefundItemDto> Items);
 
 /// <summary>退款明细视图。</summary>
 /// <param name="OrderItemId">订单行 Id。</param>

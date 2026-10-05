@@ -88,6 +88,34 @@
           </el-form-item>
         </div>
 
+        <div v-if="config.permissionTree" class="permission-block">
+          <div class="permission-block__head">
+            <div>
+              <h3>绑定权限点</h3>
+              <p>勾选这个角色可以执行的模块与动作</p>
+            </div>
+            <div class="permission-block__tools">
+              <el-button link type="primary" @click="selectAllPermissions">全部权限</el-button>
+              <el-button link @click="clearPermissions">清空</el-button>
+            </div>
+          </div>
+          <el-tree
+            ref="permissionTreeRef"
+            :data="permissionTree"
+            node-key="id"
+            show-checkbox
+            default-expand-all
+            :props="{ label: 'name', children: 'children' }"
+          >
+            <template #default="{ data }">
+              <span class="permission-node">
+                <span>{{ data.name }}</span>
+                <span class="permission-node__code mono">{{ data.code || '仅菜单权限' }}</span>
+              </span>
+            </template>
+          </el-tree>
+        </div>
+
         <div class="form__actions">
           <el-button @click="cancel">取消</el-button>
           <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
@@ -98,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import request from '@/api/request';
@@ -122,9 +150,17 @@ const loaded = ref<Record<string, any>>({});
 // 下拉数据源。平台 / 商户 / 角色 / 券模板都要从后端取，
 // 且必须显示 name 而不是 id（DATA_SPEC 4.1）。
 const optionCache = reactive<Record<string, any[]>>({});
+const permissionTreeRef = ref<any>();
+const permissionTree = ref<any[]>([]);
 
 function optionsOf(f: any) {
   if (f.static) return f.static;
+  if (f.options === 'platforms' && isEdit.value && Number(loaded.value.platformId || 0) === 0) {
+    return [
+      { value: '0', label: '平台超管（不归属具体平台）' },
+      ...(optionCache[f.options] || []),
+    ];
+  }
   return optionCache[f.options] || [];
 }
 
@@ -136,7 +172,7 @@ const visibleFields = computed(() =>
 );
 
 function fill(values: Record<string, any>) {
-  for (const f of visibleFields.value) {
+  for (const f of config.value.fields || []) {
     const v = values?.[f.field];
     model[f.field] = f.format ? f.format(v) : (v ?? f.default ?? '');
   }
@@ -178,6 +214,13 @@ async function load() {
   loading.value = true;
   try {
     await loadOptions();
+    if (config.value.permissionTree) {
+      permissionTree.value = await request('/gateway/permissions/Tree', {
+        method: 'GET',
+        params: { includeDisabled: true },
+        silent: true,
+      });
+    }
     if (!isEdit.value) {
       fill({});
       return;
@@ -187,13 +230,23 @@ async function load() {
     // 后者不是偷懒 —— users / platforms / merchants 只有 List 没有 Get，
     // 而为了编辑页单独加三个 Get 端点不值当（那三张表本来就在列表页全量展示）。
     if (config.value.detailEndpoint) {
+      const detailMethod = config.value.detailMethod || 'POST';
       const detail = await request(config.value.detailEndpoint, {
-        method: config.value.detailMethod || 'POST',
-        body: { [config.value.idField || 'id']: String(entityId.value) },
+        method: detailMethod,
+        params: detailMethod === 'GET'
+          ? { [config.value.idField || 'id']: String(entityId.value) }
+          : undefined,
+        body: detailMethod === 'GET'
+          ? undefined
+          : { [config.value.idField || 'id']: String(entityId.value) },
         silent: true,
       });
       loaded.value = detail || {};
       fill(detail || {});
+      if (config.value.permissionTree && detail?.permissionIds) {
+        await nextTick();
+        permissionTreeRef.value?.setCheckedKeys(detail.permissionIds.map(String), false);
+      }
       return;
     }
 
@@ -207,7 +260,12 @@ async function load() {
     // 曾用 200，结果编辑平台 / 编辑商户 / 编辑场次三个页面一律 400。
     const res = await request(src.url, {
       method: src.method || 'POST',
-      body: { page: 1, pageSize: src.pageSize ?? 50, ...(src.body || {}) },
+      params: (src.method || 'POST') === 'GET'
+        ? { page: 1, pageSize: src.pageSize ?? 50, ...(src.body || {}) }
+        : undefined,
+      body: (src.method || 'POST') === 'GET'
+        ? undefined
+        : { page: 1, pageSize: src.pageSize ?? 50, ...(src.body || {}) },
       silent: true,
     });
     const rows = Array.isArray(res) ? res : (res?.items || []);
@@ -215,11 +273,41 @@ async function load() {
     if (!hit) ElMessage.warning('未找到该记录，可能已被删除');
     loaded.value = hit || {};
     fill(hit || {});
+    if (config.value.permissionTree && config.value.permissionDetailEndpoint) {
+      const detail = await request(config.value.permissionDetailEndpoint, {
+        method: 'GET',
+        params: { [config.value.idField || 'id']: String(entityId.value) },
+        silent: true,
+      }).catch(() => null);
+      await nextTick();
+      permissionTreeRef.value?.setCheckedKeys((detail?.permissionIds || []).map(String), false);
+    }
   } catch {
     fill({});
   } finally {
     loading.value = false;
   }
+}
+
+function flattenPermissionIds(nodes: any[]): string[] {
+  return nodes.flatMap((node) => [String(node.id), ...flattenPermissionIds(node.children || [])]);
+}
+
+function selectedPermissionIds(): string[] {
+  const tree = permissionTreeRef.value;
+  if (!tree) return [];
+  return [
+    ...tree.getCheckedKeys(false).map(String),
+    ...tree.getHalfCheckedKeys().map(String),
+  ];
+}
+
+function selectAllPermissions() {
+  permissionTreeRef.value?.setCheckedKeys(flattenPermissionIds(permissionTree.value), false);
+}
+
+function clearPermissions() {
+  permissionTreeRef.value?.setCheckedKeys([], false);
 }
 
 // ⚠️ 只在**提交时**校验，失焦不校验（用户明确要求）。
@@ -280,7 +368,17 @@ async function submit() {
     }
     if (isEdit.value) body[config.value.idField || 'id'] = String(entityId.value);
 
-    await request(isEdit.value ? config.value.updateEndpoint : config.value.createEndpoint, { body });
+    const result = await request<any>(
+      isEdit.value ? config.value.updateEndpoint : config.value.createEndpoint,
+      { body },
+    );
+    if (config.value.permissionTree) {
+      const roleId = isEdit.value ? String(entityId.value) : String(result);
+      await request(config.value.permissionBindEndpoint, {
+        method: 'POST',
+        body: { roleId, permissionIds: selectedPermissionIds() },
+      });
+    }
     ElMessage.success(isEdit.value ? '已保存' : '创建成功');
     router.push(config.value.listRoute);
   } catch {
@@ -294,9 +392,13 @@ function cancel() {
   router.push(config.value.listRoute);
 }
 
-const title = computed(() =>
-  isEdit.value ? `${config.value.title}编辑` : config.value.title,
-);
+const title = computed(() => {
+  if (!isEdit.value) return config.value.title;
+  const base = config.value.title.startsWith('新建')
+    ? config.value.title.slice(2)
+    : config.value.title;
+  return `编辑${base}`;
+});
 
 onMounted(load);
 </script>
@@ -363,6 +465,45 @@ onMounted(load);
   margin-top: var(--space-2);
   padding-top: var(--space-4);
   border-top: 1px solid var(--hairline);
+}
+
+.permission-block {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 0.5px solid var(--hairline);
+}
+
+.permission-block__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.permission-block__head h3 {
+  margin: 0;
+  font-size: var(--text-title-3);
+}
+
+.permission-block__head p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-2);
+  font-size: var(--text-foot);
+}
+
+.permission-block__tools {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.permission-node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.permission-node__code {
+  color: var(--text-3);
 }
 
 .skel {

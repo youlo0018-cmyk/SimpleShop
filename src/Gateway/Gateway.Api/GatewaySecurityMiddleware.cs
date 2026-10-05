@@ -166,6 +166,7 @@ public sealed class GatewaySecurityMiddleware
         headers[TenancyOptions.Headers.TenantType] = ResolveTenantType(principal);
         headers[TenancyOptions.Headers.PlatformId] = First(principal, "platform_id");
         headers[TenancyOptions.Headers.MerchantId] = First(principal, "merchant_id");
+        headers[TenancyOptions.Headers.CustomerNo] = First(principal, "customer_no");
 
         var permissions = principal.FindAll("permission").Select(c => c.Value)
             .Where(v => !string.IsNullOrEmpty(v)).Distinct(StringComparer.Ordinal).ToArray();

@@ -163,8 +163,9 @@ Invoke-Case 'API-DS-001' '建两个已审核商品：一个上架、一个留在
     GwPost '/gateway/products/Audit' @{ productId = $script:onShelfProductId; auditStatus = 20 } | Out-Null
     GwPost '/gateway/products/ChangeListing' @{ productId = $script:onShelfProductId; status = 1 } | Out-Null
 
-    # 第二个只审核、**不上架**：用来验证「下架商品不能被装修引用」
+    # 第二个审核通过后默认自动上架，再显式下架：用来验证「下架商品不能被装修引用」
     GwPost '/gateway/products/Audit' @{ productId = $script:offShelfProductId; auditStatus = 20 } | Out-Null
+    GwPost '/gateway/products/ChangeListing' @{ productId = $script:offShelfProductId; status = 2 } | Out-Null
 
     $d1 = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:onShelfProductId)" -Headers $script:adminHeaders -TimeoutSec 30
     $d2 = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:offShelfProductId)" -Headers $script:adminHeaders -TimeoutSec 30

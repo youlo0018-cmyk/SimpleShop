@@ -22,6 +22,7 @@ public sealed class ProductController : ControllerBase
     /// <param name="keyword">按商品名模糊搜索。</param>
     /// <param name="categoryId">按分类过滤。</param>
     /// <param name="brandId">按品牌过滤。</param>
+    /// <param name="merchantId">按商户过滤，0 表示不限。</param>
     /// <param name="status">按上下架过滤，0 不限。</param>
     /// <param name="auditStatus">按审核状态过滤，0 不限。</param>
     /// <param name="ct">取消令牌。</param>
@@ -33,10 +34,19 @@ public sealed class ProductController : ControllerBase
         [FromQuery] string keyword = "",
         [FromQuery] long categoryId = 0,
         [FromQuery] long brandId = 0,
+        [FromQuery] long merchantId = 0,
         [FromQuery] int status = 0,
         [FromQuery] int auditStatus = 0,
         CancellationToken ct = default)
-        => _mediator.Send(new QueryProductsCommand(page, pageSize, keyword, categoryId, brandId, status, auditStatus), ct);
+        => _mediator.Send(new QueryProductsCommand(
+            Page: page,
+            PageSize: pageSize,
+            Keyword: keyword,
+            CategoryId: categoryId,
+            BrandId: brandId,
+            MerchantId: merchantId,
+            Status: status,
+            AuditStatus: auditStatus), ct);
 
     /// <summary>商品详情。含规格、SKU 与解析后的规格值 Id。</summary>
     /// <param name="productId">商品 Id。</param>

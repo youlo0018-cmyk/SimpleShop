@@ -6,6 +6,23 @@
         <p class="head__desc">{{ config.desc }}</p>
       </div>
       <div class="head__tools">
+        <el-select
+          v-for="filter in config.filters || []"
+          :key="filter.field"
+          v-model="filterValues[filter.field]"
+          class="head__filter"
+          clearable
+          filterable
+          :placeholder="filter.placeholder || filter.label"
+          @change="reload"
+        >
+          <el-option
+            v-for="option in filterOptions[filter.options] || []"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
         <el-input
           v-if="config.search"
           v-model="keyword"
@@ -42,7 +59,7 @@
         <div v-for="i in 5" :key="i" class="skeleton-row" style="margin-bottom: var(--space-3)" />
       </div>
 
-      <el-table v-else-if="rows.length" :data="rows" class="table" @row-click="onRow">
+      <el-table v-else-if="rows.length" :data="rows" class="table">
         <el-table-column
           v-for="c in config.columns"
           :key="c.field"
@@ -85,7 +102,7 @@
               点开仍然是新页（不是弹窗）。
             -->
             <el-button
-              v-if="config.editRoute && hasPermission(config.editPermission || '')"
+              v-if="config.editRoute && (!config.editWhen || config.editWhen(row)) && hasPermission(config.editPermission || '')"
               type="primary"
               link
               @click.stop="router.push(config.editRoute(row))"
@@ -186,11 +203,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { Plus } from '@element-plus/icons-vue';
 import request from '@/api/request';
+import { optionSources } from '@/router/form-configs';
 import { statusColor, statusText } from '@/utils/dict';
 import { hasPermission } from '@/utils/session';
 import {
@@ -225,6 +243,7 @@ function render(def: any, row: any) {
 }
 
 const router = useRouter();
+const route = useRoute();
 const loading = ref(true);
 const rows = ref<any[]>([]);
 const total = ref(0);
@@ -244,6 +263,8 @@ const status = ref(Number(props.config?.defaultStatus || 0));
 const keyword = ref('');
 const page = ref(1);
 const pageSize = ref(20);
+const filterValues = reactive<Record<string, any>>({});
+const filterOptions = reactive<Record<string, any[]>>({});
 
 // 确认对话框的状态。放在一个 ref 里而不是多个散 ref：
 // 它们总是同时被写入与读取，拆开就会出现「对话框开了但理由还是上一次的」。
@@ -272,6 +293,35 @@ const inspect = ref({
 
 const tabs = computed(() => config.value.tabs || []);
 
+async function loadFilters() {
+  for (const filter of config.value.filters || []) {
+    if (!filter.options || filterOptions[filter.options]) continue;
+    const source = optionSources[filter.options];
+    if (!source) {
+      filterOptions[filter.options] = filter.static || [];
+      continue;
+    }
+    try {
+      const rows = await request(source.url, {
+        method: source.method || 'GET',
+        params: (source.method || 'GET') === 'GET' ? (source.body || source.params) : undefined,
+        body: (source.method || 'GET') === 'POST' ? (source.body || source.params) : undefined,
+        silent: true,
+      });
+      const list = Array.isArray(rows) ? rows : (rows?.items || []);
+      filterOptions[filter.options] = list.map((row: any) => ({
+        value: String(row.id ?? row.Id ?? row.value ?? row.Value ?? ''),
+        label: String(
+          row.name ?? row.Name ?? row.platformName ?? row.merchantName ??
+          row.templateName ?? row.roleName ?? row.code ?? row.Code ?? '',
+        ),
+      }));
+    } catch {
+      filterOptions[filter.options] = [];
+    }
+  }
+}
+
 function showAction(action: any, row: any) {
   if (action.permission && !hasPermission(action.permission)) return false;
   return !action.showWhen || action.showWhen(row);
@@ -290,6 +340,11 @@ async function load() {
       if (picked) body[config.value.statusField || 'status'] = picked;
     }
     if (config.value.search && keyword.value.trim()) body.keyword = keyword.value.trim();
+    for (const filter of config.value.filters || []) {
+      const value = filterValues[filter.field];
+      if (value !== undefined && value !== null && value !== '') body[filter.field] = value;
+    }
+    if (route.query.customerId) body.customerId = String(route.query.customerId);
     body.page = page.value;
     body.pageSize = pageSize.value;
 
@@ -323,14 +378,6 @@ async function load() {
 function reload() {
   page.value = 1;
   load();
-}
-
-function onRow(row: any) {
-  if (config.value.rowClick) config.value.rowClick(row, router);
-  // rowRoute：点整行进详情 / 编辑页。比在操作列加一列「编辑」更好 ——
-  // 运营看列表时想改的是「这一行」，点它就该进它，而不是先去瞄准那一列的小字。
-  // 有 rowClick 时以 rowClick 为准（两者同时存在没有意义）。
-  else if (config.value.rowRoute) router.push(config.value.rowRoute(row));
 }
 
 async function runAction(action: any, row: any) {
@@ -399,8 +446,11 @@ async function runAction(action: any, row: any) {
   }
 
   try {
-    await request(action.endpoint, { body: { ...action.build(row) } });
-    ElMessage.success(action.okText || '操作成功');
+    const response = await request(action.endpoint, {
+      body: { ...action.build(row) },
+      raw: true,
+    });
+    ElMessage.success(response?.message || action.okText || '操作成功');
     await load();
   } catch {
     // request 已经弹过提示，这里不重复弹
@@ -442,10 +492,11 @@ async function submitConfirm() {
           return [field.name, field.type === 'number' ? Number(raw) : raw];
         }))
       : c.reason.trim();
-    await request(c.action.endpoint, {
+    const response = await request(c.action.endpoint, {
       body: { ...c.action.build(c.row, payload) },
+      raw: true,
     });
-    ElMessage.success(c.action.okText || '操作成功');
+    ElMessage.success(response?.message || c.action.okText || '操作成功');
     confirm.value.open = false;
     await load();
   } catch {
@@ -457,7 +508,10 @@ async function submitConfirm() {
 }
 
 watch([status, config], () => reload());
-onMounted(load);
+onMounted(async () => {
+  await loadFilters();
+  await load();
+});
 </script>
 
 <style scoped>
@@ -484,6 +538,10 @@ onMounted(load);
 
 .head__search {
   width: 280px;
+}
+
+.head__filter {
+  width: 180px;
 }
 
 /* 搜索框与「新建」按钮并排。按钮在右，搜索在左 ——

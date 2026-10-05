@@ -9,6 +9,7 @@ namespace ProductService.Application.Features.Brand;
 public record CreateBrandCommand(
     string BrandName,
     long PlatformId,
+    string BrandCode = "",
     string Logo = "",
     int SortOrder = 0,
     int Status = 1) : IRequest<ApiResponse<long>>;
@@ -17,6 +18,7 @@ public record CreateBrandCommand(
 public record UpdateBrandCommand(
     long BrandId,
     string BrandName,
+    string BrandCode = "",
     string Logo = "",
     int SortOrder = 0,
     int Status = 1) : IRequest<ApiResponse>;
@@ -32,7 +34,8 @@ public record QueryBrandsCommand(
     bool IncludeDisabled = false) : IRequest<ApiResponse<List<BrandListItem>>>;
 
 /// <summary>品牌列表项。</summary>
-public record BrandListItem(string Id, string BrandName, string Logo, int SortOrder, int Status);
+public record BrandListItem(
+    string Id, string BrandName, string BrandCode, string Logo, int SortOrder, int Status);
 
 /// <summary>品牌命令的校验器注册。</summary>
 public static class BrandValidators
@@ -53,6 +56,7 @@ public static class BrandValidators
         public CreateBrandValidator()
         {
             RuleFor(x => x.BrandName).NotEmpty().Length(1, 64).WithMessage("品牌名必须为 1-64 个字符");
+            RuleFor(x => x.BrandCode).MaximumLength(64).WithMessage("品牌编码不能超过 64 个字符");
             RuleFor(x => x.Logo).MaximumLength(512).WithMessage("品牌 Logo 地址过长");
             RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0).WithMessage("排序不能为负数");
             RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 启用 或 2 停用");
@@ -67,6 +71,7 @@ public static class BrandValidators
         {
             RuleFor(x => x.BrandId).GreaterThan(0).WithMessage("品牌 Id 必须为正数");
             RuleFor(x => x.BrandName).NotEmpty().Length(1, 64).WithMessage("品牌名必须为 1-64 个字符");
+            RuleFor(x => x.BrandCode).MaximumLength(64).WithMessage("品牌编码不能超过 64 个字符");
             RuleFor(x => x.Logo).MaximumLength(512).WithMessage("品牌 Logo 地址过长");
             RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0).WithMessage("排序不能为负数");
             RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 启用 或 2 停用");

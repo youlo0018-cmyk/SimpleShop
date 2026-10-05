@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Infrastructure;
 using Collaboration.Domain.Security;
 using CustomerService.Application.Services;
 using CustomerService.Domain.Entities;
@@ -56,20 +57,23 @@ public sealed class RegisterHandler
         var nickName = string.IsNullOrWhiteSpace(request.NickName) ? request.CustomerName : request.NickName.Trim();
         var entity = new CustomerEntity
         {
+            Id = SnowflakeId.NewId(),
             CustomerName = request.CustomerName.Trim(),
             PasswordHash = PasswordHasher.Hash(request.Password),
             Phone = request.Phone.Trim(),
             NickName = nickName
         };
+        entity.CustomerNo = $"C{entity.Id}";
 
         var id = await _customers.InsertAsync(entity, ct);
         var pointGranted = await _points.TryGrantRegistrationBonusAsync(id, ct);
 
         var result = new RegisterResult(
             id.ToString(),
-            _tokens.Issue(id),
+            _tokens.Issue(id, entity.CustomerNo),
             entity.CustomerName,
             entity.NickName,
+            entity.CustomerNo,
             pointGranted);
 
         return ApiResults.Ok(result, "注册成功");

@@ -469,7 +469,7 @@ Invoke-Case 'API-SHP-002' '🔴 未上架 + 未审核通过时前台看不到（
     return $r.success -and @($r.data.items).Count -eq 0
 }
 
-Invoke-Case 'API-SHP-003' '通过审核但仍下架 → 前台依然看不到' {
+Invoke-Case 'API-SHP-003' '审核通过自动上架 → 前台立即可见' {
     Invoke-RestMethod "$Gateway/gateway/products/SubmitAudit" -Method Post -Headers $script:headers `
         -Body (@{ productId = $script:shopProductId } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30 | Out-Null
@@ -478,15 +478,15 @@ Invoke-Case 'API-SHP-003' '通过审核但仍下架 → 前台依然看不到' {
         -ContentType 'application/json' -TimeoutSec 30 | Out-Null
 
     $r = ShopPost 'List' @{ customerId = 0; keyword = "前台商品$($script:suffix)"; page = 1; pageSize = 10 }
-    return @($r.data.items).Count -eq 0
+    return @($r.data.items).Count -eq 1
 }
 
-Invoke-Case 'API-SHP-004' '🔴 未上架商品的详情也回 404，且不区分「不存在」与「已下架」' {
+Invoke-Case 'API-SHP-004' '审核通过自动上架后商品详情可访问' {
     $r = ShopPost 'Detail' @{ customerId = 0; productId = $script:shopProductId }
-    return (-not $r.success) -and $r.code -eq 404
+    return $r.success -and $r.data.productId -eq "$($script:shopProductId)"
 }
 
-Invoke-Case 'API-SHP-005' '审核通过 + 已上架 → 前台可见' {
+Invoke-Case 'API-SHP-005' '重复上架操作保持幂等，前台仍可见' {
     Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
         -Body (@{ productId = $script:shopProductId; status = 1 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30 | Out-Null

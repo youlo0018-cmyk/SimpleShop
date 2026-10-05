@@ -198,12 +198,17 @@ public interface IOrderStore
     /// <param name="keyword">按订单号 / 收货人 / 手机号模糊匹配，空表示不过滤。</param>
     /// <param name="platformId">平台 Id，0 表示不限。</param>
     /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="customerId">客户 Id，0 表示不限。</param>
+    /// <param name="customerNo">客户唯一编码，空表示不限。</param>
+    /// <param name="from">下单时间下界 UTC，null 表示不限。</param>
+    /// <param name="to">下单时间上界 UTC，null 表示不限。</param>
     /// <param name="page">页码，从 1 开始。</param>
     /// <param name="pageSize">每页条数。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>当页订单与总条数。</returns>
     Task<(List<Order> Orders, long Total)> ListAsync(
         int status, string keyword, long platformId, long merchantId,
+        long customerId, string customerNo, DateTime? from, DateTime? to,
         int page, int pageSize, CancellationToken ct = default);
 
     /// <summary>按订单 Id 集合取聚合信息（件数、首个商品名）。</summary>
@@ -283,7 +288,14 @@ public interface IOrderStore
 /// <param name="ItemQuantity">总件数（各行数量之和）。</param>
 /// <param name="LineCount">商品行数（规格种类数）。</param>
 /// <param name="FirstProductName">第一个商品名，用于列表页缩略文字。</param>
-public readonly record struct OrderItemAggregate(long OrderId, int ItemQuantity, int LineCount, string FirstProductName);
+public readonly record struct OrderItemAggregate(
+    long OrderId,
+    int ItemQuantity,
+    int LineCount,
+    string FirstProductName,
+    bool HasPhysical,
+    bool HasVirtual,
+    bool HasSelfPickup);
 
 /// <summary>下单编排结果。</summary>
 /// <param name="Succeeded">是否成功。</param>

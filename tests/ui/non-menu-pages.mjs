@@ -68,7 +68,7 @@ export const PAGES = [
   { key: null, route: '#/promotions/create', name: '营销活动', title: '新建活动' },
   { key: null, route: '#/seckill/create', name: '限时抢购', title: '新建场次' },
   { key: null, route: '#/brands/create', name: '品牌', title: '新建品牌' },
-  { key: null, route: '#/orders/logistics-companies/create', name: '订单', title: '新建物流公司' },
+  { key: null, route: '#/platforms/logistics-companies/create', name: '平台', title: '新建物流公司' },
 
   { key: 'user', name: '账号', title: '编辑账号', route: '#/users/edit/{id}' },
   { key: 'role', name: '角色权限', title: '编辑角色', route: '#/roles/edit/{id}' },
@@ -80,7 +80,7 @@ export const PAGES = [
   { key: 'customer', name: '客户', title: '客户详情', route: '#/customers/detail/{id}' },
   { key: 'merchant', name: '商户', title: '编辑商户', route: '#/merchants/edit/{id}' },
   { key: 'brand', name: '品牌', title: '编辑品牌', route: '#/brands/edit/{id}' },
-  { key: 'logistics', name: '订单', title: '编辑物流公司', route: '#/orders/logistics-companies/edit/{id}' },
+  { key: 'logistics', name: '平台', title: '编辑物流公司', route: '#/platforms/logistics-companies/edit/{id}' },
   { key: 'product', name: '商品', title: '编辑商品', route: '#/products/edit/{id}' },
   { key: 'promotion', name: '营销活动', title: '编辑活动', route: '#/promotions/edit/{id}' },
   { key: 'session', name: '限时抢购', title: '编辑场次', route: '#/seckill/edit/{id}' },

@@ -12,5 +12,6 @@ public record LoginResult(
     string Token,
     string CustomerName,
     string NickName,
+    string CustomerNo,
     string Avatar);
 

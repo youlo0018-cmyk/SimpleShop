@@ -19,6 +19,10 @@ public class Order : EntityBase
     [Column(Name = "customer_id")]
     public long CustomerId { get; set; }
 
+    /// <summary>客户唯一编码快照，后台按客户编码检索订单。</summary>
+    [Column(Name = "customer_no", StringLength = 64)]
+    public string CustomerNo { get; set; } = string.Empty;
+
     /// <summary>平台 Id。</summary>
     [Column(Name = "platform_id")]
     public long PlatformId { get; set; }

@@ -12,6 +12,10 @@ namespace CustomerService.Domain.Entities;
 [Table(Name = "customer")]
 public class Customer : EntityBase
 {
+    /// <summary>客户唯一编码，客服与订单检索使用。</summary>
+    [Column(Name = "customer_no", StringLength = 64)]
+    public string CustomerNo { get; set; } = string.Empty;
+
     /// <summary>登录名，全局唯一。</summary>
     [Column(Name = "customer_name", StringLength = 64)]
     public string CustomerName { get; set; } = string.Empty;

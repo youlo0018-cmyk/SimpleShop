@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS "order" (
     deleted_at       timestamp     NULL,
     order_no         varchar(64)   NOT NULL,
     customer_id      bigint        NOT NULL,
+    customer_no      varchar(64)   NOT NULL DEFAULT '',
     platform_id      bigint        NOT NULL DEFAULT 0,
     merchant_id      bigint        NOT NULL DEFAULT 0,
     -- 10 待支付 / 20 待发货 / 30 待收货 / 40 待取货 / 50 已完成 / 60 已退款 / 91 已取消
@@ -35,6 +36,8 @@ CREATE TABLE IF NOT EXISTS "order" (
     CONSTRAINT pk_order PRIMARY KEY (id)
 );
 
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS customer_no varchar(64) NOT NULL DEFAULT '';
+
 -- 🔴 这两列必须放在**建索引之前**。CREATE TABLE IF NOT EXISTS 对已存在的表是空操作，
 -- 老环境上 paid_at 并不存在；而下面 ALTER 才补它。
 -- 先建索引再补列的话，老环境会直接报 `column "paid_at" does not exist`，
@@ -52,6 +55,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_order_idempotency
     ON "order" (customer_id, idempotency_key) WHERE is_deleted = false;
 
 CREATE INDEX IF NOT EXISTS idx_order_customer ON "order" (customer_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_order_customer_no ON "order" (customer_no, created_at);
 CREATE INDEX IF NOT EXISTS idx_order_status ON "order" (status, created_at);
 
 -- 报表按「支付时间 + 商户」过滤用。没有这个索引，近 30 天报表会全表扫。

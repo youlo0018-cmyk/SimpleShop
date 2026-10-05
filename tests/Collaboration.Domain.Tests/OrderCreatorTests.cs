@@ -549,6 +549,7 @@ public class OrderCreatorTests
 
         public Task<(List<Order> Orders, long Total)> ListAsync(
             int status, string keyword, long platformId, long merchantId,
+            long customerId, string customerNo, DateTime? from, DateTime? to,
             int page, int pageSize, CancellationToken ct = default)
             => Task.FromResult((SavedOrders, (long)SavedOrders.Count));
 

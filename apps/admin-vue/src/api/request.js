@@ -53,7 +53,7 @@ function mergeErrors(errors) {
 // options     method / body / params / silent（silent 时不弹提示，由调用方自己处理）
 // 失败时抛出的 Error.message 已是中文，可直接用于二次提示。
 export async function request(path, options = {}) {
-  const { method = 'POST', body, params, silent = false } = options;
+  const { method = 'POST', body, params, silent = false, raw = false } = options;
 
   const url = new URL(path, window.location.origin);
   if (params) {
@@ -119,7 +119,7 @@ export async function request(path, options = {}) {
     throw new Error(msg);
   }
 
-  return payload?.data;
+  return raw ? payload : payload?.data;
 }
 
 export default request;

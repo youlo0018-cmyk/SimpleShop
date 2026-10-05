@@ -26,6 +26,13 @@ public interface IBrandRepository
     /// <returns>存在返回 true。幂等只读。</returns>
     Task<bool> ExistsByNameAsync(string brandName, long excludeId = 0, CancellationToken ct = default);
 
+    /// <summary>判断品牌编码是否已被占用。</summary>
+    /// <param name="brandCode">品牌编码，空串不参与唯一性判断。</param>
+    /// <param name="excludeId">排除的 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>存在返回 true。</returns>
+    Task<bool> ExistsByCodeAsync(string brandCode, long excludeId = 0, CancellationToken ct = default);
+
     /// <summary>统计引用该品牌的商品数。</summary>
     /// <param name="brandId">品牌 Id。</param>
     /// <param name="ct">取消令牌。</param>

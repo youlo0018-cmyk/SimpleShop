@@ -115,7 +115,7 @@ internal static class AdminCustomerAssembler
 {
     internal static AdminCustomerDto Build(CustomerEntity c)
         => new(
-            c.Id, c.CustomerName, c.NickName, c.Phone, c.Avatar,
+            c.Id, c.CustomerNo, c.CustomerName, c.NickName, c.Phone, c.Avatar,
             c.Gender, GenderName(c.Gender),
             c.Status, CustomerStatuses.NameOf(c.Status),
             c.LastLoginAt?.ToString("yyyy-MM-dd HH:mm:ss"),

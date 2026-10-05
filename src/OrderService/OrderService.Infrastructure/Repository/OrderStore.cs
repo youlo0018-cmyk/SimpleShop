@@ -79,6 +79,7 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
     /// <inheritdoc />
     public async Task<(List<Order> Orders, long Total)> ListAsync(
         int status, string keyword, long platformId, long merchantId,
+        long customerId, string customerNo, DateTime? from, DateTime? to,
         int page, int pageSize, CancellationToken ct = default)
     {
         var like = (keyword ?? string.Empty).Trim();
@@ -87,6 +88,10 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
             (status <= 0 || a.Status == status)
             && (platformId <= 0 || a.PlatformId == platformId)
             && (merchantId <= 0 || a.MerchantId == merchantId)
+            && (customerId <= 0 || a.CustomerId == customerId)
+            && (string.IsNullOrEmpty(customerNo) || a.CustomerNo == customerNo)
+            && (!from.HasValue || a.CreatedAt >= from.Value)
+            && (!to.HasValue || a.CreatedAt <= to.Value)
             && (string.IsNullOrEmpty(like)
                 || a.OrderNo.Contains(like)
                 || a.ReceiverName.Contains(like)
@@ -124,7 +129,10 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
                 group.Key,
                 list.Sum(a => a.Quantity),
                 list.Length,
-                list[0].ProductName);
+                list[0].ProductName,
+                list.Any(a => a.DeliveryType == DeliveryTypes.Express),
+                list.Any(a => a.DeliveryType == DeliveryTypes.Virtual),
+                list.Any(a => a.DeliveryType == DeliveryTypes.SelfPickup));
         }
 
         return result;

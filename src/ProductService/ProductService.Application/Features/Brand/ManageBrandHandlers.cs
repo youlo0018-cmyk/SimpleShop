@@ -25,10 +25,16 @@ public sealed class CreateBrandHandler : IRequestHandler<CreateBrandCommand, Api
         {
             return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "该品牌名已存在");
         }
+        var code = request.BrandCode?.Trim() ?? string.Empty;
+        if (await _brands.ExistsByCodeAsync(code, 0, ct))
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "该品牌编码已存在");
+        }
 
         var brand = new BrandEntity
         {
             BrandName = name,
+            BrandCode = code,
             Logo = request.Logo?.Trim() ?? string.Empty,
             SortOrder = request.SortOrder,
             Status = request.Status,
@@ -63,8 +69,14 @@ public sealed class UpdateBrandHandler : IRequestHandler<UpdateBrandCommand, Api
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.BadRequest, "该品牌名已存在");
         }
+        var code = request.BrandCode?.Trim() ?? string.Empty;
+        if (await _brands.ExistsByCodeAsync(code, brand.Id, ct))
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.BadRequest, "该品牌编码已存在");
+        }
 
         brand.BrandName = name;
+        brand.BrandCode = code;
         brand.Logo = request.Logo?.Trim() ?? string.Empty;
         brand.SortOrder = request.SortOrder;
         brand.Status = request.Status;
@@ -124,7 +136,8 @@ public sealed class QueryBrandsHandler : IRequestHandler<QueryBrandsCommand, Api
             request.Page, request.PageSize, request.Keyword, request.IncludeDisabled, ct);
 
         var list = items
-            .Select(a => new BrandListItem(a.Id.ToString(), a.BrandName, a.Logo, a.SortOrder, a.Status))
+            .Select(a => new BrandListItem(
+                a.Id.ToString(), a.BrandName, a.BrandCode, a.Logo, a.SortOrder, a.Status))
             .ToList();
 
         return ApiResults.Ok(list);

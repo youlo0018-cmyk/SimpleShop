@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS customer (
     updated_at      timestamp    NULL,
     is_deleted      boolean      NOT NULL DEFAULT false,
     deleted_at      timestamp    NULL,
+    customer_no     varchar(64)  NOT NULL DEFAULT '',
     customer_name   varchar(64)  NOT NULL,
     password_hash   varchar(256) NOT NULL,
     phone           varchar(20)  NOT NULL,
@@ -26,14 +27,19 @@ CREATE TABLE IF NOT EXISTS customer (
 -- CREATE TABLE IF NOT EXISTS 对已建好的表是空操作，老环境上这一列并不存在，
 -- 先建索引就会报 column "status" does not exist。
 ALTER TABLE customer ADD COLUMN IF NOT EXISTS status integer NOT NULL DEFAULT 1;
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS customer_no varchar(64) NOT NULL DEFAULT '';
+UPDATE customer SET customer_no = 'C' || id WHERE customer_no = '';
 
 CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_name ON customer (customer_name);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_phone ON customer (phone);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_no
+    ON customer (customer_no) WHERE is_deleted = false AND customer_no <> '';
 -- 后台按状态筛选用；没有它，「只看停用客户」会全表扫
 CREATE INDEX IF NOT EXISTS idx_customer_status ON customer (status) WHERE is_deleted = false;
 
 COMMENT ON TABLE  customer            IS '前台客户账号（DATA_SPEC 2.6）';
 COMMENT ON COLUMN customer.password_hash IS '只存哈希，禁止明文';
+COMMENT ON COLUMN customer.customer_no    IS '客户唯一编码，客服与订单检索使用';
 COMMENT ON COLUMN customer.gender        IS '0 未知 / 1 男 / 2 女';
 COMMENT ON COLUMN customer.status        IS '1 正常 / 2 停用（停用后禁止登录）';
 

@@ -58,9 +58,10 @@ public sealed class LoginHandler : IRequestHandler<LoginCommand, ApiResponse<Log
 
         var result = new LoginResult(
             customer.Id.ToString(),
-            _tokens.Issue(customer.Id),
+            _tokens.Issue(customer.Id, customer.CustomerNo),
             customer.CustomerName,
             customer.NickName,
+            customer.CustomerNo,
             customer.Avatar);
 
         return ApiResults.Ok(result, "登录成功");

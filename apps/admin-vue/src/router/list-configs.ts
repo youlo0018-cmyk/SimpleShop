@@ -104,6 +104,9 @@ export const LISTS = {
     byStatus: true,
     search: true,
     searchPlaceholder: '商品名 / 编码',
+    filters: [
+      { field: 'merchantId', label: '商户', options: 'merchants', placeholder: '全部商户' },
+    ],
     statusField: 'auditStatus',
     columns: [
       { field: 'spuName', label: '商品', width: 220 },
@@ -154,6 +157,11 @@ export const LISTS = {
         permission: 'product:update',
         showWhen: (r: any) => Number(r.auditStatus) === 30,
         build: (r: any) => ({ productId: r.id }),
+      },
+      {
+        label: '库存',
+        route: (r: any) => `/products/inventory/${r.id}`,
+        permission: 'inventory:update',
       },
     ],
     actionsWidth: 260,
@@ -270,6 +278,7 @@ export const LISTS = {
     search: true,
     searchPlaceholder: '登录名 / 昵称 / 手机号',
     columns: [
+      { field: 'customerNo', label: '客户编码', width: 180, format: 'text', mono: true },
       { field: 'customerName', label: '登录名', width: 150 },
       { field: 'nickName', label: '昵称', width: 130, format: 'text' },
       // 后台要给客服完整手机号找人，脱敏了就等于没法用
@@ -280,6 +289,26 @@ export const LISTS = {
       { field: 'createdAt', label: '注册时间', width: 150, format: 'time' },
     ],
     actions: [
+      {
+        label: '详情',
+        route: (r: any) => `/customers/detail/${r.customerId ?? r.id}`,
+        permission: 'customer:read',
+      },
+      {
+        label: '订单',
+        route: (r: any) => `/orders?customerId=${r.customerId}`,
+        permission: 'order:read',
+      },
+      {
+        label: '积分',
+        route: (r: any) => `/points?customerId=${r.customerId}`,
+        permission: 'point:read',
+      },
+      {
+        label: '卡券',
+        route: (r: any) => `/coupons/records?customerId=${r.customerId}`,
+        permission: 'coupon-record:read',
+      },
       {
         label: '停用',
         endpoint: '/gateway/admin/customers/ChangeStatus',
@@ -298,7 +327,7 @@ export const LISTS = {
         build: (r: any) => ({ customerId: r.customerId, status: 1 }),
       },
     ],
-    actionsWidth: 180,
+    actionsWidth: 340,
   },
 
   brands: {
@@ -588,6 +617,7 @@ export const LISTS = {
     createPermission: 'permission:create',
     rowRoute: (r: any) => `/roles/edit/${r.id}`,
     editRoute: (r: any) => `/roles/edit/${r.id}`,
+    editWhen: (r: any) => !r.isBuiltin,
     editPermission: 'permission:update',
     endpoint: '/gateway/roles/List',
     method: 'GET',
@@ -919,8 +949,13 @@ export const LISTS = {
     ],
     // 退款详情是独立页面而不是弹窗：明细行（退到哪个商品、退了多少）
     // 才是部分退款争议的全部，弹窗里放不下也读不完。
-    rowRoute: (r: any) => `/refunds/detail/${r.refundId ?? r.id}`,
+    rowRoute: (r: any) => `/orders/detail/${r.orderId}`,
     actions: [
+      {
+        label: '退款详情',
+        route: (r: any) => `/refunds/detail/${r.refundId ?? r.id}`,
+        permission: 'refund:read',
+      },
       {
         label: '通过',
         endpoint: '/gateway/refunds/Approve',
@@ -1195,6 +1230,27 @@ export const LISTS = {
       },
     ],
     actionsWidth: 210,
+  },
+
+  couponRecords: {
+    title: '券核销记录',
+    desc: '已发出的券与核销状态',
+    endpoint: '/gateway/marketing/coupon-records/List',
+    method: 'POST',
+    search: true,
+    searchPlaceholder: '券码 / 订单号',
+    columns: [
+      { field: 'couponCode', label: '券码', width: 160, format: 'text', mono: true },
+      { field: 'customerId', label: '客户 Id', width: 170, format: 'text', mono: true },
+      { field: 'templateName', label: '券模板', width: 160, format: 'text' },
+      { field: 'couponType', label: '类型', width: 100, dict: 'couponType' },
+      { field: 'thresholdAmount', label: '门槛', width: 90, num: true, format: 'amount' },
+      { field: 'discountAmount', label: '优惠', width: 90, num: true, format: 'amount' },
+      { field: 'orderNo', label: '订单号', width: 190, format: 'text', mono: true },
+      { field: 'status', label: '状态', width: 100, dict: 'coupon' },
+      { field: 'receiveAt', label: '领取时间', width: 155, format: 'time' },
+      { field: 'expireAt', label: '到期时间', width: 155, format: 'time' },
+    ],
   },
 
   files: {

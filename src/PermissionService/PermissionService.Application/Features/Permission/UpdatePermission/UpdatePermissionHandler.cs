@@ -25,11 +25,6 @@ public sealed class UpdatePermissionHandler : IRequestHandler<UpdatePermissionCo
             return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "权限点不存在");
         }
 
-        if (entity.IsBuiltin)
-        {
-            return ApiResponseFactory.Fail(BaseApiResponseCode.Forbidden, "内置权限点只能停用，不能编辑");
-        }
-
         var name = request.Name.Trim();
         if (await _permissions.ExistsByNameAsync(name, entity.ParentId, entity.Id, ct))
         {
