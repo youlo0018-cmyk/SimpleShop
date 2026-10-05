@@ -129,6 +129,19 @@ const D = {
     true: { text: '需补货', color: 'warning' },
     false: { text: '充足', color: 'neutral' },
   },
+
+  // 评价是否匿名
+  anonymous: {
+    true: { text: '匿名', color: 'neutral' },
+    false: { text: '实名', color: 'info' },
+  },
+
+  // 评价是否被后台隐藏。隐藏是「打标记不删数据」，
+  // 客户在自己的评价列表里仍能看到「已被隐藏」，所以这里要显示出来而不是当成不存在。
+  hidden: {
+    true: { text: '已隐藏', color: 'danger' },
+    false: { text: '展示中', color: 'success' },
+  },
 };
 
 // 取状态对应的语义色档位。

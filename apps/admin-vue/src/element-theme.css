@@ -104,6 +104,17 @@
 .el-table .cell {
   line-height: var(--lh-body);
   padding: 0;
+  /* 表格单元格默认会把过长的**英文单词从中间折断**，
+     表现为「MarketingServ / ice」这种断法 —— 一眼看过去像坏了。
+     keep-all 让英文单词保持完整，只在中英文交界处换行。 */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* 编码类字段（请求 Id / 订单号 / SKU 编码）用等宽字体，原样对齐便于比对 */
+.el-table .cell .mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-foot);
 }
 
 /* ---------- 分页：去边框方框；选中态品牌色浅底 ---------- */

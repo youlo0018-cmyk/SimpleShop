@@ -87,6 +87,107 @@ export const LISTS = {
     ],
     actionsWidth: 120,
   },
+
+  brands: {
+    title: '品牌管理',
+    desc: '商品品牌，删除前需先解绑商品',
+    endpoint: '/gateway/brands/List',
+    method: 'GET',
+    search: true,
+    searchPlaceholder: '品牌名 / 编码',
+    columns: [
+      { field: 'brandName', label: '品牌名', width: 160 },
+      { field: 'brandCode', label: '编码', width: 140, format: 'text' },
+      { field: 'logo', label: 'Logo', width: 100, format: 'text' },
+      { field: 'sort', label: '排序', width: 90, num: true, format: 'count' },
+      { field: 'createdAt', label: '创建时间', width: 160, format: 'time' },
+    ],
+  },
+
+  evaluates: {
+    title: '评价管理',
+    desc: 'SPU 级评价，可隐藏与回复',
+    endpoint: '/gateway/evaluates/admin/List',
+    method: 'POST',
+    search: true,
+    searchPlaceholder: '商品名 / 客户 / 内容',
+    columns: [
+      { field: 'spuName', label: '商品', width: 180 },
+      { field: 'starScore', label: '评分', width: 90, num: true, format: 'score' },
+      { field: 'content', label: '评价内容', width: 240, format: 'text' },
+      { field: 'customerName', label: '客户', width: 120, format: 'text' },
+      {
+        field: 'isAnonymous',
+        label: '匿名',
+        width: 90,
+        dict: 'anonymous',
+      },
+      {
+        field: 'isHidden',
+        label: '展示',
+        width: 90,
+        dict: 'hidden',
+      },
+      { field: 'createdAt', label: '评价时间', width: 150, format: 'time' },
+    ],
+  },
+
+  operationLogs: {
+    title: '操作日志',
+    desc: '后台写操作留痕',
+    endpoint: '/gateway/logs/Operation/List',
+    method: 'POST',
+    columns: [
+      { field: 'occurredAt', label: '时间', width: 155, format: 'time' },
+      { field: 'service', label: '服务', width: 150, format: 'text' },
+      { field: 'operatorName', label: '操作人', width: 110, format: 'text' },
+      { field: 'method', label: '方法', width: 80, format: 'text' },
+      { field: 'path', label: '路径', width: 240, format: 'text' },
+      { field: 'statusCode', label: '响应码', width: 90, num: true, format: 'count' },
+      { field: 'elapsedMs', label: '耗时', width: 90, num: true, format: 'ms' },
+      // 请求 Id 是编码类字段，等宽字体才能逐位比对
+      { field: 'requestId', label: '请求 Id', width: 220, format: 'text', mono: true },
+    ],
+  },
+
+  exceptionLogs: {
+    title: '异常日志',
+    desc: '未处理异常，点消息看完整堆栈',
+    endpoint: '/gateway/logs/Exception/List',
+    method: 'POST',
+    columns: [
+      { field: 'occurredAt', label: '时间', width: 155, format: 'time' },
+      { field: 'service', label: '服务', width: 150, format: 'text' },
+      { field: 'path', label: '路径', width: 220, format: 'text' },
+      { field: 'message', label: '异常消息', width: 280, format: 'text' },
+      { field: 'requestId', label: '请求 Id', width: 220, format: 'text', mono: true },
+    ],
+  },
+
+  deadLetters: {
+    title: '死信与重放',
+    desc: '重试耗尽的消息，可按 EventId 精确重放',
+    endpoint: '/gateway/logs/DeadLetter/List',
+    method: 'POST',
+    columns: [
+      { field: 'failedAt', label: '失败时间', width: 155, format: 'time' },
+      { field: 'eventType', label: '事件', width: 130, format: 'text' },
+      { field: 'queueName', label: '队列', width: 150, format: 'text' },
+      { field: 'errorMessage', label: '失败原因', width: 300, format: 'text' },
+      { field: 'attempts', label: '尝试', width: 80, num: true, format: 'count' },
+      { field: 'replayCount', label: '已重放', width: 90, num: true, format: 'count' },
+    ],
+    actions: [
+      {
+        label: '重放',
+        endpoint: '/gateway/logs/DeadLetter/Replay',
+        okText: '已重放',
+        build: (r: any) => ({ eventId: r.eventId }),
+      },
+    ],
+    actionsWidth: 100,
+    emptyHint: '没有死信 —— 消费链路是健康的',
+  },
 };
 
 export default LISTS;

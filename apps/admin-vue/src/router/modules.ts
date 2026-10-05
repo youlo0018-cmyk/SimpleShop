@@ -114,7 +114,7 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'brands',
     meta: { title: '品牌', icon: 'Star', perm: 'brand:read' },
-    children: [{ path: '', name: 'brand-list', ...ph('', '品牌管理', 'brand:read') }],
+    children: [listRoute('', 'brand-list', '品牌管理', 'brand:read', 'brands')],
   },
   {
     path: 'products',
@@ -210,7 +210,7 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'evaluates',
     meta: { title: '评价', icon: 'ChatDotSquare', perm: 'evaluate:read' },
-    children: [{ path: '', name: 'evaluate-list', ...ph('', '评价管理', 'evaluate:read') }],
+    children: [listRoute('', 'evaluate-list', '评价管理', 'evaluate:read', 'evaluates')],
   },
   {
     path: 'design',
@@ -239,9 +239,9 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'logs',
     meta: { title: '日志', icon: 'Document', perm: 'log:read' },
     children: [
-      { path: 'operation', name: 'log-operation', ...ph('operation', '操作日志', 'log:read') },
-      { path: 'exception', name: 'log-exception', ...ph('exception', '异常日志', 'log:read') },
-      { path: 'dead-letter', name: 'log-dead-letter', ...ph('dead-letter', '死信与重放', 'log:read') },
+      listRoute('operation', 'log-operation', '操作日志', 'log:read', 'operationLogs'),
+      listRoute('exception', 'log-exception', '异常日志', 'log:read', 'exceptionLogs'),
+      listRoute('dead-letter', 'log-dead-letter', '死信与重放', 'log:read', 'deadLetters'),
     ],
   },
 ];

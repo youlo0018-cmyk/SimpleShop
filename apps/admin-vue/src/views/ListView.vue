@@ -37,7 +37,7 @@
             <span v-if="c.dict" class="pill" :class="'pill--' + statusColor(c.dict, row[c.field])">
               {{ row[c.field + 'Name'] || statusText(c.dict, row[c.field]) }}
             </span>
-            <span v-else :class="c.num ? 'num' : ''">{{ render(c, row) }}</span>
+            <span :class="c.num ? 'num' : c.mono ? 'mono' : ''">{{ render(c, row) }}</span>
           </template>
         </el-table-column>
 
@@ -97,7 +97,13 @@ import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import request from '@/api/request';
 import { statusColor, statusText } from '@/utils/dict';
-import { formatAmount, formatCount, formatDateTime, emptyText } from '@/utils/format';
+import {
+  formatAmount,
+  formatCount,
+  formatDateTime,
+  formatScore,
+  emptyText,
+} from '@/utils/format';
 
 const props = defineProps<{ config: any }>();
 // 🔴 computed 而非快照：同一个组件服务多个列表页，
@@ -111,6 +117,10 @@ const FORMATTERS: Record<string, Fmt> = {
   count: (v: unknown) => formatCount(v),
   time: (v: unknown) => formatDateTime(v),
   text: (v: unknown) => emptyText(v),
+  // 评分最多一位小数，无数据显示 5.0（规格 6.1 第 8 类）
+  score: (v: unknown) => formatScore(v),
+  // 耗时带单位，毫秒。空值走「—」而不是 0ms —— 分不清「没记录」和「瞬时完成」
+  ms: (v: unknown) => (v === '' || v === null || v === undefined ? '—' : `${v} ms`),
 };
 
 function render(def: any, row: any) {
