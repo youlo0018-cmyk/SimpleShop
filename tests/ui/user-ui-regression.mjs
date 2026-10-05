@@ -107,10 +107,15 @@ async function main() {
   const productId = products.items?.[0]?.productId || '0';
 
   await visit('login-public', '/pages/login/index');
+  await visit('register-public', '/pages/register/index');
+  await page.goto(`${BASE}/#/pages/login/index`, { waitUntil: 'networkidle' });
   await page.locator('input').nth(0).fill(user.name);
   await page.locator('input').nth(1).fill(user.password);
   await page.getByText('登录', { exact: true }).click();
   await page.waitForTimeout(1200);
+  await page.goto(`${BASE}/#/pages/product/detail?id=${productId}`, { waitUntil: 'networkidle' });
+  await page.getByText('加入购物车', { exact: true }).click();
+  await page.waitForTimeout(700);
 
   const pages = [
     ['home', '/pages/index/index'],
@@ -120,6 +125,7 @@ async function main() {
     ['search', '/pages/search/index'],
     ['product-detail', `/pages/product/detail?id=${productId}`],
     ['coupon-center', '/pages/coupon/center'],
+    ['cart', '/pages/cart/index'],
     ['profile', '/pages/profile/index'],
     ['points', '/pages/points/index'],
     ['coupon-mine', '/pages/coupon/mine'],
@@ -128,7 +134,14 @@ async function main() {
     ['shop-store', '/pages/shop/store?merchantId=0'],
   ];
 
-  for (const [name, route] of pages) await visit(name, route);
+  for (const [name, route] of pages) {
+    await visit(name, route);
+    if (name === 'product-detail') {
+      await page.getByText('立即购买', { exact: true }).click();
+      await page.waitForTimeout(800);
+      await visit('checkout', '/pages/checkout/index');
+    }
+  }
 
   await browser.close();
 

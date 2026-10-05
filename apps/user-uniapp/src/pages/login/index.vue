@@ -20,6 +20,7 @@
       <button class="button-primary login-card__submit" :loading="loading" @tap="submit">
         登录
       </button>
+      <text class="login-card__guest" @tap="register">注册新账号</text>
       <text class="login-card__guest" @tap="guest">先随便逛逛</text>
     </view>
   </view>
@@ -60,6 +61,10 @@ async function submit() {
 
 function guest() {
   uni.reLaunch({ url: '/pages/index/index' });
+}
+
+function register() {
+  uni.navigateTo({ url: '/pages/register/index' });
 }
 </script>
 

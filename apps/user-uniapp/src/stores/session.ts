@@ -23,6 +23,13 @@ interface LoginResult {
   avatar: string;
 }
 
+interface RegisterResult {
+  customerId: string;
+  token: string;
+  customerName: string;
+  nickName: string;
+}
+
 export const useSessionStore = defineStore('customer-session', {
   state: () => ({
     token: '',
@@ -49,6 +56,22 @@ export const useSessionStore = defineStore('customer-session', {
         customerName: result.customerName,
         nickName: result.nickName,
         avatar: result.avatar,
+      };
+      setToken(result.token);
+      setProfile(this.profile);
+    },
+    async register(customerName: string, password: string, phone: string, nickName: string) {
+      const result = await request<RegisterResult>('/gateway/customers/Register', {
+        method: 'POST',
+        auth: false,
+        data: { customerName, password, phone, nickName },
+      });
+      this.token = result.token;
+      this.profile = {
+        customerId: result.customerId,
+        customerName: result.customerName,
+        nickName: result.nickName,
+        avatar: '',
       };
       setToken(result.token);
       setProfile(this.profile);

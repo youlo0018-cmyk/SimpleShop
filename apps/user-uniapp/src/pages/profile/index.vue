@@ -29,6 +29,10 @@
     </view>
 
     <view class="panel settings">
+      <view class="settings__row" @tap="toCart">
+        <text>购物车</text>
+        <text class="settings__arrow">›</text>
+      </view>
       <view class="settings__row" @tap="toCouponCenter">
         <text>领券中心</text>
         <text class="settings__arrow">›</text>
@@ -65,6 +69,9 @@ function requireLogin() {
 
 function toOrders() {
   if (requireLogin()) uni.navigateTo({ url: '/pages/order/list' });
+}
+function toCart() {
+  if (requireLogin()) uni.navigateTo({ url: '/pages/cart/index' });
 }
 function toCoupons() {
   if (requireLogin()) uni.navigateTo({ url: '/pages/coupon/mine' });

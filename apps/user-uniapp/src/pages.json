@@ -68,6 +68,18 @@
       }
     },
     {
+      "path": "pages/cart/index",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/checkout/index",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/order/detail",
       "style": {
         "navigationStyle": "custom"
@@ -75,6 +87,12 @@
     },
     {
       "path": "pages/login/index",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/register/index",
       "style": {
         "navigationStyle": "custom"
       }

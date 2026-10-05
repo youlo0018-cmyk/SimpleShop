@@ -126,18 +126,25 @@ function addCart() {
   if (!requireLogin() || !selectedSku.value) return;
   request('/gateway/carts/Add', {
     method: 'POST',
-    data: { skuId: selectedSku.value.skuId, quantity: 1 },
+    data: {
+      customerId: session.profile?.customerId,
+      skuId: selectedSku.value.skuId,
+      delta: 1,
+    },
   }).then(() => uni.showToast({ title: '已加入购物车', icon: 'success' }));
 }
 
 function buyNow() {
   if (!requireLogin() || !selectedSku.value) return;
-  uni.setStorageSync('simpleshop_buy_now', {
-    spuId: product.value.productId,
+  uni.setStorageSync('simpleshop_checkout_lines', [{
+    productId: product.value.productId,
     skuId: selectedSku.value.skuId,
     quantity: 1,
-  });
-  uni.showToast({ title: '请在结算页确认订单', icon: 'none' });
+    price: selectedSku.value.finalPrice,
+    skuName: selectedSku.value.skuName || product.value.spuName,
+    skuSpecText: selectedSku.value.skuSpecText,
+  }]);
+  uni.navigateTo({ url: '/pages/checkout/index' });
 }
 
 function toEvaluates() {
