@@ -70,3 +70,6 @@ b*.txt
 # 运行时真正需要的是 scripts/build-webfont.py 产出的 1.87MB 子集（已入库）。
 deploy/fonts/*.ttf
 deploy/fonts/*.otf
+
+# UI 回归的运行结果：每次跑都变，是生成物不是源码。证据看 tests/visual/current 的截图。
+tests/ui/ui-report.json
