@@ -129,6 +129,9 @@ const remaining = computed(() => Math.max(0, limit.value - urls.value.length));
 const canAdd = computed(() => remaining.value > 0);
 
 const hintText = computed(() => {
+  // 紧凑模式（SKU 图）不显示提示：那一列本来就窄，
+  // 一句「建议 1:1，支持 JPG / PNG / WebP」会把整行撑高一倍
+  if (props.size === 'compact') return '';
   if (props.hint) return props.hint;
   if (!props.multiple) return '建议 1:1，支持 JPG / PNG / WebP';
   return `最多 ${limit.value} 张，可拖动调整顺序`;
@@ -354,5 +357,10 @@ function onDragEnd() {
   margin: var(--space-2) 0 0;
   color: var(--text-3);
   font-size: var(--text-note);
+}
+
+/* 没有提示文案时不留空节点，否则紧凑模式会多出一段空白边距 */
+.uploader__hint:empty {
+  display: none;
 }
 </style>

@@ -14,7 +14,17 @@
       </span>
     </div>
 
-    <el-table v-if="mode === 'partial'" :data="items" class="refund__table" height="260">
+    <!--
+      表格高度按行数自适应，只有超过 6 行才滚动。
+      固定 260px 的话，单行订单会在弹窗里留一大片空白 ——
+      而这片空白正好落在「本次退款」上面，让人以为是金额没加载出来。
+    -->
+    <el-table
+      v-if="mode === 'partial'"
+      :data="items"
+      class="refund__table"
+      :max-height="items.length > 6 ? 260 : undefined"
+    >
       <el-table-column label="退款" width="60" align="center">
         <template #default="{ row }">
           <el-checkbox v-model="row.picked" />
