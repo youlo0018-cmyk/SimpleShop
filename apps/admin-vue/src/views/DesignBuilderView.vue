@@ -17,10 +17,15 @@
         >
           <el-option v-for="p in platforms" :key="p.value" :label="p.label" :value="p.value" />
         </el-select>
-        <el-select v-model="page" class="head__page" @change="load">
+        <!--
+          商户装修**锁定在店铺页**（规格 16.3：商户装修只针对商户店铺页，
+          与平台装修的首页 / 我的页互不干扰）。所以商户进来不显示这个下拉。
+        -->
+        <el-select v-if="!isMerchant" v-model="page" class="head__page" @change="load">
           <el-option value="index" label="首页" />
           <el-option value="profile" label="我的" />
         </el-select>
+        <span v-else class="head__page head__page--fixed">店铺页</span>
         <el-button :loading="saving" @click="saveDraft">存草稿</el-button>
         <el-button type="primary" :loading="publishing" @click="publish">发布</el-button>
       </div>
@@ -47,39 +52,24 @@
         </template>
       </aside>
 
-      <section class="stage">
-        <div
-          class="phone"
-          :class="{ 'phone--over': dragOver }"
-          @dragover.prevent="dragOver = true"
-          @dragleave="dragOver = false"
-          @drop.prevent="onDrop"
-        >
-          <div class="phone__bar">{{ page === 'index' ? '首页' : '我的' }}</div>
-          <div class="phone__body">
-            <div
-              v-for="(c, i) in components"
-              :key="c.id"
-              class="comp"
-              :class="{ 'comp--dragging': dragIndex === i }"
-              draggable="true"
-              @dragstart="dragIndex = i"
-              @dragover.prevent
-              @drop.prevent.stop="onReorder(i)"
-            >
-              <div class="comp__head">
-                <span class="comp__name">{{ nameOf(c.type) }}</span>
-                <span class="comp__ops">
-                  <el-button text @click="move(i, -1)">上移</el-button>
-                  <el-button text @click="move(i, 1)">下移</el-button>
-                  <el-button text type="danger" @click="remove(i)">删除</el-button>
-                </span>
-              </div>
-              <div class="comp__body">{{ c.type }}</div>
-            </div>
-            <p v-if="!components.length" class="phone__empty">把左侧组件拖到这里</p>
-          </div>
-        </div>
+      <!--
+        手机预览抽到 PhonePreview 组件：组件渲染规则与小程序端
+        DesignComponent.vue 一一对应，写在一处才不会两边走偏。
+      -->
+      <section
+        class="stage"
+        @dragover.prevent="dragOver = true"
+        @dragleave="dragOver = false"
+        @drop.prevent="onDrop"
+      >
+        <PhonePreview
+          :page="page"
+          :components="components"
+          :library="library"
+          @reorder="onReorder"
+          @move="move"
+          @remove="remove"
+        />
       </section>
     </div>
   </div>
@@ -90,6 +80,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import request from '@/api/request';
+import PhonePreview from '@/components/PhonePreview.vue';
 
 const props = defineProps<{ merchantId?: string }>();
 const route = useRoute();
@@ -98,7 +89,8 @@ const isMerchant = computed(() => !!props.merchantId);
 const merchantId = computed(() => Number(props.merchantId || route.params.id || 0));
 const title = computed(() => (isMerchant.value ? '商户店铺装修' : '平台装修'));
 
-const page = ref('index');
+// 商户装修只能建店铺页，平台装修默认首页
+const page = ref(props.merchantId ? 'store' : 'index');
 const platformId = ref(0);
 const platforms = ref<any[]>([]);
 const platformsLoading = ref(false);
@@ -121,8 +113,6 @@ const grouped = computed(() => {
   }
   return [...map.entries()].map(([name, items]) => ({ name, items }));
 });
-
-const nameOf = (type: string) => library.value.find((c) => c.type === type)?.name || type;
 
 let seq = 0;
 const nextId = () => `c${Date.now().toString(36)}${(seq += 1)}`;
@@ -374,76 +364,19 @@ onMounted(load);
   background: var(--neutral-bg);
 }
 
+/* 商户装修锁定在店铺页，这里用同样宽度的静态文字代替下拉，
+   让「当前在搭哪一页」和平台装修的控件占位一致 */
+.head__page--fixed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+}
+
+/* 手机预览居中：它是这一页的视觉主体，组件库在左边当「抽屉」用 */
 .stage {
   display: flex;
   justify-content: center;
 }
 
-/* 手机外框：宽度与真实小程序同量级，让人对成品高度有直觉 */
-.phone {
-  width: 320px;
-  border-radius: 28px;
-  border: 1px solid var(--divider-soft);
-  background: var(--bg-card);
-  overflow: hidden;
-  transition: border-color var(--duration-fast) var(--ease);
-}
-
-.phone--over {
-  border-color: var(--brand);
-}
-
-.phone__bar {
-  padding: var(--space-2);
-  text-align: center;
-  font-size: var(--text-foot);
-  color: var(--text-2);
-  background: var(--bg-page);
-}
-
-.phone__body {
-  min-height: 420px;
-  max-height: 70vh;
-  overflow-y: auto;
-  padding: var(--space-2);
-}
-
-.phone__empty {
-  padding: var(--space-8) 0;
-  text-align: center;
-  font-size: var(--text-foot);
-  color: var(--text-3);
-}
-
-.comp {
-  padding: var(--space-2);
-  margin-bottom: var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  cursor: grab;
-}
-
-.comp--dragging {
-  opacity: 0.5;
-}
-
-.comp__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.comp__name {
-  font-size: var(--text-foot);
-  font-weight: 600;
-}
-
-.comp__body {
-  margin-top: var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-note);
-  color: var(--text-3);
-}
 </style>
