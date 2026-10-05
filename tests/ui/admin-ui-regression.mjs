@@ -93,6 +93,9 @@ async function readMenu(page) {
 async function visit(page, item) {
   const errors = [];
   const failed = [];
+  // 抓列表接口的响应体，用来和 DOM 交叉核对（见下面「裸枚举数字」的加强检查）。
+  // 只记成功且带 data 的 JSON，避免把错误响应也当成数据。
+  let lastListBody = null;
   const onConsole = (m) => {
     if (m.type() === 'error' && !ignored(m.text())) errors.push(m.text().slice(0, 300));
   };
@@ -100,6 +103,16 @@ async function visit(page, item) {
     const s = r.status();
     if (s >= 400 && !r.url().includes('/health')) {
       failed.push(`${s} ${r.request().method()} ${r.url().replace(BASE, '')}`);
+      return;
+    }
+    if (s === 200 && r.url().includes('/gateway/')) {
+      const ct = (r.headers()['content-type'] || '');
+      if (!ct.includes('json')) return;
+      r.json()
+        .then((b) => {
+          if (b && b.success && b.data) lastListBody = b.data;
+        })
+        .catch(() => {});
     }
   };
   const onError = (e) => {
@@ -185,6 +198,64 @@ async function visit(page, item) {
     });
     if (rawEnum.length > 0) {
       errors.push(`状态标签旁出现裸枚举数字：${rawEnum.join('、')}（应为纯中文状态）`);
+    }
+
+    // 加强：拿响应体与 DOM 交叉核对「后端给了中文孪生字段，前端却显示了裸数字」。
+    //
+    // 上面那条只查「色标签旁边多出一段裸数字」，查不到
+    // 「这一列压根没标 dict，直接把 1 渲染出来」——而后者更常见：
+    // 实测支付列表的「渠道」列就是这样，页面上出现一个孤零零的 1。
+    //
+    // 判据：凡是响应里同时存在 X 和非空的 X + 'Name'，说明 X 是个枚举、
+    // 后端**已经把中文文案给过来了**。那么整张表里必须能看到那个文案。
+    // 没看到 = 前端把 X 当普通数字渲染了。
+    // 只断言「文案出现过」而不是「裸数字没出现过」：后者会误伤
+    // 「数量 20」「金额 20.00」这类本来就该显示数字的列。
+    if (lastListBody) {
+      const rows = Array.isArray(lastListBody)
+        ? lastListBody
+        : Array.isArray(lastListBody.items)
+          ? lastListBody.items
+          : [];
+
+      const missingNames = new Set();
+      for (const row of rows.slice(0, 20)) {
+        for (const [k, v] of Object.entries(row || {})) {
+          if (typeof v !== 'number') continue;
+          const nameKey = `${k}Name`;
+          const nameVal = row[nameKey];
+          if (typeof nameVal !== 'string' || nameVal.trim() === '') continue;
+          // 文案与数字相同时说明它本来就不是枚举文案，跳过
+          if (nameVal.trim() === String(v)) continue;
+          missingNames.add(`${k}=${v} 应显示为「${nameVal.trim()}」`);
+        }
+      }
+
+      if (missingNames.size > 0) {
+        const tableText = await page.evaluate(() => {
+          const t = document.querySelector('.el-table');
+          return t ? t.innerText : '';
+        });
+        const absent = [...missingNames].filter((m) => {
+          const label = m.match(/「(.+)」$/);
+          if (!label || tableText.includes(label[1])) return false;
+          // ⚠️ 光看「文案没出现」会误报：这一列可能**根本没渲染**（配置里没声明），
+          // 那不是「渲染成了裸数字」，那是另一个问题（信息缺失）。
+          // 加上「页面上确实有等于原始数字的单元格」这一条，
+          // 才说明是**把枚举当数字渲染出来了**。
+          const raw = m.match(/=(\S+) /);
+          if (!raw) return false;
+          const cells = [...String(tableText).matchAll(/(?:^|\n)([^\n]*)/g)].map((x) =>
+            x[1].trim(),
+          );
+          return cells.includes(raw[1]);
+        });
+        if (absent.length > 0) {
+          errors.push(
+            `这些枚举字段渲染成了裸数字（后端已下发中文文案，页面上却没有）：${absent.slice(0, 5).join('；')}`,
+          );
+        }
+      }
     }
 
     const name = `${slug(item.group)}-${slug(item.title)}`;

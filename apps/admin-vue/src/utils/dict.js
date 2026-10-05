@@ -26,6 +26,12 @@ const D = {
     30: { text: '已关闭', color: 'neutral' },
   },
 
+  // 支付渠道（PaymentChannels）。本项目只有「模拟支付」一个通道，
+  // 但仍然要显示成中文：界面上出现一个裸的 1 会被当成「渠道 Id」或「数量」。
+  paymentChannel: {
+    1: { text: '模拟支付', color: 'info' },
+  },
+
   // 退款单状态（RefundStatuses）
   refund: {
     10: { text: '待审批', color: 'warning' },
@@ -103,6 +109,44 @@ const D = {
   couponType: {
     1: { text: '满减券', color: 'info' },
     2: { text: '折扣券', color: 'info' },
+    3: { text: '代金券', color: 'success' },
+    4: { text: '满赠券', color: 'success' },
+  },
+
+  // 券的适用范围（TargetTypes）
+  targetType: {
+    1: { text: '全场', color: 'neutral' },
+    2: { text: '指定商品', color: 'info' },
+    3: { text: '指定规格', color: 'info' },
+  },
+
+  // 积分动作（PointActions）。同一列里颜色必须能一眼分开：
+  // 「发放」和「实扣」在流水里都是一正一负的数字，颜色是唯一区分手段。
+  pointAction: {
+    earn: { text: '发放', color: 'success' },
+    signin: { text: '签到', color: 'success' },
+    lock: { text: '冻结', color: 'warning' },
+    unfreeze: { text: '解冻', color: 'info' },
+    consume: { text: '实扣', color: 'danger' },
+    refund: { text: '回收', color: 'warning' },
+    expire: { text: '过期', color: 'neutral' },
+  },
+
+  // 通用启停（EnableStatuses）。物流公司、券模板、券活动都用它，
+  // 所以单开一条而不是复用 userStatus —— 后者文案是「账号」语境下的。
+  enable: {
+    1: { text: '启用', color: 'success' },
+    2: { text: '停用', color: 'neutral' },
+  },
+
+  // 文件分类。key 是**字符串**枚举（image / document / ...），
+  // 所以 statusColor 里「先按原值试一次」那个分支正是为它准备的。
+  file: {
+    image: { text: '图片', color: 'info' },
+    document: { text: '文档', color: 'neutral' },
+    audio: { text: '音频', color: 'warning' },
+    video: { text: '视频', color: 'warning' },
+    default: { text: '其他', color: 'neutral' },
   },
 
   // 退款类型（RefundTypes）

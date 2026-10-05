@@ -87,9 +87,9 @@ export const adminRoutes: RouteRecordRaw[] = [
   },
   {
     path: 'roles',
-    meta: { title: '角色权限', icon: 'Lock', perm: 'role:read' },
+    meta: { title: '角色权限', icon: 'Lock', perm: 'permission:read' },
     children: [
-      listRoute('', 'role-list', '角色列表', 'role:read', 'roles'),
+      listRoute('', 'role-list', '角色列表', 'permission:read', 'roles'),
       treeRoute('permissions', 'role-permissions', '权限点管理', 'permission:manage', 'permissions'),
     ],
   },
@@ -125,8 +125,8 @@ export const adminRoutes: RouteRecordRaw[] = [
   },
   {
     path: 'brands',
-    meta: { title: '品牌', icon: 'Star', perm: 'brand:read' },
-    children: [listRoute('', 'brand-list', '品牌管理', 'brand:read', 'brands')],
+    meta: { title: '品牌', icon: 'Star', perm: 'product:read' },
+    children: [listRoute('', 'brand-list', '品牌管理', 'product:read', 'brands')],
   },
   {
     path: 'products',
@@ -140,8 +140,8 @@ export const adminRoutes: RouteRecordRaw[] = [
   },
   {
     path: 'inventory',
-    meta: { title: '库存', icon: 'Coin', perm: 'stock:read' },
-    children: [listRoute('', 'stock-list', '库存管理', 'stock:read', 'inventory')],
+    meta: { title: '库存', icon: 'Coin', perm: 'inventory:read' },
+    children: [listRoute('', 'stock-list', '库存管理', 'inventory:read', 'inventory')],
   },
   {
     path: 'search-index',
@@ -166,13 +166,16 @@ export const adminRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/OrderDetailView.vue'),
         meta: { title: '订单详情', perm: 'order:read' },
       },
-      { path: 'pickup-verify', name: 'order-pickup-verify', ...ph('pickup-verify', '取货码核销', 'order:verify') },
+      { path: 'pickup-verify', name: 'order-pickup-verify', ...ph('pickup-verify', '取货码核销', 'order:pickup') },
+      // 物流公司字典归在「订单」模块下（BUSINESS.md 5.2 的 logistics:manage 挂在订单组），
+      // 而不是单开一个一级菜单：它是发货表单的下拉数据源，不是一个独立业务域。
+      listRoute('logistics-companies', 'logistics-company-list', '物流公司', 'logistics:manage', 'logisticsCompanies'),
     ],
   },
   {
     path: 'payments',
     meta: { title: '支付', icon: 'Wallet', perm: 'payment:read' },
-    children: [{ path: '', name: 'payment-list', ...ph('', '支付列表', 'payment:read') }],
+    children: [listRoute('', 'payment-list', '支付列表', 'payment:read', 'payments')],
   },
   {
     path: 'refunds',
@@ -186,20 +189,20 @@ export const adminRoutes: RouteRecordRaw[] = [
   // ---- 营销 ----
   {
     path: 'promotions',
-    meta: { title: '营销活动', icon: 'Present', perm: 'promotion:read' },
+    meta: { title: '营销活动', icon: 'Present', perm: 'marketing:read' },
     children: [
-      listRoute('', 'promotion-list', '活动列表', 'promotion:read', 'promotions'),
+      listRoute('', 'promotion-list', '活动列表', 'marketing:read', 'promotions'),
       { path: 'create', name: 'promotion-create', ...ph('create', '新建活动', 'promotion:create') },
       { path: 'edit/:id', name: 'promotion-edit', ...ph('edit/:id', '编辑活动', 'promotion:update') },
     ],
   },
   {
     path: 'coupons',
-    meta: { title: '券', icon: 'Ticket', perm: 'coupon:read' },
+    meta: { title: '券', icon: 'Ticket', perm: 'coupon-template:read' },
     children: [
-      { path: 'templates', name: 'coupon-template-list', ...ph('templates', '券模板', 'coupon:read') },
-      { path: 'activities', name: 'coupon-activity-list', ...ph('activities', '券活动', 'coupon:read') },
-      { path: 'config', name: 'coupon-config', ...ph('config', '优惠优先级配置', 'coupon:manage') },
+      listRoute('templates', 'coupon-template-list', '券模板', 'coupon-template:read', 'couponTemplates'),
+      listRoute('activities', 'coupon-activity-list', '券活动', 'coupon-activity:read', 'couponActivities'),
+      { path: 'config', name: 'coupon-config', ...ph('config', '优惠优先级配置', 'marketing-config:update') },
     ],
   },
   {
@@ -217,7 +220,7 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'points',
     meta: { title: '积分', icon: 'Medal', perm: 'point:read' },
-    children: [{ path: '', name: 'point-list', ...ph('', '积分流水', 'point:read') }],
+    children: [listRoute('', 'point-list', '积分流水', 'point:read', 'pointRecords')],
   },
   {
     path: 'evaluates',
@@ -226,10 +229,12 @@ export const adminRoutes: RouteRecordRaw[] = [
   },
   {
     path: 'design',
-    meta: { title: '装修', icon: 'Brush', perm: 'design:manage' },
+    meta: { title: '装修', icon: 'Brush', perm: 'design:read' },
     children: [
-      { path: 'platform', name: 'design-platform', ...ph('platform', '平台装修', 'design:manage') },
-      { path: 'merchant/:id', name: 'design-merchant', ...ph('merchant/:id', '商户店铺装修', 'design:manage') },
+      { path: 'platform', name: 'design-platform', ...ph('platform', '平台装修', 'design:read') },
+      // 商户店铺装修用**独立**的 design:merchant，不能跟着平台装修走 design:read：
+      // 用户明确要求商户只能改自己的店铺装修，改不到平台装修。
+      { path: 'merchant/:id', name: 'design-merchant', ...ph('merchant/:id', '商户店铺装修', 'design:merchant') },
     ],
   },
   {
@@ -245,7 +250,7 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'files',
     meta: { title: '文件', icon: 'FolderOpened', perm: 'file:upload' },
-    children: [{ path: '', name: 'file-list', ...ph('', '文件管理', 'file:upload') }],
+    children: [listRoute('', 'file-list', '文件管理', 'file:upload', 'files')],
   },
   {
     path: 'logs',

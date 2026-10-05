@@ -92,6 +92,50 @@
         />
       </div>
     </section>
+
+    <!--
+      🔴 危险动作必须走确认对话框，不能点一下就直接发请求（DESIGN_SPEC 5.4）。
+      「审批通过退款」误点一次就是真的把钱退了，而它长得和旁边的「查看详情」一模一样。
+      确认框里必须显示**具体对象**（订单号 / 退款单号），只写「确定要执行吗？」
+      等于没确认 —— 用户根本不知道自己在确认哪一单。
+
+      需要填理由的动作（审核不通过、拒绝退款）多一个输入框。
+      这里只做长度提示、不写正则：真正的规则以服务端为准，
+      前端再写一份只会和后端漂移，用户会撞上「前端过了后端没过」。
+    -->
+    <el-dialog
+      v-model="confirm.open"
+      :title="confirm.title"
+      :width="460"
+      :close-on-click-modal="false"
+      align-center
+    >
+      <p class="confirm__text">
+        {{ confirm.message }}
+        <span v-if="confirm.subject" class="confirm__subject">{{ confirm.subject }}</span>
+      </p>
+
+      <el-form v-if="confirm.withReason" label-position="top" class="confirm__form">
+        <el-form-item :label="confirm.reasonLabel">
+          <el-input
+            v-model="confirm.reason"
+            type="textarea"
+            :rows="3"
+            :maxlength="200"
+            show-word-limit
+            :placeholder="confirm.reasonPlaceholder"
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="confirm.open = false">取消</el-button>
+        <!-- 危险动作的主按钮用 danger 色：确认框里那个主动作必须长得像「会出事」 -->
+        <el-button :type="confirm.danger ? 'danger' : 'primary'" :loading="confirm.saving" @click="submitConfirm">
+          {{ confirm.okText }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -146,6 +190,24 @@ const keyword = ref('');
 const page = ref(1);
 const pageSize = ref(20);
 
+// 确认对话框的状态。放在一个 ref 里而不是多个散 ref：
+// 它们总是同时被写入与读取，拆开就会出现「对话框开了但理由还是上一次的」。
+const confirm = ref({
+  open: false,
+  saving: false,
+  danger: true,
+  title: '',
+  message: '',
+  subject: '',
+  okText: '确定',
+  withReason: false,
+  reasonLabel: '原因',
+  reasonPlaceholder: '',
+  reason: '',
+  action: null as any,
+  row: null as any,
+});
+
 const tabs = computed(() => config.value.tabs || []);
 
 async function load() {
@@ -194,12 +256,63 @@ function onRow(row: any) {
 }
 
 async function runAction(action: any, row: any) {
+  // 有 confirm 声明的动作走对话框，没有的直接发请求。
+  // 分成两条路而不是「全都走对话框」：像「重置密码」这种一次性的轻动作，
+  // 弹框只会让人多按一次。
+  if (action.confirm) {
+    confirm.value = {
+      open: true,
+      saving: false,
+      danger: action.danger !== false,
+      title: action.confirm.title || '请确认',
+      message: action.confirm.message || '此操作不可撤销，确定继续？',
+      subject: typeof action.confirm.subject === 'function'
+        ? action.confirm.subject(row)
+        : action.confirm.subject || '',
+      okText: action.confirm.okText || action.label || '确定',
+      withReason: !!action.confirm.withReason,
+      reasonLabel: action.confirm.reasonLabel || '原因',
+      reasonPlaceholder: action.confirm.reasonPlaceholder || '请填写原因',
+      reason: '',
+      action,
+      row,
+    };
+    return;
+  }
+
   try {
     await request(action.endpoint, { body: { ...action.build(row) } });
     ElMessage.success(action.okText || '操作成功');
     await load();
   } catch {
     // request 已经弹过提示，这里不重复弹
+  }
+}
+
+async function submitConfirm() {
+  const c = confirm.value;
+  if (!c.action) return;
+
+  // 理由必填时先在前端拦一道：省掉一次往返，也避免用户点了「确定」之后
+  // 才看到一行红字。仅提示长度，真正规则以服务端为准。
+  if (c.withReason && c.reason.trim().length < 2) {
+    ElMessage.warning('请填写原因（至少 2 个字符）');
+    return;
+  }
+
+  c.saving = true;
+  try {
+    await request(c.action.endpoint, {
+      body: { ...c.action.build(c.row, c.reason.trim()) },
+    });
+    ElMessage.success(c.action.okText || '操作成功');
+    confirm.value.open = false;
+    await load();
+  } catch {
+    // request 已经弹过提示。保留对话框让用户能改理由重试，
+    // 直接关掉的话改一个字就得重新点一次按钮。
+  } finally {
+    c.saving = false;
   }
 }
 
@@ -262,5 +375,26 @@ onMounted(load);
 
 .skel {
   padding: var(--space-6);
+}
+
+.confirm__text {
+  margin: 0;
+  font-size: var(--text-sub);
+  line-height: var(--lh-body);
+  color: var(--text-1);
+}
+
+/* 单号单独一行、用等宽字体：确认的是「哪一单」必须一眼看清，
+   混在正文里容易被当成普通文字扫过去。 */
+.confirm__subject {
+  display: block;
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+  color: var(--text-1);
+}
+
+.confirm__form {
+  margin-top: var(--space-4);
 }
 </style>

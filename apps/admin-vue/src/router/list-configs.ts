@@ -264,6 +264,9 @@ export const LISTS = {
       { field: 'contactName', label: '联系人', width: 110, format: 'text' },
       { field: 'contactPhone', label: '联系电话', width: 130, format: 'text' },
       { field: 'auditStatus', label: '审核', width: 100, dict: 'audit' },
+      // 启用/停用是与审核**独立**的一列：审核通过的商户也可能被停用，
+      // 看不到这一列的话运营分不清「没通过审核」和「通过了但被停用」。
+      { field: 'status', label: '启用', width: 90, dict: 'enable' },
       { field: 'rating', label: '评分', width: 90, num: true, format: 'score' },
       { field: 'createdAt', label: '入驻时间', width: 155, format: 'time' },
     ],
@@ -341,6 +344,163 @@ export const LISTS = {
     // 在后端改成从令牌租户上下文取之前，前端不接这个动作：
     // 接了等于把「可伪造的审批人」固化进界面。
     // 详见 AI_HANDOFF 记录的后端缺陷清单。
+  },
+
+  // 支付单。后台此前完全没有入口（只有 C 端的 payments/Query 按订单号查单条），
+  // 运营想看「今天有哪些单支付失败」都做不到。
+  payments: {
+    title: '支付列表',
+    desc: '模拟支付通道的单据，按状态与单号筛选',
+    endpoint: '/gateway/admin/payments/List',
+    method: 'POST',
+    tabs: [
+      { label: '全部', value: 0 },
+      { label: '待支付', value: 1 },
+      { label: '已支付', value: 20 },
+      { label: '已关闭', value: 30 },
+    ],
+    byStatus: true,
+    search: true,
+    searchPlaceholder: '支付单号 / 订单号',
+    columns: [
+      { field: 'paymentNo', label: '支付单号', width: 210, format: 'text', mono: true },
+      { field: 'orderNo', label: '订单号', width: 200, format: 'text', mono: true },
+      { field: 'amount', label: '支付金额', width: 110, num: true, format: 'amount' },
+      // 必须标 dict：不标就会渲染成裸的 1 —— 界面上出现枚举数字违反 UI-RAW-003，
+      // 而运营会把它当成「渠道 Id」。文案取后端下发的 channelName。
+      { field: 'channel', label: '渠道', width: 100, dict: 'paymentChannel' },
+      { field: 'status', label: '状态', width: 100, dict: 'payment' },
+      { field: 'failReason', label: '失败原因', width: 180, format: 'text' },
+      { field: 'paidAt', label: '支付时间', width: 155, format: 'time' },
+      { field: 'createdAt', label: '创建时间', width: 155, format: 'time' },
+    ],
+  },
+
+  // 积分流水。跨客户查询，所以和 C 端的「我的积分流水」不是一个接口。
+  pointRecords: {
+    title: '积分流水',
+    desc: '全站积分变动明细，含变动前后余额',
+    endpoint: '/gateway/points/RecordsAll',
+    method: 'POST',
+    search: true,
+    searchPlaceholder: '业务单号',
+    columns: [
+      { field: 'customerId', label: '客户 Id', width: 170, format: 'text', mono: true },
+      { field: 'bizNo', label: '业务单号', width: 200, format: 'text', mono: true },
+      { field: 'action', label: '动作', width: 90, dict: 'pointAction' },
+      { field: 'quantity', label: '变动', width: 100, num: true, format: 'count' },
+      { field: 'beforeAvailable', label: '变动前可用', width: 110, num: true, format: 'count' },
+      { field: 'afterAvailable', label: '变动后可用', width: 110, num: true, format: 'count' },
+      { field: 'lotExpireAt', label: '批次到期', width: 155, format: 'time' },
+      { field: 'remark', label: '备注', width: 180, format: 'text' },
+      { field: 'createdAt', label: '发生时间', width: 155, format: 'time' },
+    ],
+  },
+
+  couponTemplates: {
+    title: '券模板',
+    desc: '改模板不影响已发出的券，已发出的券按自己的快照算',
+    endpoint: '/gateway/marketing/coupon-templates/List',
+    method: 'POST',
+    tabs: [
+      { label: '全部', value: 0 },
+      { label: '启用', value: 1 },
+      { label: '停用', value: 2 },
+    ],
+    byStatus: true,
+    search: true,
+    searchPlaceholder: '模板名',
+    columns: [
+      { field: 'templateName', label: '模板名', width: 180 },
+      { field: 'couponType', label: '类型', width: 100, dict: 'couponType' },
+      { field: 'thresholdAmount', label: '门槛', width: 100, num: true, format: 'amount' },
+      { field: 'discountAmount', label: '优惠额', width: 100, num: true, format: 'amount' },
+      { field: 'discountRate', label: '折扣率', width: 100, num: true },
+      { field: 'validDays', label: '有效期', width: 100, num: true, format: 'count' },
+      { field: 'issuedQuantity', label: '已发放', width: 100, num: true, format: 'count' },
+      { field: 'totalQuantity', label: '发行量', width: 100, num: true, format: 'count' },
+      { field: 'status', label: '状态', width: 100, dict: 'enable' },
+    ],
+  },
+
+  couponActivities: {
+    title: '券活动',
+    desc: '领券中心。发放量与模板发行池子是两个独立池子',
+    endpoint: '/gateway/marketing/coupon-activities/List',
+    method: 'POST',
+    tabs: [
+      { label: '全部', value: 0 },
+      { label: '启用', value: 1 },
+      { label: '停用', value: 2 },
+    ],
+    byStatus: true,
+    search: true,
+    searchPlaceholder: '活动名',
+    columns: [
+      { field: 'activityName', label: '活动名', width: 180 },
+      { field: 'templateName', label: '券模板', width: 180, format: 'text' },
+      { field: 'claimStartTime', label: '领取开始', width: 155, format: 'time' },
+      { field: 'claimEndTime', label: '领取结束', width: 155, format: 'time' },
+      { field: 'claimQuantity', label: '发放量', width: 100, num: true, format: 'count' },
+      { field: 'claimedQuantity', label: '已领取', width: 100, num: true, format: 'count' },
+      { field: 'targetType', label: '适用范围', width: 110, dict: 'targetType' },
+      { field: 'status', label: '状态', width: 100, dict: 'enable' },
+    ],
+  },
+
+  files: {
+    title: '文件管理',
+    desc: '已上传的文件。移除只清列表，不删存储中的内容',
+    endpoint: '/gateway/files/List',
+    method: 'POST',
+    search: true,
+    searchPlaceholder: '原始文件名',
+    columns: [
+      { field: 'originalName', label: '文件名', width: 220, format: 'text' },
+      { field: 'category', label: '分类', width: 100, dict: 'file' },
+      { field: 'extension', label: '扩展名', width: 100, format: 'text', mono: true },
+      { field: 'sizeText', label: '大小', width: 100, num: true },
+      { field: 'provider', label: '存储', width: 90, format: 'text' },
+      { field: 'createdAt', label: '上传时间', width: 155, format: 'time' },
+    ],
+    actions: [
+      {
+        label: '移除',
+        endpoint: '/gateway/files/Delete',
+        danger: true,
+        build: (r: any) => ({ fileId: r.fileId }),
+        okText: '已移除',
+        confirm: {
+          title: '移除文件',
+          message: '从文件库移除这条记录。存储中的文件不会被删除。',
+          subject: (r: any) => r.originalName,
+          okText: '移除',
+        },
+      },
+    ],
+    actionsWidth: 120,
+  },
+
+  logisticsCompanies: {
+    title: '物流公司',
+    desc: '发货表单的下拉数据源，内置常用快递公司',
+    endpoint: '/gateway/logistics-companies/List',
+    method: 'POST',
+    tabs: [
+      { label: '全部', value: 0 },
+      { label: '启用', value: 1 },
+      { label: '停用', value: 2 },
+    ],
+    byStatus: true,
+    search: true,
+    searchPlaceholder: '公司名 / 编码',
+    columns: [
+      { field: 'companyName', label: '公司名称', width: 180 },
+      { field: 'companyCode', label: '编码', width: 110, format: 'text', mono: true },
+      { field: 'sortOrder', label: '排序', width: 90, num: true, format: 'count' },
+      { field: 'status', label: '状态', width: 100, dict: 'enable' },
+      { field: 'updatedAt', label: '更新时间', width: 155, format: 'time' },
+    ],
   },
 };
 
