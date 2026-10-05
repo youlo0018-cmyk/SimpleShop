@@ -64,12 +64,16 @@ export const PAGES = [
   { key: null, route: '#/products/create', name: '商品', title: '新建商品' },
   { key: null, route: '#/promotions/create', name: '营销活动', title: '新建活动' },
   { key: null, route: '#/seckill/create', name: '限时抢购', title: '新建场次' },
+  { key: null, route: '#/brands/create', name: '品牌', title: '新建品牌' },
+  { key: null, route: '#/orders/logistics-companies/create', name: '订单', title: '新建物流公司' },
 
   { key: 'user', name: '账号', title: '编辑账号', route: '#/users/edit/{id}' },
   { key: 'platform', name: '平台', title: '编辑平台', route: '#/platforms/edit/{id}' },
   { key: 'platform', name: '平台', title: '小程序配置', route: '#/platforms/app-config/{id}' },
   { key: 'customer', name: '客户', title: '客户详情', route: '#/customers/detail/{id}' },
   { key: 'merchant', name: '商户', title: '编辑商户', route: '#/merchants/edit/{id}' },
+  { key: 'brand', name: '品牌', title: '编辑品牌', route: '#/brands/edit/{id}' },
+  { key: 'logistics', name: '订单', title: '编辑物流公司', route: '#/orders/logistics-companies/edit/{id}' },
   { key: 'product', name: '商品', title: '编辑商品', route: '#/products/edit/{id}' },
   { key: 'promotion', name: '营销活动', title: '编辑活动', route: '#/promotions/edit/{id}' },
   { key: 'session', name: '限时抢购', title: '编辑场次', route: '#/seckill/edit/{id}' },
@@ -78,7 +82,7 @@ export const PAGES = [
 ];
 
 export async function collectIds(token) {
-  const [users, platforms, customers, merchants, products, promotions, sessions, refunds] =
+  const [users, platforms, customers, merchants, products, promotions, sessions, refunds, brands, logistics] =
     await Promise.all([
       // users/List 是 [HttpGet]。这里原本写成 POST，于是 405 → 取不到数据 →
       // 「编辑账号」被标成 SKIP，报告全绿而这一页**根本没被测过**。
@@ -91,6 +95,8 @@ export async function collectIds(token) {
       call(token, '/gateway/marketing/activities/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/marketing/seckill/sessions/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/refunds/List', 'POST', { page: 1, pageSize: 1 }),
+      call(token, '/gateway/brands/List?page=1&pageSize=1', 'GET'),
+      call(token, '/gateway/logistics-companies/List', 'POST', { page: 1, pageSize: 1 }),
     ]);
 
   const first = (j) => {
@@ -108,6 +114,8 @@ export async function collectIds(token) {
     promotion: first(promotions),
     session: first(sessions),
     refund: first(refunds),
+    brand: first(brands),
+    logistics: first(logistics),
   };
 }
 
@@ -123,6 +131,7 @@ export function idOf(row) {
     row.activityId ??
     row.sessionId ??
     row.refundId ??
+    row.logisticsId ??
     null
   );
 }

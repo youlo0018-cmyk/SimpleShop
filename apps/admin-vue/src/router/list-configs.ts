@@ -208,6 +208,26 @@ export const LISTS = {
   brands: {
     title: '品牌管理',
     desc: '商品品牌，删除前需先解绑商品',
+    createRoute: '/brands/create',
+    createLabel: '新建品牌',
+    rowRoute: (r: any) => `/brands/edit/${r.id}`,
+    editRoute: (r: any) => `/brands/edit/${r.id}`,
+    actions: [
+      {
+        label: '删除',
+        endpoint: '/gateway/brands/Delete',
+        danger: true,
+        okText: '已删除',
+        build: (r: any) => ({ brandId: r.id }),
+        confirm: {
+          title: '删除品牌',
+          message: '品牌下有商品时会拒绝删除，只能改为停用。',
+          subject: (r: any) => r.brandName,
+          okText: '删除',
+        },
+      },
+    ],
+    actionsWidth: 150,
     endpoint: '/gateway/brands/List',
     method: 'GET',
     search: true,
@@ -693,6 +713,26 @@ export const LISTS = {
   logisticsCompanies: {
     title: '物流公司',
     desc: '发货表单的下拉数据源，内置常用快递公司',
+    createRoute: '/orders/logistics-companies/create',
+    createLabel: '新建物流公司',
+    rowRoute: (r: any) => `/orders/logistics-companies/edit/${r.logisticsId ?? r.id}`,
+    editRoute: (r: any) => `/orders/logistics-companies/edit/${r.logisticsId ?? r.id}`,
+    actions: [
+      {
+        label: '删除',
+        endpoint: '/gateway/logistics-companies/Delete',
+        danger: true,
+        okText: '已删除',
+        build: (r: any) => ({ logisticsId: r.logisticsId ?? r.id }),
+        confirm: {
+          title: '删除物流公司',
+          message: '只是从字典里移除；已发货的单存的是公司名快照，不受影响。',
+          subject: (r: any) => r.companyName,
+          okText: '删除',
+        },
+      },
+    ],
+    actionsWidth: 150,
     endpoint: '/gateway/logistics-companies/List',
     method: 'POST',
     tabs: [

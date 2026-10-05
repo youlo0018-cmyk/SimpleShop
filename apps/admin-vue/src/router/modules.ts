@@ -172,7 +172,11 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'brands',
     meta: { title: '品牌', icon: 'Star', perm: 'product:read' },
-    children: [listRoute('', 'brand-list', '品牌管理', 'product:read', 'brands')],
+    children: [
+      listRoute('', 'brand-list', '品牌管理', 'product:read', 'brands'),
+      formRoute('create', 'brand-create', '新建品牌', 'product:create', 'brand'),
+      formRoute('edit/:id', 'brand-edit', '编辑品牌', 'product:update', 'brand'),
+    ],
   },
   {
     path: 'products',
@@ -240,6 +244,8 @@ export const adminRoutes: RouteRecordRaw[] = [
       // 物流公司字典归在「订单」模块下（BUSINESS.md 5.2 的 logistics:manage 挂在订单组），
       // 而不是单开一个一级菜单：它是发货表单的下拉数据源，不是一个独立业务域。
       listRoute('logistics-companies', 'logistics-company-list', '物流公司', 'logistics:manage', 'logisticsCompanies'),
+      formRoute('logistics-companies/create', 'logistics-company-create', '新建物流公司', 'logistics:manage', 'logisticsCompany'),
+      formRoute('logistics-companies/edit/:id', 'logistics-company-edit', '编辑物流公司', 'logistics:manage', 'logisticsCompany'),
     ],
   },
   {

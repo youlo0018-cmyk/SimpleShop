@@ -144,6 +144,40 @@ export const FORMS = {
     ],
   },
 
+  brand: {
+    title: '新建品牌',
+    desc: '品牌下有商品时不能删除，只能停用',
+    createEndpoint: '/gateway/brands/Create',
+    updateEndpoint: '/gateway/brands/Update',
+    idField: 'brandId',
+    listRoute: '/brands',
+    listSource: { url: '/gateway/brands/List', method: 'GET' },
+    fields: [
+      { field: 'brandName', label: '品牌名', required: true, pattern: '^.{1,64}$', patternMessage: '品牌名 1-64 个字符' },
+      { field: 'logo', label: '品牌 Logo', help: '图片 URL' },
+      { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0, help: '小的在前' },
+      { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
+    ],
+  },
+
+  logisticsCompany: {
+    title: '新建物流公司',
+    desc: '发货表单的下拉数据源。已发出的单存的是公司名快照，改这里不影响历史单',
+    createEndpoint: '/gateway/logistics-companies/Create',
+    updateEndpoint: '/gateway/logistics-companies/Update',
+    idField: 'logisticsId',
+    listRoute: '/orders/logistics-companies',
+    listSource: { url: '/gateway/logistics-companies/List', method: 'POST' },
+    fields: [
+      { field: 'companyName', label: '公司名称', required: true, pattern: '^.{1,64}$', patternMessage: '公司名称 1-64 个字符' },
+      { field: 'companyCode', label: '公司编码', help: '如 sf、yto。留空即可' },
+      { field: 'logo', label: 'Logo', help: '图片 URL' },
+      { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0, help: '小的在前，发货下拉按它排' },
+      { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
+      { field: 'remark', label: '备注', type: 'textarea', rows: 2 },
+    ],
+  },
+
   // 小程序配置 = 平台在小程序里**看得见**的那部分：商城名、Logo、公告、三档主题色。
   // 刻意不把运费、联系人、编码放进来 —— 那些是「平台的资料」不是「小程序的配置」，
   // 放一起会让运营为了改个公告色去翻一屏不相关的字段。
