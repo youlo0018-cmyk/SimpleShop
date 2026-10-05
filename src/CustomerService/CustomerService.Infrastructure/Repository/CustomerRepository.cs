@@ -25,5 +25,41 @@ public sealed class CustomerRepository : CrudRepository<Customer>, ICustomerRepo
     /// <inheritdoc />
     public Task<bool> ExistsByPhoneAsync(string phone, CancellationToken ct = default)
         => Db.Select<Customer>().Where(a => a.Phone == phone).AnyAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<(List<Customer> Items, long Total)> PageForAdminAsync(
+        int status, string keyword, int page, int pageSize, CancellationToken ct = default)
+    {
+        var select = Db.Select<Customer>().Where(a => status <= 0 || a.Status == status);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            select = select.Where(a => a.CustomerName.Contains(kw)
+                                   || a.NickName.Contains(kw)
+                                   || a.Phone.Contains(kw));
+        }
+
+        var total = await select.CountAsync(ct).ConfigureAwait(false);
+
+        // 按注册时间倒序：新客户在前，运营最常关心的是「刚来的那批」。
+        // 同一时刻注册的用 Id 兜底，避免顺序抖动导致翻页时重复或漏行。
+        var items = await select
+            .OrderByDescending(a => a.CreatedAt).OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return (items, total);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> TryChangeStatusAsync(
+        long customerId, int expectedStatus, int newStatus, CancellationToken ct = default)
+        => await Db.Update<Customer>()
+            .Where(a => a.Id == customerId && a.Status == expectedStatus)
+            .Set(a => new Customer { Status = newStatus, UpdatedAt = DateTime.UtcNow })
+            .ExecuteAffrowsAsync(ct)
+            .ConfigureAwait(false);
 }
 

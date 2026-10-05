@@ -169,7 +169,37 @@ Invoke-Case 'API-GTW-032' '低权限令牌确实被裁剪过（权限远少于�
     return $count -gt 0 -and $count -lt 78
 }
 
-Invoke-Case 'API-GTW-033' '清理低权限测试账号' {
+Invoke-Case 'API-GTW-034' '🔴 P0 通配权限点 log:read 生效：无该权限读日志被拒' {
+    # 回归一个真实漏洞：/gateway/logs/* 曾被当成字面量，前缀算成 /gateway/logs/*/，
+    # 永远匹配不上 /gateway/logs/Pv/List，于是 requiredCode 为 null、请求被**放行**。
+    # 结果 log:read 完全失效 —— 实测 15 项权限的财务账号读到了 11270 条 pv 日志。
+    $h = @{ Authorization = "Bearer $script:merchantToken" }
+    # body 传**哈希表**而不是 JSON 字符串：Get-Status 内部会对 body 再做一次
+    # ConvertTo-Json，传字符串会被二次编码成一个「装着 JSON 的字符串」，
+    # 后端解析失败回 400，断言 403 就会假失败。
+    (Get-Status 'POST' '/gateway/logs/Pv/List' $h @{ page = 1; pageSize = 1 }) -eq 403
+}
+
+Invoke-Case 'API-GTW-035' '🔴 P0 通配权限点 report:view 生效：无该权限读报表被拒' {
+    $h = @{ Authorization = "Bearer $script:merchantToken" }
+    (Get-Status 'POST' '/gateway/reports/Report' $h @{ range = 4 }) -eq 403
+}
+
+Invoke-Case 'API-GTW-036' '🔴🔴 P0 通配权限点 permission:manage 生效：无该权限不能新增权限点（提权路径）' {
+    # 这一条是本次漏洞里最严重的一环：能新增权限点 = 能给自己授任意权限 = 完全提权。
+    $h = @{ Authorization = "Bearer $script:merchantToken" }
+    $body = @{ code = 'probe:gw'; name = '探测'; parentId = 1; apiPath = '/gateway/probe/gw'; status = 1 }
+    (Get-Status 'POST' '/gateway/permissions/Create' $h $body) -eq 403
+}
+
+Invoke-Case 'API-GTW-037' '通配修复不能误伤：超管读日志 / 报表仍成功' {
+    # 只加「拦」很容易，把该放行的也拦掉就是另一种故障。
+    $h = @{ Authorization = "Bearer $script:adminToken" }
+    if ((Get-Status 'POST' '/gateway/logs/Pv/List' $h @{ page = 1; pageSize = 1 }) -ne 200) { return $false }
+    return (Get-Status 'POST' '/gateway/reports/Report' $h @{ range = 4 }) -eq 200
+}
+
+Invoke-Case 'API-GTW-040' '清理低权限测试账号' {
     if ($script:merchantAccountId -le 0) { return $true }
 
     foreach ($u in @('http://127.0.0.1:5022', 'http://127.0.0.1:5011')) { }

@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using Collaboration.Domain.Security;
 using CustomerService.Application.Services;
+using CustomerService.Domain.Entities;
 using CustomerService.Domain.IRepository;
 using MediatR;
 
@@ -38,6 +39,18 @@ public sealed class LoginHandler : IRequestHandler<LoginCommand, ApiResponse<Log
         if (customer is null || !PasswordHasher.Verify(request.Password, customer.PasswordHash))
         {
             return ApiResults.Fail<LoginResult>(BaseApiResponseCode.BadRequest, RejectMessage);
+        }
+
+        // 🔴 停用检查必须在**密码校验之后**，不能提到最前面。
+        // 提到最前面的话，「账号不存在」与「账号已停用」会给出不同文案，
+        // 等于公开了哪些登录名真实存在（可被用来枚举账号）。
+        // 放在密码校验之后：只有**已经证明自己知道密码**的人才会看到这句提示，
+        // 不泄露任何账号存在性；而用户也能明确知道「不是密码错，是被停用了」，
+        // 而不是对着一条「登录名或密码不正确」反复重试。
+        if (customer.Status == CustomerStatuses.Disabled)
+        {
+            return ApiResults.Fail<LoginResult>(
+                BaseApiResponseCode.BadRequest, "账号已停用，请联系客服");
         }
 
         customer.LastLoginAt = DateTime.UtcNow;

@@ -43,5 +43,29 @@ public class Customer : EntityBase
     /// <summary>最后登录时间，UTC。</summary>
     [Column(Name = "last_login_at")]
     public DateTime? LastLoginAt { get; set; }
+
+    /// <summary>账号状态，见 <see cref="CustomerStatuses"/>。</summary>
+    /// <remarks>
+    /// 停用后<b>禁止登录</b>。这一列是后加的：权限点 `customer:status` 早就种好了，
+    /// 但库里没有地方存状态，运营点「停用」无处落库，等于这个功能不存在。
+    /// </remarks>
+    [Column(Name = "status")]
+    public int Status { get; set; } = CustomerStatuses.Enabled;
+}
+
+/// <summary>客户账号状态。</summary>
+public static class CustomerStatuses
+{
+    /// <summary>正常，可登录。</summary>
+    public const int Enabled = 1;
+
+    /// <summary>停用，禁止登录。</summary>
+    public const int Disabled = 2;
+
+    /// <summary>状态中文名（后台展示用，不下发数字枚举）。</summary>
+    /// <param name="status">状态值。</param>
+    /// <returns>中文名。</returns>
+    public static string NameOf(int status)
+        => status == Disabled ? "已停用" : "正常";
 }
 

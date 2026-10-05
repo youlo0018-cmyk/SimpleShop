@@ -41,8 +41,11 @@ $modules = [ordered]@{
 $leaves = [ordered]@{
     '2101' = @(@('user:read', '账号列表', '/gateway/users/List'), @('user:create', '新建账号', '/gateway/users/Create'),
              @('user:update', '编辑账号', '/gateway/users/Update'), @('user:status', '启停账号', '/gateway/users/UpdateStatus'))
-    '2102' = @(@('customer:read', '客户列表', '/gateway/customers/Admin/List'), @('customer:update', '编辑客户', '/gateway/customers/Admin/Update'),
-             @('customer:status', '启停客户', '/gateway/customers/Admin/UpdateStatus'))
+    # 一个权限点**只能映射一条路径**（permission.code 上有唯一约束）。
+    # 同一个权限点要覆盖多个接口时用 /* 通配，而不是把 code 写两遍——
+    # 写成两遍会撞 uk_permission_code，整个播种直接失败。
+    '2102' = @(@('customer:read', '客户列表与详情', '/gateway/admin/customers/*'),
+             @('customer:status', '启停客户', '/gateway/admin/customers/ChangeStatus'))
     '2103' = @(@('permission:read', '角色列表', '/gateway/permissions/Roles'), @('permission:create', '新建角色', '/gateway/permissions/Roles/Create'),
              @('permission:update', '编辑角色', '/gateway/permissions/Roles/Update'), @('permission:delete', '删除角色', '/gateway/permissions/Roles/Delete'),
              @('permission:manage', '权限点管理', '/gateway/permissions/*'))

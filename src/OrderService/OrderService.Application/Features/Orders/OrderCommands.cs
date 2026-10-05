@@ -170,13 +170,8 @@ public sealed record OrderItemDto(
     decimal ActivityDiscount, decimal CouponDiscount, decimal PayableAmount, int DeliveryType,
     int SourceType = 1);
 
-/// <summary>分页结果。</summary>
-/// <typeparam name="T">行类型。</typeparam>
-/// <param name="Items">当前页数据。</param>
-/// <param name="Total">总条数。</param>
-/// <param name="Page">当前页码。</param>
-/// <param name="PageSize">每页条数。</param>
-public sealed record PagedResult<T>(IReadOnlyList<T> Items, long Total, int Page, int PageSize);
+// 分页信封已提到 Collaboration.Domain.Common.PagedResult —— 这个形状所有服务的列表接口都要用，
+// 留一份在这里的话下一个需要分页的服务就会再复制一份，两份字段名改得不一致时前端得为每个服务写一套取值逻辑。
 
 /// <summary>下单侧校验器注册。</summary>
 public static class OrderValidators

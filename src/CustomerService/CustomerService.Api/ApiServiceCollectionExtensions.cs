@@ -1,5 +1,6 @@
 using System.Reflection;
 using Collaboration.Domain.MediatR;
+using CustomerService.Application.Features.Customer.Admin;
 using CustomerService.Application.Features.Customer.Login;
 using CustomerService.Application.Features.Customer.Register;
 using CustomerService.Infrastructure;
@@ -32,6 +33,7 @@ public static class ApiServiceCollectionExtensions
         // Validator 与 Handler 分散在 Application 层，这里显式补上，确保不会漏注册
         services.AddScoped<IValidator<RegisterCommand>, RegisterValidator>();
         services.AddScoped<IValidator<LoginCommand>, LoginValidator>();
+        CustomerAdminValidators.AddCustomerAdminValidators(services);
 
         services.AddInfrastructure();
         return services;

@@ -16,15 +16,26 @@ CREATE TABLE IF NOT EXISTS customer (
     gender          integer      NOT NULL DEFAULT 0,
     birthday        date         NULL,
     last_login_at   timestamp    NULL,
+    status          integer      NOT NULL DEFAULT 1,
     CONSTRAINT pk_customer PRIMARY KEY (id)
 );
 
+-- 账号状态：1 正常 / 2 停用。
+-- 权限点 customer:status 早就种好了，但这一列一直没有 —— 运营点「停用」没处可存，
+-- 停用功能等于不存在。ALTER 必须排在用到它的索引之前（CODING_STANDARD 62）：
+-- CREATE TABLE IF NOT EXISTS 对已建好的表是空操作，老环境上这一列并不存在，
+-- 先建索引就会报 column "status" does not exist。
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS status integer NOT NULL DEFAULT 1;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_name ON customer (customer_name);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_customer_phone ON customer (phone);
+-- 后台按状态筛选用；没有它，「只看停用客户」会全表扫
+CREATE INDEX IF NOT EXISTS idx_customer_status ON customer (status) WHERE is_deleted = false;
 
 COMMENT ON TABLE  customer            IS '前台客户账号（DATA_SPEC 2.6）';
 COMMENT ON COLUMN customer.password_hash IS '只存哈希，禁止明文';
 COMMENT ON COLUMN customer.gender        IS '0 未知 / 1 男 / 2 女';
+COMMENT ON COLUMN customer.status        IS '1 正常 / 2 停用（停用后禁止登录）';
 
 CREATE TABLE IF NOT EXISTS customer_address (
     id              bigint       NOT NULL,

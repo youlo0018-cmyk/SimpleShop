@@ -63,16 +63,51 @@ public sealed class RoutePermissionCache : IDisposable
             return new RoutePermissionLookup(true, exact);
         }
 
-        // 前缀映射：允许 /gateway/files/Content/{对象键} 这类带路径参数的接口
-        // 绑定到 /gateway/files/Content 或 /gateway/files/Content/。
+        // 🔴 前缀匹配。必须挑**最长**的命中项，不能「第一个匹配的就返回」。
+        // Dictionary 的遍历顺序不保证稳定，两个长度不同的通配前缀都命中时
+        // （如 /gateway/reports/* 与 /gateway/reports/Point/*）挑到哪个是随机的——
+        // 症状是「这个接口到底要什么权限」变成薛定谔的，同一个人时而被放行时而被拒。
+        // 与权限中心 GetRouteMapHandler「同一路径只留一个权限点」是同一个道理。
+        string? bestCode = null;
+        var bestLength = -1;
+
         foreach (var (key, value) in _map)
         {
+            // 通配：以 /* 结尾表示「该前缀及其下所有子路径」。
+            // 之前没处理这个分支：/gateway/logs/* 被当成字面量，前缀算成
+            // /gateway/logs/*/，于是永远匹配不上 /gateway/logs/Pv/List，
+            // 结果 requiredCode 为 null、请求被**放行**——
+            // log:read / report:view / permission:manage / file:upload
+            // 这几个权限点等于完全没生效（任何登录用户都能读日志、改权限点）。
+            if (key.EndsWith("/*", StringComparison.Ordinal))
+            {
+                var basePath = key[..^2];
+                var hit = path.Equals(basePath, StringComparison.OrdinalIgnoreCase)
+                          || path.StartsWith(basePath + "/", StringComparison.OrdinalIgnoreCase);
+
+                if (hit && basePath.Length > bestLength)
+                {
+                    bestCode = value;
+                    bestLength = basePath.Length;
+                }
+
+                continue;
+            }
+
+            // 普通前缀：允许 /gateway/files/Content/{对象键} 这类带路径参数的接口
+            // 绑定到 /gateway/files/Content 或 /gateway/files/Content/。
             var prefix = key.EndsWith('/') ? key : key + "/";
             if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                return new RoutePermissionLookup(true, value);
+                if (prefix.Length > bestLength)
+                {
+                    bestCode = value;
+                    bestLength = prefix.Length;
+                }
             }
         }
+
+        if (bestCode is not null) return new RoutePermissionLookup(true, bestCode);
 
         return new RoutePermissionLookup(true, null);
     }
