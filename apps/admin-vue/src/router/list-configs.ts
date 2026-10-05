@@ -309,6 +309,39 @@ export const LISTS = {
       { field: 'status', label: '状态', width: 100, dict: 'seckill' },
     ],
   },
+
+  refunds: {
+    title: '退款列表',
+    desc: '审批通过才真正退钱',
+    endpoint: '/gateway/refunds/List',
+    method: 'POST',
+    tabs: [
+      { label: '全部', value: 0 },
+      { label: '待审批', value: 10 },
+      { label: '已退款', value: 20 },
+      { label: '已拒绝', value: 90 },
+    ],
+    byStatus: true,
+    search: true,
+    searchPlaceholder: '退款单号 / 订单号',
+    columns: [
+      { field: 'refundNo', label: '退款单号', width: 150, format: 'text', mono: true },
+      { field: 'orderNo', label: '订单号', width: 190, format: 'text', mono: true },
+      { field: 'refundType', label: '类型', width: 110, dict: 'refundType' },
+      { field: 'amount', label: '退款金额', width: 110, num: true, format: 'amount' },
+      { field: 'reason', label: '申请原因', width: 200, format: 'text' },
+      { field: 'approverName', label: '审批人', width: 100, format: 'text' },
+      { field: 'status', label: '状态', width: 100, dict: 'refund' },
+      { field: 'createdAt', label: '申请时间', width: 155, format: 'time' },
+    ],
+    // 🔴 刻意**只读**，不做「通过 / 拒绝」按钮。
+    // ApproveRefundCommand / RejectRefundCommand 的审批人（ApproverId / ApproverName）
+    // 是从**请求体**取的 —— 也就是说调用方可以自称任意审批人，
+    // 而退款单的「审批人」是财务审计凭据。
+    // 在后端改成从令牌租户上下文取之前，前端不接这个动作：
+    // 接了等于把「可伪造的审批人」固化进界面。
+    // 详见 AI_HANDOFF 记录的后端缺陷清单。
+  },
 };
 
 export default LISTS;

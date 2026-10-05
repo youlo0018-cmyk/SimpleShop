@@ -166,7 +166,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'refunds',
     meta: { title: '退款', icon: 'RefreshLeft', perm: 'refund:read' },
     children: [
-      { path: '', name: 'refund-list', ...ph('', '退款列表', 'refund:read') },
+      listRoute('', 'refund-list', '退款列表', 'refund:read', 'refunds'),
       { path: 'detail/:id', name: 'refund-detail', ...ph('detail/:id', '退款详情', 'refund:read') },
     ],
   },
