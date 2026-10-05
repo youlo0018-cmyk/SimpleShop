@@ -69,7 +69,11 @@
       </header>
 
       <main class="shell__body">
-        <RouterView />
+        <!-- 按 path 强制换实例：vue-router 默认会**复用**组件（component 类型相同就复用），
+             于是「同一个组件服务多个路由」时，setup 里 `const x = props.x` 这种快照
+             会一直留着第一次的值 —— 切页面后标题变了、数据却是上一页的。
+             加 key 之后每个路由都是干净的新实例，这一类问题从根上消失。 -->
+        <RouterView :key="route.path" />
       </main>
     </div>
   </div>

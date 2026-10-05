@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router';
+import { REPORTS } from './report-configs';
 
 // 菜单与路由的单一来源（BUSINESS.md 5.2 的 23 组功能模块）。
 // meta.title 同时用于侧边栏文字与浏览器标题，meta.icon 是 Element Plus 图标名。
@@ -15,6 +16,18 @@ function ph(path: string, title: string, perm: string) {
     component: () => import('@/views/PlaceholderView.vue'),
     props: { title, perm },
     meta: { title, perm, icon: 'Document' },
+  };
+}
+
+// 报表页：四张表同构，用同一个组件 + 各自的配置驱动。
+// 复制四个组件的话，改一次「金额怎么显示」要改四处。
+function reportRoute(path: string, name: string, title: string, perm: string) {
+  return {
+    path,
+    name,
+    component: () => import('@/views/ReportView.vue'),
+    props: { config: REPORTS[name.replace('report-', '') as keyof typeof REPORTS] },
+    meta: { title, perm },
   };
 }
 
@@ -194,10 +207,10 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'reports',
     meta: { title: '报表', icon: 'DataLine', perm: 'report:view' },
     children: [
-      { path: 'business', name: 'report-business', ...ph('business', '经营报表', 'report:view') },
-      { path: 'marketing', name: 'report-marketing', ...ph('marketing', '营销效果报表', 'report:marketing') },
-      { path: 'seckill', name: 'report-seckill', ...ph('seckill', '秒杀效果报表', 'report:seckill') },
-      { path: 'point', name: 'report-point', ...ph('point', '积分报表', 'report:view') },
+      reportRoute('business', 'report-business', '经营报表', 'report:view'),
+      reportRoute('marketing', 'report-marketing', '营销效果报表', 'report:marketing'),
+      reportRoute('seckill', 'report-seckill', '秒杀效果报表', 'report:seckill'),
+      reportRoute('point', 'report-point', '积分报表', 'report:view'),
     ],
   },
   {

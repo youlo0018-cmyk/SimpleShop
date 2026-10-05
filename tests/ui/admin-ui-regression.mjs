@@ -112,8 +112,14 @@ async function visit(page, item) {
   page.on('requestfailed', onError);
 
   try {
-    await page.goto(`${BASE}/#${item.href.replace('#', '')}`, { waitUntil: 'networkidle' });
-    await page.waitForTimeout(350);
+    // 用 domcontentloaded + 显式等骨架消失，而不是 networkidle：
+    // networkidle 要等 500ms 无网络活动才返回，页面里有慢查询时会白耗超时预算。
+    // 真正要等的是「骨架屏消失」，那个有明确信号。
+    await page.goto(`${BASE}/#${item.href.replace('#', '')}`, { waitUntil: 'domcontentloaded' });
+    await page
+      .waitForFunction(() => document.querySelectorAll('.skel').length === 0, { timeout: 15000 })
+      .catch(() => {});
+    await page.waitForTimeout(250);
 
     // 白屏检测：内容区既没有骨架也没有任何文字
     const blank = await page.evaluate(() => {
@@ -124,6 +130,21 @@ async function visit(page, item) {
     // 「尚未实现」页不算故障，但必须单独统计，
     // 否则清单会被当成已交付
     const placeholder = await page.locator('.ph__title').count();
+
+    // 页面内标题。
+    //
+    // ⚠️ 必须用 evaluate 而不是 locator().textContent()：
+    // locator 在选择器匹配不到时会**自动等待到默认超时（30 秒）**再抛错。
+    // 占位页没有 .head__title，于是每页白等 30 秒 —— 41 页就是 20 分钟，
+    // 而 `.catch(() => '')` 把异常吃掉后，症状只剩「工具慢」，看不出是哪一行。
+    // evaluate 是直接读 DOM，不存在自动等待。
+    //
+    // 标题也**不与菜单项比对**：菜单叫「工作台」、页面标题叫「经营概览」是正常的，
+    // 那样断言会一直误报，而一直误报的检查项等于没有（会被直接忽略）。
+    const heading = await page.evaluate(() => {
+      const el = document.querySelector('.head__title, .page-header__title');
+      return (el?.textContent || '').trim();
+    });
 
     const name = `${slug(item.group)}-${slug(item.title)}`;
     await page.screenshot({
@@ -138,6 +159,7 @@ async function visit(page, item) {
       screenshot: `adm-${name}-1440x900.png`,
       blank,
       placeholder: placeholder > 0,
+      heading,
       errors,
       failed,
       ok: !blank && errors.length === 0 && failed.length === 0,
@@ -259,6 +281,38 @@ async function main() {
   const placeholder = results.filter((r) => r.placeholder).length;
   const real = results.filter((r) => !r.placeholder).length;
 
+  // 同一分组下的兄弟页面**不允许渲染出完全一样的标题**。
+  // 这条是被真实 bug 逼出来的：一个组件服务多个路由时，vue-router 会复用组件实例，
+  // setup 里 `const x = props.x` 快照成第一次的值 —— 结果「秒杀效果报表」的顶栏写着秒杀，
+  // 内容却是经营报表的。按「同组同名」来判，既能抓住它，又不会像「标题必须等于菜单文字」
+  // 那样一直误报（「工作台」vs「经营概览」本来就是合理的差异）。
+  const dupInGroup = [];
+  const byGroup = new Map();
+  for (const r of results) {
+    if (!r.heading) continue;
+    const list = byGroup.get(r.group) || [];
+    list.push(r);
+    byGroup.set(r.group, list);
+  }
+  for (const [group, list] of byGroup) {
+    const seen = new Map();
+    for (const r of list) {
+      const prev = seen.get(r.heading);
+      if (prev) {
+        const msg = `分组「${group}」下「${prev.title}」与「${r.title}」渲染出相同标题「${r.heading}」，疑似组件复用导致 props 快照`;
+        r.errors.push(msg);
+        r.ok = false;
+        dupInGroup.push(msg);
+      } else {
+        seen.set(r.heading, r);
+      }
+    }
+  }
+  if (dupInGroup.length > 0) {
+    console.log('\n  ── 同组标题重复（组件复用嫌疑）──');
+    dupInGroup.forEach((m) => console.log(`  FAIL ${m}`));
+  }
+
   console.log('\n  ── 流程（菜单点到不了的页面）──');
   const flowResults = [];
   for (const flow of FLOWS) {
@@ -300,12 +354,15 @@ async function main() {
   );
 
   console.log(`\n${'='.repeat(64)}`);
-  console.log(`  总计 ${results.length} 个页面：可用 ${pass} / 有问题 ${fail}`);
+  // 汇总必须在同组标题检查**之后**算，否则那道检查新判红的问题不会计入「有问题」
+  const finalPass = results.filter((r) => r.ok).length;
+  const finalFail = results.length - finalPass;
+  console.log(`  总计 ${results.length} 个页面：可用 ${finalPass} / 有问题 ${finalFail}`);
   console.log(`  其中占位页（尚未实现）${placeholder} 个，真正已交付 ${real} 个`);
   console.log(`  流程 ${flowResults.length} 条：可用 ${flowPass} / 有问题 ${flowFail}`);
   console.log(`  截图目录：${path.relative(ROOT, SHOT_DIR)}`);
   console.log(`  明细报告：${path.relative(ROOT, REPORT_FILE)}`);
-  process.exit(fail > 0 || flowFail > 0 ? 1 : 0);
+  process.exit(finalFail > 0 || flowFail > 0 ? 1 : 0);
 }
 
 main().catch((e) => {
