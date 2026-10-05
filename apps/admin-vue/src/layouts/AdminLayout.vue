@@ -97,7 +97,12 @@ const hovered = ref('');
 function leaves(group: any) {
   const base = ('/' + group.path).replace(/\/+/g, '/');
   return (group.children || [])
-    .filter((c: any) => c.meta?.title)
+    // 带参数（:id）的页面**不进菜单**：它们要一个真实 Id 才能打开，
+    // 而菜单里只有一个字面量 ':id'，点进去必然 404 / 查不到数据。
+    // 正确的入口是从列表页点某一行进去——运营要看的也是「某一单」，
+    // 不是「随便某一单」。用规则判断而不是逐个打 hidden 标记，
+    // 是为了将来新增带参路由时不会漏标。
+    .filter((c: any) => c.meta?.title && !String(c.path).includes(':'))
     .map((c: any) => {
       const full = (base + '/' + c.path).replace(/\/+/g, '/').replace(/\/$/, '');
       return { ...c, path: full, fullPath: full };

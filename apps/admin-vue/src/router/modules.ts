@@ -118,7 +118,12 @@ export const adminRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/OrderListView.vue'),
         meta: { title: '订单列表', perm: 'order:read' },
       },
-      { path: 'detail/:id', name: 'order-detail', ...ph('detail/:id', '订单详情', 'order:read') },
+      {
+        path: 'detail/:id',
+        name: 'order-detail',
+        component: () => import('@/views/OrderDetailView.vue'),
+        meta: { title: '订单详情', perm: 'order:read' },
+      },
       { path: 'pickup-verify', name: 'order-pickup-verify', ...ph('pickup-verify', '取货码核销', 'order:verify') },
     ],
   },
