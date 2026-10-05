@@ -141,6 +141,32 @@ export const FORMS = {
       { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0 },
     ],
   },
+
+  // 小程序配置 = 平台在小程序里**看得见**的那部分：商城名、Logo、公告、三档主题色。
+  // 刻意不把运费、联系人、编码放进来 —— 那些是「平台的资料」不是「小程序的配置」，
+  // 放一起会让运营为了改个公告色去翻一屏不相关的字段。
+  // 保存复用 platforms/Update（该命令对未传的字段会用原值，不存在「部分更新」问题）。
+  appConfig: {
+    title: '小程序配置',
+    desc: '商城名称、Logo、公告与主题色。用户在小程序里看到的就是这些',
+    createEndpoint: '/gateway/platforms/Update',
+    updateEndpoint: '/gateway/platforms/Update',
+    idField: 'platformId',
+    listRoute: '/platforms',
+    listSource: { url: '/gateway/platforms/List', method: 'POST' },
+    // platforms/Update 的 platformName / platformCode / contactName / contactPhone
+    // 都是必填，而这一页刻意不显示它们 —— 不带上就会被 400 挡下。
+    carry: ['platformName', 'platformCode', 'contactName', 'contactPhone'],
+    fields: [
+      { field: 'mallName', label: '商城名称', required: true, pattern: '^.{2,128}$', patternMessage: '商城名称 2-128 个字符' },
+      { field: 'logo', label: '平台 Logo', help: '图片 URL' },
+      { field: 'notice', label: '首页公告', type: 'textarea', rows: 3, help: '最多 500 字' },
+      { field: 'primaryColor', label: '主题色', type: 'color', default: '#0071e3' },
+      { field: 'tabColor', label: 'TabBar 选中色', type: 'color', default: '#0071e3' },
+      { field: 'backgroundColor', label: '页面背景色', type: 'color', default: '#f5f5f7' },
+      { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
+    ],
+  },
 };
 
 export default FORMS;

@@ -107,6 +107,8 @@ const loading = ref(false);
 const saving = ref(false);
 const model = reactive<Record<string, any>>({});
 const errors = reactive<Record<string, string>>({});
+// 加载到的**完整**记录（含表单上没显示的字段），提交时用于补齐后端要求的必填项。
+const loaded = ref<Record<string, any>>({});
 
 // 下拉数据源。平台 / 商户 / 角色 / 券模板都要从后端取，
 // 且必须显示 name 而不是 id（DATA_SPEC 4.1）。
@@ -176,6 +178,7 @@ async function load() {
         body: { [config.value.idField || 'id']: Number(entityId.value) },
         silent: true,
       });
+      loaded.value = detail || {};
       fill(detail || {});
       return;
     }
@@ -185,14 +188,18 @@ async function load() {
       fill({});
       return;
     }
+    // pageSize 默认 50：各端点的上限并不统一（评价 50 / 平台 100 / 客户与日志 200），
+    // 取**最小**那个才不会被任何一个端点拒掉。
+    // 曾用 200，结果编辑平台 / 编辑商户 / 编辑场次三个页面一律 400。
     const res = await request(src.url, {
       method: src.method || 'POST',
-      body: { page: 1, pageSize: 200, ...(src.body || {}) },
+      body: { page: 1, pageSize: src.pageSize ?? 50, ...(src.body || {}) },
       silent: true,
     });
     const rows = Array.isArray(res) ? res : (res?.items || []);
     const hit = rows.find((r: any) => Number(r.id) === Number(entityId.value));
     if (!hit) ElMessage.warning('未找到该记录，可能已被删除');
+    loaded.value = hit || {};
     fill(hit || {});
   } catch {
     fill({});
@@ -246,6 +253,13 @@ async function submit() {
   saving.value = true;
   try {
     const body: Record<string, any> = {};
+    // carry：把「加载时读到、但表单上没显示」的字段一起提交。
+    // 小程序配置就是这种情况：它只显示商城名/公告/主题色，
+    // 但 platforms/Update 要求 platformName / contactPhone 等字段非空，
+    // 只提交可见字段会被后端 400 挡下。
+    for (const key of config.value.carry || []) {
+      if (loaded.value[key] !== undefined) body[key] = loaded.value[key];
+    }
     for (const f of visibleFields.value) {
       if (f.readonlyInEdit && isEdit.value) continue;
       body[f.field] = f.toApi ? f.toApi(model[f.field]) : model[f.field];

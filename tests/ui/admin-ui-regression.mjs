@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { apiToken, collectIds, idOf, PAGES, slug as nmSlug } from './non-menu-pages.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -421,6 +422,65 @@ async function runFlow(page, flow) {
   return { name: flow.name, steps, ok: steps.every((s) => s.ok) };
 }
 
+// 访问一个菜单点不到的页面（详情 / 编辑 / 场次商品）。
+// 断言项与菜单页一致：白屏、控制台错误、失败请求，另外还要求**必须有标题** ——
+// 编辑页最容易出的问题是组件没匹配上而渲染成一片空白，而那时「不白屏」也可能成立。
+async function visitNonMenu(page, spec, id) {
+  const href = spec.route.replace('{id}', id);
+  const errors = [];
+  const failed = [];
+
+  const onConsole = (m) => {
+    if (m.type() === 'error' && !ignored(m.text())) errors.push(m.text().slice(0, 300));
+  };
+  const onResponse = (r) => {
+    const s = r.status();
+    if (s >= 400 && !r.url().includes('/health')) {
+      failed.push(`${s} ${r.request().method()} ${r.url().replace(BASE, '')}`);
+    }
+  };
+
+  page.on('console', onConsole);
+  page.on('response', onResponse);
+
+  try {
+    await page.goto(`${BASE}/${href}`, { waitUntil: 'domcontentloaded' });
+    await page
+      .waitForFunction(() => document.querySelectorAll('.skel').length === 0, { timeout: 15000 })
+      .catch(() => {});
+    await page.waitForTimeout(350);
+
+    const heading = await page.evaluate(() => {
+      const el = document.querySelector('.head__title, .page-header__title');
+      return (el?.textContent || '').trim();
+    });
+    if (!heading) errors.push('页面没有标题，可能是路由没匹配上组件');
+
+    const blank = await page.evaluate(() => {
+      const shell = document.querySelector('.shell__body');
+      return !shell || shell.innerText.trim().length === 0;
+    });
+
+    const name = `adm-${nmSlug(spec.name)}-${nmSlug(spec.title)}-1440x900.png`;
+    await page.screenshot({ path: path.join(SHOT_DIR, name), fullPage: true });
+
+    return {
+      group: spec.name,
+      title: spec.title,
+      route: href,
+      heading,
+      screenshot: name,
+      blank,
+      errors,
+      failed,
+      ok: !blank && errors.length === 0 && failed.length === 0,
+    };
+  } finally {
+    page.off('console', onConsole);
+    page.off('response', onResponse);
+  }
+}
+
 async function main() {
   fs.mkdirSync(SHOT_DIR, { recursive: true });
 
@@ -463,6 +523,43 @@ async function main() {
   const fail = results.length - pass;
   const placeholder = results.filter((r) => r.placeholder).length;
   const real = results.filter((r) => !r.placeholder).length;
+
+  // ---- 菜单点不到的页面（详情 / 编辑 / 场次商品 / 商户装修）----
+  // 它们需要真实 Id，所以先调接口取，而不是硬编码 —— 硬编码的 id 会在数据变了之后
+  // 变成「404 也算通过」，那样清单是绿的而实际什么都没测。
+  let nonMenu = [];
+  if (!only) {
+    console.log('\n── 菜单点不到的页面（先取真实 Id）──');
+    try {
+      const token = await apiToken(USER, PASS);
+      const ids = await collectIds(token);
+
+      for (const spec of PAGES) {
+        const id = idOf(ids[spec.key]);
+        if (!id) {
+          nonMenu.push({ group: spec.name, title: spec.title, skipped: true, ok: true, errors: [], failed: [] });
+          console.log(`  \x1b[33mSKIP\x1b[0m ${spec.name} / ${spec.title}  [列表里没有数据，取不到真实 Id]`);
+          continue;
+        }
+
+        const r = await visitNonMenu(page, spec, id);
+        nonMenu.push(r);
+        const flags = [];
+        if (r.blank) flags.push('白屏');
+        if (r.errors?.length) flags.push(`控制台错误×${r.errors.length}`);
+        if (r.failed?.length) flags.push(`失败请求×${r.failed.length}`);
+        const mark = r.ok ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m';
+        console.log(`  ${mark} ${r.group} / ${r.title}  -> ${r.route}${flags.length ? '  [' + flags.join(' ') + ']' : ''}`);
+        if (!r.ok) {
+          (r.errors || []).slice(0, 3).forEach((e) => console.log(`        控制台: ${e}`));
+          (r.failed || []).slice(0, 3).forEach((e) => console.log(`        请求:   ${e}`));
+        }
+      }
+    } catch (e) {
+      console.log(`  非菜单页采集失败：${e.message}`);
+      nonMenu.push({ group: '非菜单页', title: '采集', ok: false, errors: [e.message], failed: [] });
+    }
+  }
 
   // 同一分组下的兄弟页面**不允许渲染出完全一样的标题**。
   // 这条是被真实 bug 逼出来的：一个组件服务多个路由时，vue-router 会复用组件实例，
@@ -528,6 +625,7 @@ async function main() {
         fail,
         placeholder,
         results,
+        nonMenu,
         flows: flowResults,
         flowFail,
       },
@@ -540,12 +638,16 @@ async function main() {
   // 汇总必须在同组标题检查**之后**算，否则那道检查新判红的问题不会计入「有问题」
   const finalPass = results.filter((r) => r.ok).length;
   const finalFail = results.length - finalPass;
+  const nmPass = nonMenu.filter((r) => r.ok).length;
+  const nmFail = nonMenu.length - nmPass;
+  const nmSkipped = nonMenu.filter((r) => r.skipped).length;
   console.log(`  总计 ${results.length} 个页面：可用 ${finalPass} / 有问题 ${finalFail}`);
   console.log(`  其中占位页（尚未实现）${placeholder} 个，真正已交付 ${real} 个`);
+  console.log(`  非菜单页 ${nonMenu.length} 个：可用 ${nmPass} / 有问题 ${nmFail} / 无数据跳过 ${nmSkipped}`);
   console.log(`  流程 ${flowResults.length} 条：可用 ${flowPass} / 有问题 ${flowFail}`);
   console.log(`  截图目录：${path.relative(ROOT, SHOT_DIR)}`);
   console.log(`  明细报告：${path.relative(ROOT, REPORT_FILE)}`);
-  process.exit(finalFail > 0 || flowFail > 0 ? 1 : 0);
+  process.exit(finalFail > 0 || nmFail > 0 || flowFail > 0 ? 1 : 0);
 }
 
 main().catch((e) => {

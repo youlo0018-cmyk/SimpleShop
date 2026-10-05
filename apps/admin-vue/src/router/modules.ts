@@ -4,6 +4,7 @@ import { LISTS } from './list-configs';
 import { TREES } from './tree-configs';
 import { CONFIGS } from './config-configs';
 import { FORMS } from './form-configs';
+import { DETAILS } from './detail-configs';
 
 // 菜单与路由的单一来源（BUSINESS.md 5.2 的 23 组功能模块）。
 // meta.title 同时用于侧边栏文字与浏览器标题，meta.icon 是 Element Plus 图标名。
@@ -85,6 +86,16 @@ function formRoute(path: string, name: string, title: string, perm: string, conf
   };
 }
 
+function detailRoute(path: string, name: string, title: string, perm: string, configKey: keyof typeof DETAILS) {
+  return {
+    path,
+    name,
+    component: () => import('@/views/DetailView.vue'),
+    props: { config: DETAILS[configKey] },
+    meta: { title, perm },
+  };
+}
+
 export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'dashboard',
@@ -108,7 +119,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '客户', icon: 'UserFilled', perm: 'customer:read' },
     children: [
       listRoute('', 'customer-list', '客户列表', 'customer:read', 'customers'),
-      { path: 'detail/:id', name: 'customer-detail', ...ph('detail/:id', '客户详情', 'customer:read') },
+      detailRoute('detail/:id', 'customer-detail', '客户详情', 'customer:read', 'customer'),
     ],
   },
   {
@@ -128,7 +139,7 @@ export const adminRoutes: RouteRecordRaw[] = [
       listRoute('', 'platform-list', '平台列表', 'platform:read', 'platforms'),
       formRoute('create', 'platform-create', '新建平台', 'platform:create', 'platform'),
       formRoute('edit/:id', 'platform-edit', '编辑平台', 'platform:update', 'platform'),
-      { path: 'app-config/:id', name: 'platform-app-config', ...ph('app-config/:id', '小程序配置', 'platform:update') },
+      formRoute('app-config/:id', 'platform-app-config', '小程序配置', 'platform:update', 'appConfig'),
       configRoute('regions', 'platform-regions', '地区地址配置', 'region:update', 'regions'),
     ],
   },
@@ -232,7 +243,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '退款', icon: 'RefreshLeft', perm: 'refund:read' },
     children: [
       listRoute('', 'refund-list', '退款列表', 'refund:read', 'refunds'),
-      { path: 'detail/:id', name: 'refund-detail', ...ph('detail/:id', '退款详情', 'refund:read') },
+      detailRoute('detail/:id', 'refund-detail', '退款详情', 'refund:read', 'refund'),
     ],
   },
 
@@ -262,7 +273,12 @@ export const adminRoutes: RouteRecordRaw[] = [
       listRoute('', 'seckill-list', '场次列表', 'seckill:read', 'seckillSessions'),
       formRoute('create', 'seckill-create', '新建场次', 'seckill:create', 'seckillSession'),
       formRoute('edit/:id', 'seckill-edit', '编辑场次', 'seckill:update', 'seckillSession'),
-      { path: 'items/:id', name: 'seckill-items', ...ph('items/:id', '场次商品', 'seckill:update') },
+      {
+        path: 'items/:id',
+        name: 'seckill-items',
+        component: () => import('@/views/SeckillItemsView.vue'),
+        meta: { title: '场次商品', perm: 'seckill:update' },
+      },
     ],
   },
 
