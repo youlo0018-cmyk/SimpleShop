@@ -172,7 +172,14 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'search-index',
     meta: { title: '搜索索引', icon: 'Search', perm: 'product:read' },
-    children: [{ path: '', name: 'search-index-list', ...ph('', '索引对账', 'product:read') }],
+    children: [
+      {
+        path: '',
+        name: 'search-index-list',
+        component: () => import('@/views/IndexReconcileView.vue'),
+        meta: { title: '索引对账', perm: 'search:reindex' },
+      },
+    ],
   },
 
   // ---- 交易 ----
@@ -192,7 +199,12 @@ export const adminRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/OrderDetailView.vue'),
         meta: { title: '订单详情', perm: 'order:read' },
       },
-      { path: 'pickup-verify', name: 'order-pickup-verify', ...ph('pickup-verify', '取货码核销', 'order:pickup') },
+      {
+        path: 'pickup-verify',
+        name: 'order-pickup-verify',
+        component: () => import('@/views/PickupVerifyView.vue'),
+        meta: { title: '取货码核销', perm: 'order:pickup' },
+      },
       // 物流公司字典归在「订单」模块下（BUSINESS.md 5.2 的 logistics:manage 挂在订单组），
       // 而不是单开一个一级菜单：它是发货表单的下拉数据源，不是一个独立业务域。
       listRoute('logistics-companies', 'logistics-company-list', '物流公司', 'logistics:manage', 'logisticsCompanies'),
@@ -218,8 +230,8 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '营销活动', icon: 'Present', perm: 'marketing:read' },
     children: [
       listRoute('', 'promotion-list', '活动列表', 'marketing:read', 'promotions'),
-      { path: 'create', name: 'promotion-create', ...ph('create', '新建活动', 'promotion:create') },
-      { path: 'edit/:id', name: 'promotion-edit', ...ph('edit/:id', '编辑活动', 'promotion:update') },
+      formRoute('create', 'promotion-create', '新建活动', 'marketing:create', 'promotion'),
+      formRoute('edit/:id', 'promotion-edit', '编辑活动', 'marketing:update', 'promotion'),
     ],
   },
   {
@@ -236,8 +248,8 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '限时抢购', icon: 'Timer', perm: 'seckill:read' },
     children: [
       listRoute('', 'seckill-list', '场次列表', 'seckill:read', 'seckillSessions'),
-      { path: 'create', name: 'seckill-create', ...ph('create', '新建场次', 'seckill:create') },
-      { path: 'edit/:id', name: 'seckill-edit', ...ph('edit/:id', '编辑场次', 'seckill:update') },
+      formRoute('create', 'seckill-create', '新建场次', 'seckill:create', 'seckillSession'),
+      formRoute('edit/:id', 'seckill-edit', '编辑场次', 'seckill:update', 'seckillSession'),
       { path: 'items/:id', name: 'seckill-items', ...ph('items/:id', '场次商品', 'seckill:update') },
     ],
   },

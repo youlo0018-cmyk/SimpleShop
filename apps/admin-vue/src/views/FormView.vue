@@ -137,8 +137,8 @@ async function loadOptions() {
     try {
       const rows = await request(src.url, {
         method: src.method || 'GET',
-        params: src.method && src.method !== 'GET' ? undefined : src.params,
-        body: src.method && src.method !== 'GET' ? (src.params || {}) : undefined,
+        params: src.method && src.method !== 'GET' ? undefined : (src.params || src.body),
+        body: src.method && src.method !== 'GET' ? (src.body || src.params) : undefined,
         silent: true,
       });
       const list = Array.isArray(rows) ? rows : (rows?.items || []);

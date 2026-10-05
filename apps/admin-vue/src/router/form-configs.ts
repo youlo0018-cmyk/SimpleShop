@@ -7,7 +7,9 @@ export const optionSources: Record<string, any> = {
   // 用 List 而不是 Options：DATA_SPEC 4.2 列了 roles/Options，但后端只实现了 List，
   // 而且 List 已经返回了下拉需要的 id + roleName。为此再加一个 Options 端点是纯重复。
   roles: { url: '/gateway/roles/List', method: 'GET' },
-  couponTemplates: { url: '/gateway/marketing/coupon-templates/Options', method: 'GET' },
+  // 券模板没有 Options 端点，只有按 Id 的 Get。用 List（POST，带分页）当数据源，
+  // 第一页足够覆盖运营会选的模板数量。
+  couponTemplates: { url: '/gateway/marketing/coupon-templates/List', method: 'POST', body: { page: 1, pageSize: 200 } },
   logisticsCompanies: { url: '/gateway/logistics-companies/Options', method: 'POST' },
 };
 
@@ -95,6 +97,48 @@ export const FORMS = {
       { field: 'description', label: '店铺简介', type: 'textarea', rows: 3 },
       { field: 'status', label: '状态', type: 'select', required: true, default: 2, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
       { field: 'remark', label: '备注', type: 'textarea', rows: 2 },
+    ],
+  },
+
+  promotion: {
+    title: '新建活动',
+    desc: '满减 / 满折 / 满赠。金额字段两位小数，保存时按 AwayFromZero 舍入',
+    createEndpoint: '/gateway/marketing/activities/Create',
+    updateEndpoint: '/gateway/marketing/activities/Update',
+    idField: 'activityId',
+    listRoute: '/promotions',
+    listSource: { url: '/gateway/marketing/activities/List', method: 'POST' },
+    fields: [
+      { field: 'activityName', label: '活动名', required: true, pattern: '^.{2,128}$', patternMessage: '活动名 2-128 个字符' },
+      { field: 'activityType', label: '活动类型', type: 'select', required: true, default: 1, static: [{ value: 1, label: '满减' }, { value: 2, label: '满折' }, { value: 3, label: '满赠' }] },
+      { field: 'thresholdAmount', label: '门槛金额', type: 'number', min: 0, default: 0, help: '按适用行金额合计判定，0 表示无门槛' },
+      { field: 'discountAmount', label: '优惠金额', type: 'number', min: 0, default: 0, help: '满减用' },
+      { field: 'discountRate', label: '折扣率', type: 'number', min: 0, max: 10, default: 10, help: '满折用。10 表示不打折，8.5 表示 85 折' },
+      { field: 'giftTemplateId', label: '赠送券模板', type: 'select', options: 'couponTemplates', default: 0, help: '满赠时必填' },
+      { field: 'startTime', label: '开始时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
+      { field: 'endTime', label: '结束时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
+      { field: 'perOrderLimit', label: '每单限用', type: 'number', min: 0, default: 0 },
+      { field: 'totalQuantity', label: '总限量', type: 'number', min: 0, default: 0, help: '0 表示不限量' },
+      { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0 },
+      { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0 },
+      { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
+    ],
+  },
+
+  seckillSession: {
+    title: '新建场次',
+    desc: '场次本身不含库存。库存由「发布」动作单独划转',
+    createEndpoint: '/gateway/marketing/seckill/sessions/Create',
+    updateEndpoint: '/gateway/marketing/seckill/sessions/Update',
+    idField: 'sessionId',
+    listRoute: '/seckill',
+    listSource: { url: '/gateway/marketing/seckill/sessions/List', method: 'POST' },
+    fields: [
+      { field: 'sessionName', label: '场次名', required: true, pattern: '^.{2,128}$', patternMessage: '场次名 2-128 个字符' },
+      { field: 'startTime', label: '开始时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
+      { field: 'endTime', label: '结束时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
+      { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0 },
+      { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0 },
     ],
   },
 };
