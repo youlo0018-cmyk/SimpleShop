@@ -279,6 +279,91 @@ Invoke-Case 'API-RPT-045' '🔴 券报表非法档位被 Range 规则挡住' {
     }
 }
 
+Write-Host "`n=== RPT 秒杀效果报表（营销服务）===" -ForegroundColor Cyan
+
+function SeckillReport([int]$Range) {
+    return Invoke-RestMethod -Uri "$MarketingService/reports/Seckill" -Method Post `
+        -Body (@{ range = $Range } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60
+}
+
+$script:skl = SeckillReport 4
+
+Invoke-Case 'API-RPT-050' '秒杀报表返回成功信封' {
+    return $script:skl.success -eq $true -and $null -ne $script:skl.data
+}
+
+Invoke-Case 'API-RPT-051' '汇总三项齐全（参与 / 成功 / GMV）' {
+    $d = $script:skl.data
+    foreach ($f in @('totalParticipants', 'totalGrabSuccess', 'totalGmv')) {
+        if (-not ($d.PSObject.Properties.Name -contains $f)) { return $false }
+    }
+    return $true
+}
+
+Invoke-Case 'API-RPT-052' '🔴 抢购成功数不超过参与人数' {
+    return $script:skl.data.totalGrabSuccess -le $script:skl.data.totalParticipants
+}
+
+Invoke-Case 'API-RPT-053' '🔴 逐场次售罄率 = 已抢 / 总量，且落在 0~1' {
+    foreach ($s in $script:skl.data.sessions) {
+        if ($s.stockTotal -le 0) { continue }
+        $expected = [math]::Round($s.stockSold / $s.stockTotal, 4)
+        if ([math]::Abs($s.sellOutRate - $expected) -ge 0.0001) { return $false }
+        if ($s.sellOutRate -lt 0 -or $s.sellOutRate -gt 1) { return $false }
+    }
+    return $true
+}
+
+Invoke-Case 'API-RPT-054' '🔴 售罄率不是整数除法的结果（int/int 会恒为 0 或 1）' {
+    $bad = 0
+    foreach ($s in $script:skl.data.sessions) {
+        if ($s.stockTotal -le 1) { continue }
+        if ($s.stockSold -eq 0 -or $s.stockSold -eq $s.stockTotal) { continue }
+        if ($s.sellOutRate -le 0 -or $s.sellOutRate -ge 1) { $bad++ }
+    }
+    return $bad -eq 0
+}
+
+Invoke-Case 'API-RPT-055' '逐场次：参与人数不超过抢购记录数（去重口径生效）' {
+    # 同一客户反复点击只算一个参与者，所以参与人数必须严格小于等于记录数。
+    # 出现「参与人数 > 记录数」说明去重被写成了求和。
+    foreach ($s in $script:skl.data.sessions) {
+        if ($s.grabSuccessCount -gt 0 -and $s.participantCount -gt $s.grabSuccessCount) { return $false }
+    }
+    return $true
+}
+
+Invoke-Case 'API-RPT-056' 'GMV 非负（订单服务不可用时降级为 0，不抛异常）' {
+    return $script:skl.data.totalGmv -ge 0
+}
+
+Invoke-Case 'API-RPT-057' '按单个场次过滤只返回该场次' {
+    $first = @($script:skl.data.sessions | Where-Object { $_.grabSuccessCount -gt 0 })[0]
+    if ($null -eq $first) {
+        Write-Host "        （没有有抢购的场次，跳过）" -ForegroundColor DarkGray
+        return $true
+    }
+    $r = Invoke-RestMethod -Uri "$MarketingService/reports/Seckill" -Method Post `
+        -Body (@{ range = 4; sessionId = $first.sessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60
+    if (-not $r.success) { return $false }
+    if ($r.data.sessions.Count -ne 1) { return $false }
+    return $r.data.sessions[0].sessionId -eq $first.sessionId
+}
+
+Invoke-Case 'API-RPT-058' '🔴 秒杀报表非法档位被 Range 规则挡住' {
+    try {
+        Invoke-RestMethod -Uri "$MarketingService/reports/Seckill" -Method Post `
+            -Body (@{ range = 5 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+        return $false
+    } catch {
+        return [int]$_.Exception.Response.StatusCode -eq 400 `
+            -and $_.ErrorDetails.Message -match 'Range'
+    }
+}
+
 Write-Host ""
 Write-Host "通过: $script:pass  失败: $script:fail" -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })
 if ($script:fail -gt 0) {

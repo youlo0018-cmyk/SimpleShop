@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using MarketingService.Application.Features.Reports;
+using MarketingService.Domain.Services;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
@@ -27,5 +28,20 @@ public sealed class ReportController : ControllerBase
     [HttpPost("Marketing")]
     public Task<ApiResponse<CouponReport>> Marketing(
         [FromBody] QueryCouponReportCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>秒杀效果报表。</summary>
+    /// <param name="command">查询条件。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>逐场次的参与人数、抢购成功数、售罄率与成交额合计。</returns>
+    /// <remarks>
+    /// <b>不含「场次 PV」</b>：前台秒杀列表只有一个
+    /// <c>POST /marketing/seckill/sessions/Public</c>，sessionId 在请求体里，
+    /// 而 pv 日志只记录 path / queryString / method，拿不到请求体，
+    /// 因此无法把页面访问按场次归因。与其给一个「所有场次都一样」的假数字，不如不提供。
+    /// </remarks>
+    [HttpPost("Seckill")]
+    public Task<ApiResponse<SeckillReport>> Seckill(
+        [FromBody] QuerySeckillReportCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 }

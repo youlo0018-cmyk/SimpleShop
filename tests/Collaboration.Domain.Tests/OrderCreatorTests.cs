@@ -585,6 +585,14 @@ public class OrderCreatorTests
             DateTime from, DateTime to, long merchantId, long platformId, CancellationToken ct = default)
             => Task.FromResult(new OrderAggregateRow(0, 0, 0, 0m));
 
+        /// <summary>成交额汇总：下单链路的用例不依赖它，返回 0 即可。</summary>
+        /// <param name="orderNos">订单号集合。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>0。</returns>
+        public Task<decimal> SumPayableByOrderNosAsync(
+            IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
+            => Task.FromResult(0m);
+
         public Task<Order> SaveAsync(Order order, IReadOnlyCollection<OrderItem> items, CancellationToken ct = default)
         {
             if (ThrowOnSave) throw new InvalidOperationException("落单失败");

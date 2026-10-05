@@ -194,6 +194,27 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
         return new OrderAggregateRow(orderCount, paidCount, completedCount, gmv);
     }
 
+    /// <inheritdoc />
+    public async Task<decimal> SumPayableByOrderNosAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
+    {
+        if (orderNos is null || orderNos.Count == 0) return 0m;
+
+        var list = orderNos.Where(a => !string.IsNullOrWhiteSpace(a)).Distinct().ToArray();
+        if (list.Length == 0) return 0m;
+
+        // 口径与工作台 GMV 一致：排除待支付 / 已取消 / 已退款
+        var sum = await _db.Select<Order>()
+            .Where(a => list.Contains(a.OrderNo))
+            .Where(a => a.Status != OrderStatuses.PendingPayment)
+            .Where(a => a.Status != OrderStatuses.Cancelled)
+            .Where(a => a.Status != OrderStatuses.Refunded)
+            .SumAsync(a => a.PayableAmount)
+            .ConfigureAwait(false);
+
+        return Math.Round(sum, 2, MidpointRounding.AwayFromZero);
+    }
+
 
     /// <inheritdoc />
     public async Task<Order> SaveAsync(Order order, IReadOnlyCollection<OrderItem> items, CancellationToken ct = default)

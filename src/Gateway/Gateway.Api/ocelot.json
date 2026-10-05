@@ -275,6 +275,21 @@
       ]
     },
     {
+      "UpstreamPathTemplate": "/gateway/reports/Seckill",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST"
+      ],
+      "DownstreamPathTemplate": "/reports/Seckill",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5072
+        }
+      ]
+    },
+    {
       "UpstreamPathTemplate": "/gateway/platforms/{everything}",
       "UpstreamHttpMethod": [
         "GET",

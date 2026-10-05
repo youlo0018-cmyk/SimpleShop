@@ -3,6 +3,7 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using OrderService.Application.Features.Internal;
 using OrderService.Application.Features.Orders;
+using OrderService.Domain.Ports;
 
 namespace OrderService.Api.Controllers;
 
@@ -12,10 +13,16 @@ namespace OrderService.Api.Controllers;
 public sealed class InternalOrderController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IOrderStore _store;
 
     /// <summary>构造控制器。</summary>
     /// <param name="mediator">MediatR 入口。</param>
-    public InternalOrderController(IMediator mediator) => _mediator = mediator;
+    /// <param name="store">订单仓储。报表类查询直接读仓储，不走命令。</param>
+    public InternalOrderController(IMediator mediator, IOrderStore store)
+    {
+        _mediator = mediator;
+        _store = store;
+    }
 
     /// <summary>秒杀下单（供 MarketingService 调用）。</summary>
     /// <param name="command">秒杀下单命令。</param>
@@ -111,4 +118,28 @@ public sealed class InternalOrderController : ControllerBase
     public Task<ApiResponse<BatchOrderExistsResult>> BatchExists(
         [FromBody] BatchOrderExistsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>按订单号集合汇总成交额（秒杀效果报表用）。</summary>
+    /// <param name="query">订单号集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>已支付（不含已取消 / 已退款）的实付合计。</returns>
+    /// <remarks>
+    /// 秒杀订单在营销服务只有「订单号」，金额在订单库，所以 GMV 必须由订单服务算。
+    /// 口径与工作台 GMV 一致，详见 <see cref="IOrderStore.SumPayableByOrderNosAsync"/>。
+    /// </remarks>
+    [HttpPost("sum-payable")]
+    public async Task<ApiResponse<PayableSumResult>> SumPayable(
+        [FromBody] PayableSumQuery query, CancellationToken ct)
+    {
+        var amount = await _store.SumPayableByOrderNosAsync(query.OrderNos, ct).ConfigureAwait(false);
+        return ApiResults.Ok(new PayableSumResult(amount));
+    }
 }
+
+/// <summary>按订单号汇总成交额的请求。</summary>
+/// <param name="OrderNos">订单号集合。</param>
+public sealed record PayableSumQuery(IReadOnlyList<string> OrderNos);
+
+/// <summary>按订单号汇总成交额的结果。</summary>
+/// <param name="Amount">成交额合计（两位小数）。</param>
+public sealed record PayableSumResult(decimal Amount);

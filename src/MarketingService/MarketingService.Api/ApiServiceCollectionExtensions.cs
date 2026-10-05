@@ -4,7 +4,9 @@ using MarketingService.Application.Features.Coupon;
 using MarketingService.Application.Features.Promotion;
 using MarketingService.Application.Features.Seckill;
 using MarketingService.Application.Services;
+using MarketingService.Domain.Services;
 using MarketingService.Infrastructure;
+using MarketingService.Infrastructure.Ports;
 using MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,6 +39,7 @@ public static class ApiServiceCollectionExtensions
         AddInventoryPort(services, configuration);
         AddProductPort(services, configuration);
         AddOrderPort(services, configuration);
+        AddSeckillGmvPort(services, configuration);
 
         // 库存回补器：手动中止与「到点自动结束」共用同一段回补代码。
         // 注册成 Scoped 而不是 Transient：它持有仓储与 HttpClient，
@@ -100,6 +103,27 @@ public static class ApiServiceCollectionExtensions
         // 超时给得比库存/商品端口宽：秒杀高峰期订单服务可能被别的流量压住，
         // 超时一收紧就是「明明抢中了却提示下单失败」，用户会直接投诉。
         services.AddHttpClient<IOrderPort, HttpOrderPort>(client =>
+        {
+            client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+    }
+
+    /// <summary>注册秒杀 GMV 端口：报表要向订单服务问成交额。</summary>
+    /// <param name="services">服务集合。</param>
+    /// <param name="configuration">应用配置。</param>
+    private static void AddSeckillGmvPort(IServiceCollection services, IConfiguration configuration)
+    {
+        var url = configuration["Services:OrderServiceBaseUrl"];
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException(
+                "缺少配置 Services:OrderServiceBaseUrl。秒杀订单金额在订单库，没有它 GMV 算不出来。");
+        }
+
+        // 超时和下单端口一致：都是打订单服务，但这个是只读汇总，
+        // 不参与下单链路，失败只影响报表里的一个数字。
+        services.AddHttpClient<ISeckillGmvPort, HttpSeckillGmvPort>(client =>
         {
             client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(15);

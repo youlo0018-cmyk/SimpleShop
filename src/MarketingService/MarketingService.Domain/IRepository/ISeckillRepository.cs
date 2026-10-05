@@ -1,4 +1,5 @@
 using MarketingService.Domain.Entities;
+using MarketingService.Domain.Services;
 
 namespace MarketingService.Domain.IRepository;
 
@@ -83,6 +84,25 @@ public interface ISeckillRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>商品列表。</returns>
     Task<List<SeckillItem>> ListItemsAsync(long sessionId, CancellationToken ct = default);
+
+    /// <summary>按场次聚合秒杀效果，供秒杀效果报表使用。</summary>
+    /// <param name="from">场次开始时间下界（含），DateTime.MinValue 表示不限。</param>
+    /// <param name="to">场次开始时间上界（不含），DateTime.MaxValue 表示不限。</param>
+    /// <param name="sessionId">只看某个场次，0 表示全部。</param>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="limit">最多返回多少个场次。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>逐场次的参与人数、抢购成功数、售罄率与订单号清单。</returns>
+    /// <remarks>
+    /// <b>「场次 PV」刻意不做</b>：前台只有一个 <c>POST /marketing/seckill/sessions/Public</c>，
+    /// <b>sessionId 在请求体里</b>，而 pv 日志只记录 path / queryString / method，
+    /// 请求体拿不到，所以无法把页面访问按场次归因。
+    /// 与其返回一个「所有场次都一样」的假数字，不如不提供。
+    /// </remarks>
+    Task<List<SeckillSessionAggregate>> AggregateSessionsAsync(
+        DateTime from, DateTime to, long sessionId, long merchantId, long platformId,
+        int limit, CancellationToken ct = default);
 
     /// <summary>按 Id 取场次商品。</summary>
     /// <param name="itemId">商品 Id。</param>

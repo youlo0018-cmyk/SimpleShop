@@ -190,7 +190,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
 | `dotnet test`（单元测试） | **321/321** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **451/451**，15 个脚本全绿 |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **460/460**，15 个脚本全绿 |
 | └ `api-regression.ps1` | 15/15 |
 | └ `auth-regression.ps1` | 17/17 |
 | └ `cart-regression.ps1` | 13/13 |
@@ -202,7 +202,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | └ `marketing-regression.ps1` | 65/65 |
 | └ `merchantplatform-regression.ps1` | 30/30 |
 | └ `product-regression.ps1` | 62/62 |
-| └ `report-regression.ps1` | 27/27 |
+| └ `report-regression.ps1` | 36/36 |
 | └ `order-regression.ps1` | 50/50 |
 | └ `payment-regression.ps1` | 22/22 |
 | └ `point-regression.ps1` | 29/29 |
@@ -277,6 +277,38 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-05：秒杀效果报表（四张报表收官）+ 开始后台前端
+
+`/gateway/reports/Seckill` 落地，至此 BUSINESS.md 17 的四张报表全部有实现
+（活动参与指标仍缺数据源，见下方两条记录）。
+
+**逐场次给：参与人数、抢购成功数、售罄率、成交额合计**
+
+- **参与人数按去重客户算**：同一个人点 10 次只算 1 个参与者。
+  按记录条数算的话，运营会误以为这场很抢手。
+- **参与人数与抢购成功数是两个数**：合成一个「参与数」的话，
+  运营会以为「100 人参与 = 100 次成功」，完全看不出秒杀是不是太难抢。
+- **售罄率显式转 decimal 再除**：`int / int` 是整数除法，
+  「抢了 3 件共 10 件」会算成 0 而不是 0.3。已加 `API-RPT-054` 盯着这个。
+- **GMV 走订单服务端口**，口径与工作台 GMV 完全一致（排除待支付 / 已取消 / 已退款），
+  否则运营把「秒杀 GMV」加到「工作台 GMV」里会对不上。
+  订单号一次性批量换算，不是每个场次调一次。
+
+**⚠️ 「场次 PV」刻意不做**：前台秒杀列表只有一个
+`POST /marketing/seckill/sessions/Public`，**sessionId 在请求体里**，
+而 pv 日志只记录 path / queryString / method，拿不到请求体，
+无法把页面访问按场次归因。与其返回「所有场次都一样」的假数字，不如不提供。
+要做需要先把 sessionId 放进 pv 日志的可检索字段。
+
+**顺带确认了一个反直觉但正确的行为**：库里 301 张秒杀订单**全部是「已取消」**。
+因为回归脚本只下单不支付，30 分钟后被支付超时关单任务自动关掉了。
+所以秒杀 GMV 报 0 是**正确**的——它如实反映了「没有一张秒杀订单被支付过」。
+
+**验证**：新增 9 条回归（`report-regression.ps1` 27 → 36 条）。
+真实跑通：112 场次 / 参与 304 / 成功 301 / GMV 0；
+逐场次售罄率自行复算一致，1 件抢完 1 件的场次为 0.05、抢完的为 1。
+构建 0 warning 0 error；单元 321/321；端到端 **460/460**（15 个脚本）。
 
 ### 2026-10-05：报表补完 —— 积分报表 + 营销效果报表（券部分）
 

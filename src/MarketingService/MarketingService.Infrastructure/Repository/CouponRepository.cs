@@ -394,7 +394,7 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
 
         // 领取按「拿到券」的时刻算
         var received = await _db.Select<UserCoupon>()
-            .Where(a => a.ReceiveAt != null && a.ReceiveAt >= from && a.ReceiveAt < to)
+            .Where(a => a.ReceiveAt >= from && a.ReceiveAt < to)
             .CountAsync(ct)
             .ConfigureAwait(false);
 

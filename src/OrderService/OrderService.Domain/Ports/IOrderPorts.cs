@@ -254,6 +254,18 @@ public interface IOrderStore
     Task<OrderAggregateRow> AggregateAsync(
         DateTime from, DateTime to, long merchantId, long platformId,
         CancellationToken ct = default);
+
+    /// <summary>按订单号集合汇总成交额，供秒杀效果报表使用。</summary>
+    /// <param name="orderNos">订单号集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>已支付（不含已取消 / 已退款）的实付合计。</returns>
+    /// <remarks>
+    /// <b>口径与工作台 GMV 完全一致</b>：排除待支付、已取消、已退款。
+    /// 两处口径一旦不同，运营把「秒杀 GMV」加到「工作台 GMV」里对不上，
+    /// 而数字本身看着都合理，只能靠逐单核对才发现。
+    /// </remarks>
+    Task<decimal> SumPayableByOrderNosAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default);
 }
 
 /// <summary>订单行的聚合信息，供列表页一次取齐。</summary>

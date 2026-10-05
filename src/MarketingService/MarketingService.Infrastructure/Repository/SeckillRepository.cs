@@ -4,6 +4,7 @@ using Collaboration.Domain.Infrastructure;
 using FreeSql;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
+using MarketingService.Domain.Services;
 using Npgsql;
 
 namespace MarketingService.Infrastructure.Repository;
@@ -63,6 +64,85 @@ public sealed class SeckillRepository : ISeckillRepository
             .OrderBy(a => a.EndTime).OrderBy(a => a.Id)
             .Limit(limit)
             .ToListAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<List<SeckillSessionAggregate>> AggregateSessionsAsync(
+        DateTime from, DateTime to, long sessionId, long merchantId, long platformId,
+        int limit, CancellationToken ct = default)
+    {
+        var sessions = await _db.Select<SeckillSession>()
+            .Where(a => a.StartTime >= from && a.StartTime < to)
+            .Where(a => sessionId <= 0 || a.Id == sessionId)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .OrderByDescending(a => a.StartTime)
+            .Limit(limit)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        if (sessions.Count == 0) return new List<SeckillSessionAggregate>();
+
+        var ids = sessions.Select(a => a.Id).ToArray();
+
+        // 一次性把商品与抢购记录捞出来在内存里分组，避免「每个场次两次查询」的 N+1。
+        // 场次多的时候（几十上百个）差别很明显。
+        var items = await _db.Select<SeckillItem>()
+            .Where(a => ids.Contains(a.SessionId))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var grabs = await _db.Select<SeckillGrab>()
+            .Where(a => ids.Contains(a.SessionId))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var result = new List<SeckillSessionAggregate>(sessions.Count);
+
+        foreach (var session in sessions)
+        {
+            var sessionItems = items.Where(a => a.SessionId == session.Id).ToList();
+
+            var sessionGrabs = grabs.Where(a => a.SessionId == session.Id).ToList();
+
+            var stockTotal = sessionItems.Sum(a => a.SeckillStock);
+            var stockSold = sessionItems.Sum(a => a.SoldCount);
+
+            // 参与人数按**去重客户**算：同一个人点 10 次也只算 1 个参与者，
+            // 否则「参与人数」会被一个反复点击的用户刷上去，
+            // 运营会误以为这场秒杀很抢手。
+            var participants = sessionGrabs
+                .Where(a => a.CustomerId > 0)
+                .Select(a => a.CustomerId)
+                .Distinct()
+                .Count();
+
+            // 订单号清单只取**成功**且订单号非空的：
+            // 下单失败的抢购记录（result_status = 5）没有订单号，
+            // 混进去会让向订单服务换 GMV 时查不到单。
+            var orderNos = sessionGrabs
+                .Where(a => a.ResultStatus == SeckillGrabResults.Success && !string.IsNullOrWhiteSpace(a.OrderNo))
+                .Select(a => a.OrderNo)
+                .Distinct()
+                .ToList();
+
+            // 显式转 decimal 再除：int / int 是整数除法，售罄率会恒为 0 或 1。
+            var sellOutRate = stockTotal > 0
+                ? Math.Round((decimal)stockSold / stockTotal, 4, MidpointRounding.AwayFromZero)
+                : 0m;
+
+            result.Add(new SeckillSessionAggregate(
+                session.Id,
+                session.SessionName,
+                participants,
+                orderNos.Count,
+                stockTotal,
+                stockSold,
+                sellOutRate,
+                orderNos));
+        }
+
+        return result;
+    }
 
     /// <inheritdoc />
     public async Task<long> InsertSessionAsync(SeckillSession session, CancellationToken ct = default)
