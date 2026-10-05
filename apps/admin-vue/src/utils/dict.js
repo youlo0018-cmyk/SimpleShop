@@ -161,6 +161,12 @@ const D = {
     true: { text: '已划出', color: 'warning' },
     false: { text: '未划出', color: 'neutral' },
   },
+
+  // 权限点启用状态。停用的权限点不参与网关校验（BUSINESS 5.3）。
+  permissionStatus: {
+    1: { text: '启用', color: 'success' },
+    2: { text: '停用', color: 'neutral' },
+  },
 };
 
 // 取状态对应的语义色档位。

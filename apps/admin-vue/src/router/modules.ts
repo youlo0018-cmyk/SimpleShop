@@ -1,6 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router';
 import { REPORTS } from './report-configs';
 import { LISTS } from './list-configs';
+import { TREES } from './tree-configs';
 
 // 菜单与路由的单一来源（BUSINESS.md 5.2 的 23 组功能模块）。
 // meta.title 同时用于侧边栏文字与浏览器标题，meta.icon 是 Element Plus 图标名。
@@ -48,6 +49,17 @@ function listRoute(path: string, name: string, title: string, perm: string, conf
   };
 }
 
+// 树形页同构：一个 TreeView + 各自的字段映射
+function treeRoute(path: string, name: string, title: string, perm: string, configKey: keyof typeof TREES) {
+  return {
+    path,
+    name,
+    component: () => import('@/views/TreeView.vue'),
+    props: { config: TREES[configKey] },
+    meta: { title, perm },
+  };
+}
+
 export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'dashboard',
@@ -78,7 +90,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '角色权限', icon: 'Lock', perm: 'role:read' },
     children: [
       listRoute('', 'role-list', '角色列表', 'role:read', 'roles'),
-      { path: 'permissions', name: 'role-permissions', ...ph('permissions', '权限点管理', 'permission:manage') },
+      treeRoute('permissions', 'role-permissions', '权限点管理', 'permission:manage', 'permissions'),
     ],
   },
 
@@ -109,7 +121,7 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'categories',
     meta: { title: '分类', icon: 'Menu', perm: 'category:read' },
-    children: [{ path: '', name: 'category-list', ...ph('', '分类管理', 'category:read') }],
+    children: [treeRoute('', 'category-list', '分类管理', 'category:read', 'categories')],
   },
   {
     path: 'brands',
