@@ -1,68 +1,61 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="head">
       <div>
-        <h2 class="page-header__title">经营概览</h2>
-        <p class="page-header__desc">{{ rangeName }} · 数据口径以支付时间为准</p>
+        <h2 class="head__title">经营概览</h2>
+        <p class="head__desc">{{ rangeName }} · 按支付时间统计</p>
       </div>
       <el-segmented v-model="range" :options="rangeOptions" />
     </div>
 
     <!-- 骨架屏而非整页遮罩（DESIGN_SPEC 5.2 / UI-TOKEN-009） -->
-    <div v-if="loading" class="grid">
-      <div v-for="i in 8" :key="i" class="card">
-        <div class="skeleton-row" style="width: 60%" />
-        <div class="skeleton-row" style="width: 40%; margin-top: var(--space-3)" />
+    <div v-if="loading" class="panel skel">
+      <div class="skel__hero">
+        <div class="skeleton-row" style="width: 96px" />
+        <div class="skeleton-row" style="width: 220px; height: 40px; margin-top: var(--space-4)" />
+      </div>
+      <div v-for="i in 7" :key="i" class="row">
+        <div class="skeleton-row" style="width: 72px" />
+        <div class="skeleton-row" style="width: 88px" />
       </div>
     </div>
 
     <template v-else>
-      <div class="grid">
-        <div class="card stat">
-          <div class="stat__label">成交额</div>
-          <div class="stat__value num">{{ formatAmount(report.gmv) }}</div>
+      <!-- 成交额单独做主视觉：一个页面只有一个焦点，8 个同权重卡片会互相抢、
+           结果谁也不突出，这正是模板感 / 古板感的来源。 -->
+      <section class="panel hero">
+        <div class="hero__label">成交额</div>
+        <div class="hero__value">{{ formatAmount(report.gmv) }}</div>
+        <div class="hero__meta">
+          <span>客单价 {{ formatAmount(report.avgOrderValue) }}</span>
+          <span class="hero__dot" />
+          <span>支付 {{ formatCount(report.paidOrderCount) }} / 共 {{ formatCount(report.orderCount) }} 单</span>
         </div>
-        <div class="card stat">
-          <div class="stat__label">客单价</div>
-          <div class="stat__value num">{{ formatAmount(report.avgOrderValue) }}</div>
-        </div>
-        <div class="card stat">
-          <div class="stat__label">订单数</div>
-          <div class="stat__value num">{{ formatCount(report.orderCount) }}</div>
-        </div>
-        <div class="card stat">
-          <div class="stat__label">支付订单数</div>
-          <div class="stat__value num">{{ formatCount(report.paidOrderCount) }}</div>
-        </div>
-        <div class="card stat">
-          <div class="stat__label">完成订单数</div>
-          <div class="stat__value num">{{ formatCount(report.completedOrderCount) }}</div>
-        </div>
-        <div class="card stat">
-          <div class="stat__label">退款金额</div>
-          <div class="stat__value num">{{ formatAmount(report.refundAmount) }}</div>
-        </div>
-        <div class="card stat">
-          <div class="stat__label">退款率</div>
-          <div class="stat__value num">{{ formatPercent(report.refundRate) }}</div>
-        </div>
-        <div class="card stat">
-          <div class="stat__label">库存预警</div>
-          <div class="stat__value num">
-            {{ formatCount(report.lowStockCount) }}
-            <span class="stat__unit">个 SKU</span>
-          </div>
-        </div>
-      </div>
+      </section>
 
-      <div class="card notes">
-        <h3 class="card__title">口径说明</h3>
-        <ul class="notes__list">
-          <li>成交额按<b>支付时间</b>统计，不含已取消与已退款的订单。</li>
-          <li>退款金额只算<b>审批通过</b>的退款单，按审批时间落在区间内。</li>
-          <li>库存预警数为「阈值大于 0 且可用量低于阈值」的 SKU 数量。</li>
-        </ul>
-      </div>
+      <section class="panel">
+        <div class="row">
+          <span class="row__label">完成订单数</span>
+          <span class="row__value">{{ formatCount(report.completedOrderCount) }}</span>
+        </div>
+        <div class="row">
+          <span class="row__label">退款金额</span>
+          <span class="row__value">{{ formatAmount(report.refundAmount) }}</span>
+        </div>
+        <div class="row">
+          <span class="row__label">退款率</span>
+          <span class="row__value">{{ formatPercent(report.refundRate) }}</span>
+        </div>
+        <div class="row">
+          <span class="row__label">库存预警</span>
+          <span class="row__value">{{ formatCount(report.lowStockCount) }} <span class="row__unit">个 SKU</span></span>
+        </div>
+      </section>
+
+      <!-- 口径说明降级成脚注：它是补充信息，抢页面的注意力反而是本末倒置 -->
+      <p class="foot">
+        成交额按支付时间统计，不含已取消与已退款；退款金额只算审批通过的退款单。
+      </p>
     </template>
   </div>
 </template>
@@ -120,53 +113,87 @@ onMounted(load);
 </script>
 
 <style scoped>
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-4);
+/* ---------- 页头：比之前更松，标题与副标题间距拉开 ---------- */
+.head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: var(--space-6);
 }
 
-.stat {
-  padding: var(--space-5);
-}
-
-.stat__label {
-  font-size: var(--text-foot);
-  color: var(--text-2);
-  margin-bottom: var(--space-2);
-}
-
-.stat__value {
-  font-size: var(--text-title-2);
-  line-height: var(--lh-title-2);
+.head__title {
+  margin: 0;
+  font-size: var(--text-display);
+  line-height: var(--lh-display);
+  /* 字阶里最大的一档配 600 字重就够，再重会变成海报而不是后台 */
   font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.head__desc {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sub);
+  color: var(--text-2);
+}
+
+/* ---------- 主视觉：成交额 ---------- */
+.hero {
+  padding: var(--space-7) var(--space-6);
+  margin-bottom: var(--space-4);
+}
+
+.hero__label {
+  font-size: var(--text-sub);
+  color: var(--text-2);
+}
+
+.hero__value {
+  /* 数字是这个页面唯一的主视觉，字号给到最大一档；
+     tabular-nums 让刷新时数字不会左右跳动 */
+  margin-top: var(--space-2);
+  font-size: var(--text-display);
+  line-height: var(--lh-display);
+  font-weight: 600;
+  letter-spacing: -1px;
   font-variant-numeric: tabular-nums;
 }
 
-.stat__unit {
+.hero__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--text-foot);
+  color: var(--text-2);
+}
+
+/* 分隔点用圆点而不是竖线，比 | 更轻 */
+.hero__dot {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--text-3);
+}
+
+.row__unit {
   font-size: var(--text-foot);
   font-weight: 400;
   color: var(--text-3);
 }
 
-.notes {
-  margin-top: var(--space-6);
+.foot {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-foot);
+  line-height: var(--lh-foot);
+  color: var(--text-3);
 }
 
-.notes__list {
-  margin: 0;
-  padding-left: var(--space-5);
-  font-size: var(--text-sub);
-  line-height: var(--lh-sub);
-  color: var(--text-2);
+/* ---------- 骨架屏 ---------- */
+.skel {
+  padding: var(--space-7) 0 0;
 }
 
-.notes__list li {
-  margin-bottom: var(--space-1);
-}
-
-.notes__list b {
-  color: var(--text-1);
-  font-weight: 500;
+.skel__hero {
+  padding: 0 var(--space-6) var(--space-6);
 }
 </style>

@@ -10,9 +10,11 @@
       </div>
 
       <nav class="nav" @mouseleave="hovered = ''">
+        <!-- 分组标题 -->
+        <template v-for="sec in sections" :key="sec.title">
+          <div v-show="!collapsed" class="nav__section">{{ sec.title }}</div>
+          <template v-for="item in sec.items" :key="item.path">
         <div
-          v-for="item in menus"
-          :key="item.path"
           class="nav__item"
           @mouseenter="hovered = item.path"
         >
@@ -46,6 +48,8 @@
             </RouterLink>
           </div>
         </div>
+          </template>
+        </template>
       </nav>
 
       <button class="collapse" type="button" @click="collapsed = !collapsed">
@@ -114,6 +118,28 @@ function isActive(group: any) {
 // 菜单顺序：工作台在前，其余按路由声明顺序（modules.ts 里已按业务分组排好）
 const menus = adminRoutes.filter((r: any) => !r.meta?.hidden);
 
+// 侧边栏按**业务域**分组，而不是 23 项平铺一条。
+// 平铺的副作用不只是长：它没有任何结构暗示，运营只能逐条扫，
+// 「我要去退款」得先在 23 行里找「退款」两个字。
+// 分组是**展示层**的组织方式，路由本身仍在 modules.ts 里，这里只做归类不新增条目，
+// 所以不会出现「菜单里有、路由里没有」的漂移。
+const SECTION_ORDER = [
+  { title: '总览', paths: ['dashboard'] },
+  { title: '组织与账号', paths: ['platforms', 'merchants', 'users', 'customers', 'roles'] },
+  { title: '商品与库存', paths: ['categories', 'brands', 'products', 'inventory', 'search-index'] },
+  { title: '交易', paths: ['orders', 'payments', 'refunds'] },
+  { title: '营销与权益', paths: ['promotions', 'coupons', 'seckill', 'points', 'evaluates'] },
+  { title: '内容与数据', paths: ['design', 'reports', 'logs'] },
+  { title: '系统', paths: ['files'] },
+];
+
+const sections = SECTION_ORDER.map((s) => ({
+  title: s.title,
+  items: menus.filter((m: any) => s.paths.indexOf(m.path) >= 0),
+}))
+  // 丢掉空分组：把 path 改名后这里会自动少一组，不会留下一个光秃秃的标题
+  .filter((s: any) => s.items.length > 0);
+
 const currentTitle = computed(() => (route.meta?.title as string) || '工作台');
 
 function onLogout() {
@@ -177,7 +203,16 @@ function onLogout() {
 .nav {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-2) var(--space-2) 0;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+
+/* 分组标题：字很小、颜色很淡，只提供「结构暗示」不抢注意力。
+   用 12px + 三级文字色而不是加粗放大——加粗会让 7 个小标题比菜单项还重。 */
+.nav__section {
+  padding: var(--space-4) var(--space-3) var(--space-1);
+  font-size: var(--text-note);
+  line-height: var(--lh-note);
+  color: var(--text-3);
 }
 
 .nav__item {
