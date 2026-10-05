@@ -119,6 +119,17 @@ const FLOWS = [
       { desc: '取消以免真的退款', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-refund-4-cancelled' },
     ],
   },
+  {
+    // 隐藏评价必须填原因（要记入后台审计），且最后取消。
+    name: '评价管理 -> 点「隐藏」-> 确认框与必填原因',
+    start: '#/evaluates',
+    steps: [
+      { desc: '进入评价管理', goto: '#/evaluates', shot: 'flow-eval-1-list' },
+      { desc: '点「隐藏」弹出确认框', clickText: '隐藏', clickScope: '.el-table', shot: 'flow-eval-2-dialog' },
+      { desc: '确认框里有「隐藏原因」输入框', expect: '.el-dialog textarea', shot: 'flow-eval-3-reason' },
+      { desc: '取消以免真的隐藏', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-eval-4-cancelled' },
+    ],
+  },
 ];
 
 const slug = (s) =>

@@ -267,6 +267,67 @@ export const LISTS = {
       },
       { field: 'createdAt', label: '评价时间', width: 150, format: 'time' },
     ],
+    actions: [
+      {
+        label: '回复',
+        endpoint: '/gateway/evaluates/admin/Reply',
+        okText: '已回复',
+        build: (r: any, text: string) => ({
+          evaluateId: r.evaluateId,
+          appendId: 0,
+          replyContent: text,
+          replyType: 1,
+        }),
+        // 同一主体（商户 / 平台）各只能回 1 次，所以最多 2 条回复。
+        // 满 2 条就把按钮藏掉 —— 给一个必然失败的按钮没有意义。
+        showWhen: (r: any) => (r.replies || []).length < 2,
+        confirm: {
+          title: '回复评价',
+          message: '回复对所有能看到这条评价的客户可见。',
+          subject: (r: any) => r.content,
+          okText: '回复',
+          withReason: true,
+          reasonLabel: '回复内容',
+          reasonPlaceholder: '2-500 字。同一主体（商户 / 平台）各只能回 1 次',
+        },
+      },
+      {
+        label: '隐藏',
+        endpoint: '/gateway/evaluates/admin/Hide',
+        danger: true,
+        okText: '已隐藏',
+        build: (r: any, text: string) => ({
+          evaluateId: r.evaluateId,
+          isHidden: true,
+          hiddenReason: text,
+        }),
+        showWhen: (r: any) => r.isHidden !== true,
+        confirm: {
+          title: '隐藏评价',
+          message: '隐藏只是不展示，数据仍在；客户能在「我的评价」里看到「已被隐藏」。',
+          subject: (r: any) => r.content,
+          okText: '隐藏',
+          danger: true,
+          withReason: true,
+          reasonLabel: '隐藏原因',
+          reasonPlaceholder: '2-200 字。会记入后台审计，出了问题要能追溯',
+        },
+      },
+      {
+        label: '恢复',
+        endpoint: '/gateway/evaluates/admin/Hide',
+        okText: '已恢复显示',
+        build: (r: any) => ({ evaluateId: r.evaluateId, isHidden: false, hiddenReason: '' }),
+        showWhen: (r: any) => r.isHidden === true,
+        confirm: {
+          title: '恢复显示',
+          message: '恢复后这条评价会重新参与商品均分计算。',
+          subject: (r: any) => r.content,
+          okText: '恢复',
+        },
+      },
+    ],
+    actionsWidth: 170,
   },
 
   operationLogs: {
