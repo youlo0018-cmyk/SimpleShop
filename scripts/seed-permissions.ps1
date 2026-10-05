@@ -82,8 +82,13 @@ $leaves = [ordered]@{
     '2117' = @(@('seckill:read', '秒杀场次列表', '/gateway/marketing/seckill-sessions/List'), @('seckill:create', '新建场次', '/gateway/marketing/seckill-sessions/Create'),
              @('seckill:update', '编辑场次', '/gateway/marketing/seckill-sessions/Update'), @('seckill:end', '结束中止场次', '/gateway/marketing/seckill-sessions/End'))
     '2118' = @(@('point:read', '积分报表', '/gateway/points/Report'), @('point:rule-update', '积分规则维护', '/gateway/points/Rules'))
-    '2119' = @(@('evaluate:read', '评价列表', '/gateway/evaluates/List'), @('evaluate:manage', '评价管理', '/gateway/evaluates/Manage'),
-             @('evaluate:reply', '评价回复', '/gateway/evaluates/Reply'))
+    # ⚠️ 后台评价端点在 EvaluateAdminController 上，路由是 **evaluates/admin/**
+    # （真实路径 /gateway/evaluates/admin/Reply 等）。
+    # 这里原本绑的是 /gateway/evaluates/Reply —— 少了一层 admin，
+    # 结果网关匹配不上、requiredCode 为 null，而未映射的路径是**放行**的，
+    # 等于三个后台评价接口（列表 / 隐藏 / 回复）**完全没有鉴权**。
+    '2119' = @(@('evaluate:read', '评价列表', '/gateway/evaluates/admin/List'), @('evaluate:manage', '隐藏评价', '/gateway/evaluates/admin/Hide'),
+             @('evaluate:reply', '评价回复', '/gateway/evaluates/admin/Reply'))
     '2120' = @(@('design:read', '装修查看', '/gateway/platform-configs/Design'), @('design:update', '装修维护', '/gateway/platform-configs/SaveDraft'),
              @('design:merchant', '商户装修', '/gateway/merchant-configs/*'))
     '2121' = @(@('dashboard:view', '工作台看板', '/gateway/reports/Report'), @('report:view', '经营报表', '/gateway/reports/*'),

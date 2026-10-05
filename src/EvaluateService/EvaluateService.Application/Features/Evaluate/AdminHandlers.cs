@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using EvaluateService.Domain.Entities;
 using EvaluateService.Domain.Exceptions;
 using EvaluateService.Domain.IRepository;
@@ -108,6 +109,17 @@ public sealed class ReplyEvaluateHandler : IRequestHandler<ReplyEvaluateCommand,
     /// <returns>回复 Id。</returns>
     public async Task<ApiResponse<long>> Handle(ReplyEvaluateCommand request, CancellationToken ct)
     {
+        // 🔴 回复人从**令牌租户上下文**取，不从请求体取。
+        // 之前是 request.OperatorId / request.OperatorName —— 调用方可以自称
+        // 「平台官方」或「商家」，而回复人是评价区的归属凭据：
+        // 伪造它就能把商户回复伪装成平台回复（或反过来）。
+        var ctx = TenantContextHolder.Current;
+
+        if (ctx.UserId <= 0)
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.Unauthorized, "登录状态已失效，请重新登录");
+        }
+
         var evaluate = await _repo.GetByIdAsync(request.EvaluateId, ct).ConfigureAwait(false);
         if (evaluate is null)
         {
@@ -126,8 +138,8 @@ public sealed class ReplyEvaluateHandler : IRequestHandler<ReplyEvaluateCommand,
             AppendId = request.AppendId,
             Content = request.ReplyContent.Trim(),
             ReplyType = request.ReplyType,
-            ReplyById = request.OperatorId,
-            ReplyByName = request.OperatorName
+            ReplyById = ctx.UserId,
+            ReplyByName = ctx.UserName
         };
 
         try

@@ -76,6 +76,19 @@ function MpPost([string]$Path, $Body) {
         -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
 }
 
+function MpAdminPost([string]$Path, $Body) {
+    # 商户审核的审核人现在由服务端从令牌租户上下文取（网关注入的 X-Claim-*），
+    # 直连 $Merchant 就没有租户上下文，会被「登录状态已失效」挡掉。
+    # 后台真实路径就是走网关，所以这里也走网关。
+    #
+    # ⚠️ 刻意**不**像 PayAdminPost 那样包 try/catch：
+    # 本脚本里有几条用例靠 `try { 调用; return $false } catch { 断言 400 }` 来验证校验拦截。
+    # 助手一旦把 400 吃成 success=false，这些用例的 catch 永远进不去，就变成「校验没拦住」。
+    $url = "$Gateway/gateway$Path"
+    return Invoke-RestMethod $url -Method Post -Headers $script:adminHeaders `
+        -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
+}
+
 function GwPost([string]$Path, $Body) {
     return Invoke-RestMethod "$Gateway$Path" -Method Post -Headers $script:adminHeaders `
         -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
@@ -242,7 +255,7 @@ Write-Host "`n=== MP 商户审核（连带下架是这批最关键的一条）==
 
 Invoke-Case 'API-MP-020' '🔴 审核结论非法被拒（只能已通过 / 已拒绝）' {
     try {
-        MpPost '/merchants/Audit' @{
+        MpAdminPost '/merchants/Audit' @{
             merchantId = $script:merchantId; auditStatus = 10
             auditorId = 1; auditorName = '审核员'
         } | Out-Null
@@ -252,7 +265,7 @@ Invoke-Case 'API-MP-020' '🔴 审核结论非法被拒（只能已通过 / 已�
 
 Invoke-Case 'API-MP-021' '🔴 拒绝时不填原因被拒（商户要知道为什么被拒）' {
     try {
-        MpPost '/merchants/Audit' @{
+        MpAdminPost '/merchants/Audit' @{
             merchantId = $script:merchantId; auditStatus = 90; auditRemark = ''
             auditorId = 1; auditorName = '审核员'
         } | Out-Null
@@ -261,7 +274,7 @@ Invoke-Case 'API-MP-021' '🔴 拒绝时不填原因被拒（商户要知道为�
 }
 
 Invoke-Case 'API-MP-022' '🔴 P0 审核拒绝：**连带下架该商户全部已上架商品**' {
-    $r = MpPost '/merchants/Audit' @{
+    $r = MpAdminPost '/merchants/Audit' @{
         merchantId = $script:merchantId; auditStatus = 90
         auditRemark = '资质材料不齐全，请补充后重新提交'
         auditorId = 1; auditorName = '审核员'
@@ -279,12 +292,15 @@ Invoke-Case 'API-MP-022' '🔴 P0 审核拒绝：**连带下架该商户全部�
 Invoke-Case 'API-MP-023' '审核拒绝后商户列表能看到审核意见与审核人' {
     $l = MpPost '/merchants/List' @{ page = 1; pageSize = 20 }
     $row = @($l.data.items | Where-Object { $_.id -eq "$($script:merchantId)" })[0]
+    # 审核人取自**令牌租户上下文**，不是请求体里传的 auditorName。
+    # 原用例断言它等于 '审核员'（请求体伪造值）—— 那正是被修掉的审计缺陷。
+    Write-Host ("        实际审核人 = {0}" -f $row.auditorName) -ForegroundColor DarkGray
     return $row.auditStatusName -eq '已拒绝' -and $row.auditRemark -match '资质材料' `
-        -and $row.auditorName -eq '审核员'
+        -and $row.auditorName -eq $AdminUser -and $row.auditorName -ne '审核员'
 }
 
 Invoke-Case 'API-MP-024' '🔴 重复审核被拒（不能覆盖掉上一次的审核人与时间）' {
-    $r = MpPost '/merchants/Audit' @{
+    $r = MpAdminPost '/merchants/Audit' @{
         merchantId = $script:merchantId; auditStatus = 20
         auditorId = 2; auditorName = '另一个审核员'
     }
@@ -305,7 +321,7 @@ Invoke-Case 'API-MP-026' '🔴 已通过 / 待审核的商户重复提交被拒'
 }
 
 Invoke-Case 'API-MP-027' '审核通过：状态变已通过，且**不再连带下架**' {
-    $r = MpPost '/merchants/Audit' @{
+    $r = MpAdminPost '/merchants/Audit' @{
         merchantId = $script:merchantId; auditStatus = 20
         auditRemark = '资料齐全，通过'
         auditorId = 1; auditorName = '审核员'

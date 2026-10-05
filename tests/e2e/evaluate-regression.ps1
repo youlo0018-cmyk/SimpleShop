@@ -380,7 +380,7 @@ Invoke-Case 'API-EVL-053' '🔴 不能追别人的评价' {
 Write-Host "`n=== EVL 后台回复（规格 14.3）===" -ForegroundColor Cyan
 
 Invoke-Case 'API-EVL-060' '商户回复成功' {
-    $r = Invoke-RestMethod "$Evaluate/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
+    $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
         -Body (@{ evaluateId = $script:evaluateId; appendId = 0; replyContent = '感谢您的反馈，我们会改进'
                   replyType = 1; operatorId = 1; operatorName = '测试商户' } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
@@ -388,7 +388,7 @@ Invoke-Case 'API-EVL-060' '商户回复成功' {
 }
 
 Invoke-Case 'API-EVL-061' '🔴 同一主体只能回复 1 次' {
-    $r = Invoke-RestMethod "$Evaluate/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
+    $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
         -Body (@{ evaluateId = $script:evaluateId; appendId = 0; replyContent = '再回一次'
                   replyType = 1; operatorId = 1; operatorName = '测试商户' } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
@@ -396,7 +396,7 @@ Invoke-Case 'API-EVL-061' '🔴 同一主体只能回复 1 次' {
 }
 
 Invoke-Case 'API-EVL-062' '平台可以各回 1 次（与商户互不影响）' {
-    $r = Invoke-RestMethod "$Evaluate/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
+    $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
         -Body (@{ evaluateId = $script:evaluateId; appendId = 0; replyContent = '平台介入处理'
                   replyType = 2; operatorId = 2; operatorName = '平台运营' } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
@@ -405,7 +405,7 @@ Invoke-Case 'API-EVL-062' '平台可以各回 1 次（与商户互不影响）' 
 
 Invoke-Case 'API-EVL-063' '回复内容太短被拒（少于 2 个字符）' {
     try {
-        Invoke-RestMethod "$Evaluate/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
+        Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
             -Body (@{ evaluateId = $script:anonEvaluateId; appendId = 0; replyContent = '好'
                       replyType = 1; operatorId = 1; operatorName = '测试商户' } | ConvertTo-Json) `
             -ContentType 'application/json' -TimeoutSec 30 | Out-Null

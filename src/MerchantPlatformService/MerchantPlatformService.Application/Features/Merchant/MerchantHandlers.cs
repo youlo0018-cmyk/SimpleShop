@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using Collaboration.Domain.Infrastructure;
 using MediatR;
 using MerchantPlatformService.Application.Services;
@@ -150,13 +151,24 @@ public sealed class AuditMerchantHandler
 
         // 条件更新带上「当前审核状态」：两个管理员同时点审核时只有一个能改成功，
         // 另一个拿到 0 就该直接返回，而不是把审核人 / 审核时间覆盖掉
+        // 🔴 审核人从**令牌租户上下文**取，不从请求体取 ——
+        // 之前是 request.AuditorId / request.AuditorName，调用方可以自称任意审核人，
+        // 而「审核人 + 审核意见」是商户准入的审计凭据。
+        var ctx = TenantContextHolder.Current;
+
+        if (ctx.UserId <= 0)
+        {
+            return ApiResults.Fail<AuditMerchantResult>(
+                BaseApiResponseCode.Unauthorized, "登录状态已失效，请重新登录");
+        }
+
         var affected = await _merchants.TryUpdateAuditAsync(
             request.MerchantId,
             MerchantAuditStatuses.Pending,
             request.AuditStatus,
             remark,
-            request.AuditorId,
-            request.AuditorName,
+            ctx.UserId,
+            ctx.UserName,
             ct);
 
         if (affected == 0)
