@@ -63,7 +63,7 @@ $leaves = [ordered]@{
     '2104' = @(@('platform:read', '平台列表', '/gateway/platforms/List'), @('platform:create', '新建平台', '/gateway/platforms/Create'),
              @('platform:update', '编辑与删除平台', '/gateway/platforms/Update,/gateway/platforms/Delete'))
     '2105' = @(@('merchant:read', '商户列表', '/gateway/merchants/List'), @('merchant:create', '新建商户', '/gateway/merchants/Create'),
-             @('merchant:update', '编辑 / 删除 / 重新提交商户', '/gateway/merchants/Update,/gateway/merchants/Delete,/gateway/merchants/Resubmit'), @('merchant:audit', '商户审核', '/gateway/merchants/Audit'))
+             @('merchant:update', '编辑 / 删除 / 重新提交 / 启停商户', '/gateway/merchants/Update,/gateway/merchants/Delete,/gateway/merchants/Resubmit,/gateway/merchants/ChangeStatus'), @('merchant:audit', '商户审核', '/gateway/merchants/Audit'))
     # 地区在 MerchantPlatformService 的独立控制器上，路由是 regions/，
     # **不存在** platform-configs 这个前缀。
     '2106' = @(@('region:read', '地区地址查看', '/gateway/regions/Get'), @('region:update', '地区地址维护', '/gateway/regions/Save'))

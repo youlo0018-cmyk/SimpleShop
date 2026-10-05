@@ -6,6 +6,45 @@
 // 所以抽成常量——写两份的话，改了拒绝原因必填的提示就会只改到一半。
 // 两个后端的审核状态码**不一样**：商户 20 通过 / 90 拒绝（MerchantAuditStatuses），
 // 商品 20 通过 / 30 驳回（AuditStatuses）。写成同一套会直接调错参数。
+//
+// 商户审核**通过时后端会自动启用**（新建商户固定是「停用 + 待审核」），
+// 所以这里不再额外提示「记得去启用一次」。
+const MERCHANT_STATUS_ACTIONS = [
+  {
+    label: '停用',
+    endpoint: '/gateway/merchants/ChangeStatus',
+    okText: '商户已停用',
+    permission: 'merchant:update',
+    danger: true,
+    build: (r: any) => ({ merchantId: r.id, status: 2 }),
+    // 只有审核通过且当前启用的商户才显示「停用」。已停用的再点一次没有意义，
+    // 而待审核的商户停用它本来就生效（新建即停用）
+    showWhen: (r: any) => Number(r.status) === 1 && Number(r.auditStatus) === 20,
+    confirm: {
+      title: '停用商户',
+      message: '停用后该商户不在小程序中展示，也不能新增商品与接单。历史订单与退款不受影响。',
+      subject: (r: any) => `${r.merchantName}（${r.merchantNo}）`,
+      okText: '停用',
+      danger: true,
+    },
+  },
+  {
+    label: '启用',
+    endpoint: '/gateway/merchants/ChangeStatus',
+    okText: '商户已启用',
+    permission: 'merchant:update',
+    danger: false,
+    build: (r: any) => ({ merchantId: r.id, status: 1 }),
+    showWhen: (r: any) => Number(r.status) === 2 && Number(r.auditStatus) === 20,
+    confirm: {
+      title: '启用商户',
+      message: '启用后该商户会重新出现在小程序里，用户可以浏览并下单。',
+      subject: (r: any) => `${r.merchantName}（${r.merchantNo}）`,
+      okText: '启用',
+    },
+  },
+];
+
 const MERCHANT_AUDIT_ACTIONS = [
   {
     label: '通过',
@@ -46,39 +85,53 @@ const MERCHANT_AUDIT_ACTIONS = [
   },
 ];
 
+// 商品审核：**一个**「审核」动作 + 一个对话框里选结论。
+// 之前是两个按钮（通过 / 驳回），问题有两个：
+// ① 驳回要填原因写在按钮旁边的提示里，审核员点「驳回」才知道要填；
+// ② 两个按钮挨在一起，「通过」点错了要靠撤销按钮救回来。
+// 合并成一个对话框后，结论是**先选后提交**，驳回原因只在选中「驳回」时出现。
 const PRODUCT_AUDIT_ACTIONS = [
   {
-    label: '通过',
+    label: '审核',
     endpoint: '/gateway/products/Audit',
-    okText: '已通过审核',
+    okText: '已提交审核结果',
     permission: 'product:audit',
-    danger: false,
-    build: (r: any) => ({ productId: r.id, auditStatus: 20, reason: '' }),
-    showWhen: (r: any) => r.auditStatus === 10,
+    build: (r: any, payload: any) => ({
+      productId: r.id,
+      auditStatus: payload?.result === 'reject' ? 30 : 20,
+      reason: payload?.reason?.trim() || '',
+    }),
+    showWhen: (r: any) => Number(r.auditStatus) === 10,
     confirm: {
-      title: '通过商品审核',
-      message: '通过后商品可以上架销售。',
+      title: '商品审核',
+      message: '通过后商品可以上架销售；驳回后商户需要修改资料并重新提交。',
       subject: (r: any) => r.spuName,
-      okText: '通过',
-    },
-  },
-  {
-    label: '驳回',
-    endpoint: '/gateway/products/Audit',
-    danger: true,
-    okText: '已驳回',
-    permission: 'product:audit',
-    build: (r: any, reason: string) => ({ productId: r.id, auditStatus: 30, reason }),
-    showWhen: (r: any) => r.auditStatus === 10,
-    confirm: {
-      title: '驳回商品审核',
-      message: '驳回后商户需要修改资料并重新提交审核。',
-      subject: (r: any) => r.spuName,
-      okText: '驳回',
-      danger: true,
-      withReason: true,
-      reasonLabel: '驳回原因',
-      reasonPlaceholder: '写清楚哪里不符合要求，商户才知道要改什么',
+      okText: '提交审核结果',
+      width: 520,
+      fields: [
+        {
+          name: 'result',
+          label: '审核结论',
+          type: 'radio',
+          default: 'pass',
+          options: [
+            { value: 'pass', label: '通过' },
+            { value: 'reject', label: '驳回' },
+          ],
+        },
+        {
+          name: 'reason',
+          label: '驳回原因',
+          type: 'textarea',
+          rows: 3,
+          maxlength: 200,
+          placeholder: '写清楚哪里不符合要求，商户才知道要改什么',
+          // 只在驳回时出现并必填：通过时还要求填原因纯属刁难
+          visibleWhen: (values: any) => values.result === 'reject',
+          requiredWhen: (values: any) => values.result === 'reject',
+          help: '驳回时必填，会展示给商户',
+        },
+      ],
     },
   },
 ];
@@ -742,6 +795,7 @@ export const LISTS = {
     ],
     actions: [
       ...MERCHANT_AUDIT_ACTIONS,
+      ...MERCHANT_STATUS_ACTIONS,
       {
         label: '删除',
         endpoint: '/gateway/merchants/Delete',
@@ -759,7 +813,7 @@ export const LISTS = {
         },
       },
     ],
-    actionsWidth: 210,
+    actionsWidth: 260,
   },
 
   // 商户审核页 = 同一张表，默认落在「待审核」。

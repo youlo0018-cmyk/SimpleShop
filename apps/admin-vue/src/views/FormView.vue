@@ -179,8 +179,12 @@ function fill(values: Record<string, any>) {
 }
 
 async function loadOptions() {
+  // 🔴 遍历 **config.fields** 而不是 visibleFields。
+  // 「新建账号」默认 tenantType=1，只有「所属平台」可见，「所属商户」被 showWhen 藏着；
+  // 只加载可见字段的话，商户下拉永远是空的 —— 用户切到「商户账号」才发现选不了商户，
+  // 而控制台一条错都没有。数据源与字段可见性是两件事，不该绑在一起。
   const sources = new Set<string>();
-  for (const f of visibleFields.value) if (f.options) sources.add(f.options);
+  for (const f of config.value.fields || []) if (f.options) sources.add(f.options);
 
   for (const key of sources) {
     if (optionCache[key]) continue;

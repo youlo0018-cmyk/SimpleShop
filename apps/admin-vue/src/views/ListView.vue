@@ -155,7 +155,7 @@
     <el-dialog
       v-model="confirm.open"
       :title="confirm.title"
-      :width="460"
+      :width="confirm.width || 460"
       :close-on-click-modal="false"
       align-center
     >
@@ -166,12 +166,32 @@
 
       <el-form v-if="confirm.fields.length" label-position="top" class="confirm__form">
         <el-form-item
-          v-for="field in confirm.fields"
+          v-for="field in visibleFields"
           :key="field.name"
           :label="field.label"
+          :required="isRequired(field, confirm.values)"
           :error="confirm.errors[field.name]"
         >
+          <!--
+            结论类字段用分段控件而不是下拉：
+            只有两个互斥选项时，下拉要多点一次才能看到「驳回」，
+            而审核员最容易漏掉的就是「驳回要填原因」这条。
+          -->
+          <el-radio-group
+            v-if="field.type === 'radio'"
+            v-model="confirm.values[field.name]"
+            class="confirm__choice"
+          >
+            <el-radio-button
+              v-for="opt in field.options"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </el-radio-button>
+          </el-radio-group>
           <el-input
+            v-else
             v-model="confirm.values[field.name]"
             :type="field.type === 'number' ? 'number' : field.type || 'text'"
             :rows="field.rows || 3"
@@ -280,6 +300,7 @@ const confirm = ref({
   reasonLabel: '原因',
   reasonPlaceholder: '',
   reason: '',
+  width: 460,
   fields: [] as any[],
   values: {} as Record<string, any>,
   errors: {} as Record<string, string>,
@@ -292,6 +313,19 @@ const inspect = ref({
 });
 
 const tabs = computed(() => config.value.tabs || []);
+
+// 只渲染 visibleWhen 成立的字段。驳回原因只在「驳回」时出现，
+// 而一直显示一个空输入框会让人以为通过也要填原因。
+const visibleFields = computed(() =>
+  confirm.value.fields.filter((field: any) =>
+    typeof field.visibleWhen !== 'function' || field.visibleWhen(confirm.value.values)),
+);
+
+// 必填可以是动态的：驳回原因只在「驳回」时必填，通过时选填
+function isRequired(field: any, values: Record<string, any>) {
+  if (typeof field.requiredWhen === 'function') return field.requiredWhen(values);
+  return !!field.required;
+}
 
 async function loadFilters() {
   for (const filter of config.value.filters || []) {
@@ -436,6 +470,7 @@ async function runAction(action: any, row: any) {
       reasonLabel: action.confirm.reasonLabel || '原因',
       reasonPlaceholder: action.confirm.reasonPlaceholder || '请填写原因',
       reason: '',
+      width: action.confirm.width || 460,
       fields,
       values,
       errors: {},
@@ -464,10 +499,10 @@ async function submitConfirm() {
   // 提交时才做一次全量校验（DESIGN_SPEC 5.6）。失焦不校验，
   // 避免用户还没输入完就看到红字；失败后也不发请求。
   c.errors = {};
-  for (const field of c.fields) {
+  for (const field of visibleFields.value) {
     const value = c.values[field.name];
     const text = value === null || value === undefined ? '' : String(value).trim();
-    if (field.required && !text) {
+    if (isRequired(field, c.values) && !text) {
       c.errors[field.name] = `请填写${field.label}`;
       continue;
     }
@@ -487,7 +522,9 @@ async function submitConfirm() {
   c.saving = true;
   try {
     const payload = c.fields.length
-      ? Object.fromEntries(c.fields.map((field: any) => {
+      // 只提交**可见**字段：隐藏的驳回原因在「通过」时是空串，
+      // 把它一起发过去会让后端按「填了驳回原因」处理
+      ? Object.fromEntries(visibleFields.value.map((field: any) => {
           const raw = c.values[field.name];
           return [field.name, field.type === 'number' ? Number(raw) : raw];
         }))
@@ -603,6 +640,21 @@ onMounted(async () => {
 
 .confirm__form {
   margin-top: var(--space-4);
+}
+
+/* 结论分段控件占满整行：两个互斥选项并排等宽，
+   审核员一眼看到「通过 / 驳回」两个方向，不会误以为只有一个按钮 */
+.confirm__choice {
+  display: flex;
+  width: 100%;
+}
+
+.confirm__choice :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.confirm__choice :deep(.el-radio-button__inner) {
+  width: 100%;
 }
 
 .confirm__help {
