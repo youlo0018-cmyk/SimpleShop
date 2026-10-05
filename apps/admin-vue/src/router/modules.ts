@@ -284,10 +284,21 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'design',
     meta: { title: '装修', icon: 'Brush', perm: 'design:read' },
     children: [
-      { path: 'platform', name: 'design-platform', ...ph('platform', '平台装修', 'design:read') },
+      {
+        path: 'platform',
+        name: 'design-platform',
+        component: () => import('@/views/DesignBuilderView.vue'),
+        meta: { title: '平台装修', perm: 'design:read' },
+      },
       // 商户店铺装修用**独立**的 design:merchant，不能跟着平台装修走 design:read：
       // 用户明确要求商户只能改自己的店铺装修，改不到平台装修。
-      { path: 'merchant/:id', name: 'design-merchant', ...ph('merchant/:id', '商户店铺装修', 'design:merchant') },
+      {
+        path: 'merchant/:id',
+        name: 'design-merchant',
+        component: () => import('@/views/DesignBuilderView.vue'),
+        props: (route: any) => ({ merchantId: route.params.id }),
+        meta: { title: '商户店铺装修', perm: 'design:merchant' },
+      },
     ],
   },
   {
