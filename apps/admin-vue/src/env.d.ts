@@ -41,6 +41,7 @@ declare module '@/utils/format' {
   export function maskPhone(value: unknown): string;
   export function truncate(value: unknown, max?: number): string;
   export function formatCount(value: unknown): string;
+  export function formatBytes(value: unknown): string;
   export function copyText(value: unknown): Promise<boolean>;
 }
 

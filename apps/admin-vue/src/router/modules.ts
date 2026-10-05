@@ -2,6 +2,7 @@ import type { RouteRecordRaw } from 'vue-router';
 import { REPORTS } from './report-configs';
 import { LISTS } from './list-configs';
 import { TREES } from './tree-configs';
+import { CONFIGS } from './config-configs';
 
 // 菜单与路由的单一来源（BUSINESS.md 5.2 的 23 组功能模块）。
 // meta.title 同时用于侧边栏文字与浏览器标题，meta.icon 是 Element Plus 图标名。
@@ -60,6 +61,17 @@ function treeRoute(path: string, name: string, title: string, perm: string, conf
   };
 }
 
+// 配置页同构：读一份配置 → 改 → 存回去（地区地址 / 优惠优先级 / 积分规则）。
+function configRoute(path: string, name: string, title: string, perm: string, configKey: keyof typeof CONFIGS) {
+  return {
+    path,
+    name,
+    component: () => import('@/views/ConfigView.vue'),
+    props: { config: CONFIGS[configKey] },
+    meta: { title, perm },
+  };
+}
+
 export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'dashboard',
@@ -103,7 +115,7 @@ export const adminRoutes: RouteRecordRaw[] = [
       { path: 'create', name: 'platform-create', ...ph('create', '新建平台', 'platform:create') },
       { path: 'edit/:id', name: 'platform-edit', ...ph('edit/:id', '编辑平台', 'platform:update') },
       { path: 'app-config/:id', name: 'platform-app-config', ...ph('app-config/:id', '小程序配置', 'platform:update') },
-      { path: 'regions', name: 'platform-regions', ...ph('regions', '地区地址配置', 'region:manage') },
+      configRoute('regions', 'platform-regions', '地区地址配置', 'region:update', 'regions'),
     ],
   },
   {
@@ -202,7 +214,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     children: [
       listRoute('templates', 'coupon-template-list', '券模板', 'coupon-template:read', 'couponTemplates'),
       listRoute('activities', 'coupon-activity-list', '券活动', 'coupon-activity:read', 'couponActivities'),
-      { path: 'config', name: 'coupon-config', ...ph('config', '优惠优先级配置', 'marketing-config:update') },
+      configRoute('config', 'coupon-config', '优惠优先级配置', 'marketing-config:update', 'promotionPriority'),
     ],
   },
   {
@@ -220,7 +232,10 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'points',
     meta: { title: '积分', icon: 'Medal', perm: 'point:read' },
-    children: [listRoute('', 'point-list', '积分流水', 'point:read', 'pointRecords')],
+    children: [
+      listRoute('', 'point-list', '积分流水', 'point:read', 'pointRecords'),
+      configRoute('rules', 'point-rules', '积分规则', 'point:rule-update', 'pointRules'),
+    ],
   },
   {
     path: 'evaluates',

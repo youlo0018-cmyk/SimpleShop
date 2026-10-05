@@ -104,6 +104,20 @@ export function formatCount(value) {
   return String(toNumber(value));
 }
 
+// 字节数转可读文本（1.2 KB / 3.4 MB），用于地区地址页提示离 2 MB 上限还有多远。
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB'];
+
+export function formatBytes(value) {
+  if (isBlank(value)) return DASH;
+  let n = toNumber(value);
+  let unit = 0;
+  while (n >= 1024 && unit < BYTE_UNITS.length - 1) {
+    n /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${n} B` : `${n.toFixed(1)} ${BYTE_UNITS[unit]}`;
+}
+
 // 复制到剪贴板（订单号 / 取货码 / SKU 编码用）。
 export async function copyText(text) {
   if (isBlank(text)) return false;
@@ -129,5 +143,6 @@ export default {
   maskPhone,
   truncate,
   formatCount,
+  formatBytes,
   copyText,
 };
