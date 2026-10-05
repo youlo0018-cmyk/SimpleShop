@@ -3,6 +3,24 @@
    组件里禁止硬编码颜色 / 间距 / 圆角 / 字号 / 阴影，只能引用这里的变量。
    ============================================================ */
 
+/* ---------- 自托管字体 ----------
+   为什么不用系统字体栈：spec 里的字体名在**不同电脑上解析结果不同**。
+   实测 Windows 上 -apple-system / SF Pro Text / PingFang SC 都不存在，
+   所有字符落到 Microsoft YaHei —— 中文黑体的数字又宽又方
+   （8 位数字 188px vs Segoe UI 173px），满屏数字的后台因此「一眼方正」；
+   换台 Mac 又完全是另一个样子。网站必须所有访客看到同一张脸，
+   所以字体随应用一起分发（scripts/build-webfont.py 从 OFL 授权的
+   Noto Sans SC 可变字体裁出 8378 字 / 1.87MB，w2 轴保留，一个文件覆盖 400~900）。
+
+   font-display: swap —— 字体下载期间先用系统字体渲染，不出现白字。 */
+@font-face {
+  font-family: 'SimpleShop Sans';
+  src: url('/fonts/NotoSansSC-subset.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* ---------- 色彩（2.1）---------- */
   --brand: #0071e3;
@@ -83,9 +101,17 @@
   --duration-slow: 400ms;
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* ---------- 字体栈（3）---------- */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
-    'Microsoft YaHei', system-ui, sans-serif;
+  /* ---------- 字体栈（3）----------
+     第一位是**自托管字体**，它存在与否不取决于用户的操作系统 ——
+     这是「所有电脑看到同一张脸」的唯一保证。
+     后面全是兜底：自托管字体万一加载失败（CDN 挂了、用户禁用了本地资源），
+     页面仍然要能读。
+
+     ⚠️ 不要再往里塞本机字体做「优化」。曾经把 Segoe UI 提到前面当优化，
+     结果换台电脑就换了个样子 —— 那不是优化，那是把不确定性排到了前面。
+     兜底项只保证「不白屏」，不保证「好看」。 */
+  --font-sans: 'SimpleShop Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'PingFang SC', monospace;
 
   /* ---------- 布局常量：属结构不属视觉 token ---------- */

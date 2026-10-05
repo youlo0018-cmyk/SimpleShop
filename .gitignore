@@ -65,3 +65,8 @@ u3.log
 # 构建 / 冒烟时随手重定向出来的临时输出（build.ps1 之类）
 b*.txt
 !deploy/**/*.txt
+
+# 自托管字体的**源**文件：16.95MB，再分发体积太大且可从 OFL 官方源重新获取。
+# 运行时真正需要的是 scripts/build-webfont.py 产出的 1.87MB 子集（已入库）。
+deploy/fonts/*.ttf
+deploy/fonts/*.otf
