@@ -2,6 +2,83 @@
 // method 多数后台列表是 POST；products/List 与 inventory/List 后端写的是 GET。
 // response 形状不统一（有的分页信封、有的裸数组），由 ListView 兼容。
 
+// 审核动作。商户与商品的「审核列表」和「全部列表」共用同一组按钮，
+// 所以抽成常量——写两份的话，改了拒绝原因必填的提示就会只改到一半。
+// 两个后端的审核状态码**不一样**：商户 20 通过 / 90 拒绝（MerchantAuditStatuses），
+// 商品 20 通过 / 30 驳回（AuditStatuses）。写成同一套会直接调错参数。
+const MERCHANT_AUDIT_ACTIONS = [
+  {
+    label: '通过',
+    endpoint: '/gateway/merchants/Audit',
+    okText: '已通过审核',
+    // 放在 action 上而不是 confirm 里：确认框的危险色读的是 action.danger
+    // （`action.danger !== false`）。写在 confirm 里会被忽略，
+    // 于是「通过」这个正向动作的确认按钮会是红色的 —— 看着像要出事。
+    danger: false,
+    build: (r: any) => ({ merchantId: r.id, auditStatus: 20, auditRemark: '' }),
+    showWhen: (r: any) => r.auditStatus === 10,
+    confirm: {
+      title: '通过商户审核',
+      message: '通过后该商户会出现在小程序里，用户可以浏览并下单。',
+      subject: (r: any) => `${r.merchantName}（${r.merchantNo}）`,
+      okText: '通过',
+    },
+  },
+  {
+    label: '拒绝',
+    endpoint: '/gateway/merchants/Audit',
+    danger: true,
+    okText: '已拒绝',
+    build: (r: any, reason: string) => ({ merchantId: r.id, auditStatus: 90, auditRemark: reason }),
+    showWhen: (r: any) => r.auditStatus === 10,
+    confirm: {
+      title: '拒绝商户审核',
+      message: '拒绝会连带下架该商户的全部商品。商户需要修改资料后重新提交。',
+      subject: (r: any) => `${r.merchantName}（${r.merchantNo}）`,
+      okText: '拒绝',
+      danger: true,
+      withReason: true,
+      reasonLabel: '拒绝原因',
+      reasonPlaceholder: '商户要知道为什么被拒，否则只能反复提交碰运气',
+    },
+  },
+];
+
+const PRODUCT_AUDIT_ACTIONS = [
+  {
+    label: '通过',
+    endpoint: '/gateway/products/Audit',
+    okText: '已通过审核',
+    danger: false,
+    build: (r: any) => ({ productId: r.id, auditStatus: 20, reason: '' }),
+    showWhen: (r: any) => r.auditStatus === 10,
+    confirm: {
+      title: '通过商品审核',
+      message: '通过后商品可以上架销售。',
+      subject: (r: any) => r.spuName,
+      okText: '通过',
+    },
+  },
+  {
+    label: '驳回',
+    endpoint: '/gateway/products/Audit',
+    danger: true,
+    okText: '已驳回',
+    build: (r: any, reason: string) => ({ productId: r.id, auditStatus: 30, reason }),
+    showWhen: (r: any) => r.auditStatus === 10,
+    confirm: {
+      title: '驳回商品审核',
+      message: '驳回后商户需要修改资料并重新提交审核。',
+      subject: (r: any) => r.spuName,
+      okText: '驳回',
+      danger: true,
+      withReason: true,
+      reasonLabel: '驳回原因',
+      reasonPlaceholder: '写清楚哪里不符合要求，商户才知道要改什么',
+    },
+  },
+];
+
 export const LISTS = {
   products: {
     title: '商品列表',
@@ -17,6 +94,7 @@ export const LISTS = {
     byStatus: true,
     search: true,
     searchPlaceholder: '商品名 / 编码',
+    statusField: 'auditStatus',
     columns: [
       { field: 'spuName', label: '商品', width: 220 },
       { field: 'brandName', label: '品牌', width: 110, format: 'text' },
@@ -27,6 +105,38 @@ export const LISTS = {
       { field: 'status', label: '上下架', width: 100, dict: 'shelf' },
       { field: 'sales', label: '销量', width: 90, num: true, format: 'count' },
     ],
+    actions: PRODUCT_AUDIT_ACTIONS,
+    actionsWidth: 150,
+  },
+
+  // 商品审核页 = 同一张表，默认落在「待审核」。
+  productAudits: {
+    title: '商品审核',
+    desc: '审核通过后商品才能上架销售',
+    endpoint: '/gateway/products/List',
+    method: 'GET',
+    tabs: [
+      { label: '待审核', value: 10 },
+      { label: '已通过', value: 20 },
+      { label: '已驳回', value: 30 },
+      { label: '全部', value: 0 },
+    ],
+    byStatus: true,
+    defaultStatus: 10,
+    statusField: 'auditStatus',
+    search: true,
+    searchPlaceholder: '商品名 / 编码',
+    columns: [
+      { field: 'spuName', label: '商品', width: 220 },
+      { field: 'brandName', label: '品牌', width: 110, format: 'text' },
+      { field: 'categoryName', label: '分类', width: 130, format: 'text' },
+      { field: 'minPrice', label: '最低价', width: 100, num: true, format: 'amount' },
+      { field: 'maxPrice', label: '最高价', width: 100, num: true, format: 'amount' },
+      { field: 'auditStatus', label: '审核', width: 100, dict: 'audit' },
+      { field: 'status', label: '上下架', width: 100, dict: 'shelf' },
+    ],
+    actions: PRODUCT_AUDIT_ACTIONS,
+    actionsWidth: 150,
   },
 
   inventory: {
@@ -257,6 +367,7 @@ export const LISTS = {
     byStatus: true,
     search: true,
     searchPlaceholder: '商户名 / 编号 / 联系人',
+    statusField: 'auditStatus',
     columns: [
       { field: 'merchantName', label: '商户名', width: 150 },
       { field: 'merchantNo', label: '商户编号', width: 140, format: 'text', mono: true },
@@ -270,6 +381,41 @@ export const LISTS = {
       { field: 'rating', label: '评分', width: 90, num: true, format: 'score' },
       { field: 'createdAt', label: '入驻时间', width: 155, format: 'time' },
     ],
+    actions: MERCHANT_AUDIT_ACTIONS,
+    actionsWidth: 150,
+  },
+
+  // 商户审核页 = 同一张表，默认落在「待审核」。
+  // 不单独写组件：表格、筛选、分页与列表页完全一样，只差一个默认页签。
+  merchantAudits: {
+    title: '商户审核',
+    desc: '审核通过后商户才会出现在小程序里',
+    endpoint: '/gateway/merchants/List',
+    method: 'POST',
+    tabs: [
+      { label: '待审核', value: 10 },
+      { label: '已通过', value: 20 },
+      { label: '已拒绝', value: 30 },
+      { label: '全部', value: 0 },
+    ],
+    byStatus: true,
+    defaultStatus: 10,
+    statusField: 'auditStatus',
+    search: true,
+    searchPlaceholder: '商户名 / 编号 / 联系人',
+    columns: [
+      { field: 'merchantName', label: '商户名', width: 150 },
+      { field: 'merchantNo', label: '商户编号', width: 140, format: 'text', mono: true },
+      { field: 'platformName', label: '所属平台', width: 130, format: 'text' },
+      { field: 'contactName', label: '联系人', width: 110, format: 'text' },
+      { field: 'contactPhone', label: '联系电话', width: 130, format: 'text' },
+      { field: 'auditStatus', label: '审核', width: 100, dict: 'audit' },
+      { field: 'auditRemark', label: '审核意见', width: 200, format: 'text' },
+      { field: 'auditorName', label: '审核人', width: 100, format: 'text' },
+      { field: 'auditedAt', label: '审核时间', width: 155, format: 'time' },
+    ],
+    actions: MERCHANT_AUDIT_ACTIONS,
+    actionsWidth: 150,
   },
 
   promotions: {

@@ -55,14 +55,17 @@ public record UpdateMerchantCommand(
 /// <param name="MerchantId">商户 Id。</param>
 /// <param name="AuditStatus">审核结论：<b>只能 20 已通过 或 90 已拒绝</b>。</param>
 /// <param name="AuditRemark">审核意见 / 拒绝原因，<b>拒绝时必填</b>。</param>
-/// <param name="AuditorId">审核人 Id。</param>
-/// <param name="AuditorName">审核人姓名快照。</param>
+/// <remarks>
+/// <b>刻意不接受审核人字段</b>：审核人由 Handler 从令牌租户上下文取。
+/// 之前这里有 AuditorId / AuditorName 且直接采信请求体 ——
+/// 调用方可以自称任意审核人，而「审核人 + 审核意见」是商户准入的审计凭据。
+/// 字段留着就等于留了个静默的伪造入口：不传时行为正确，
+/// 一旦有人（或某个脚本）传了，审计记录就被改写了而接口照常返回成功。
+/// </remarks>
 public record AuditMerchantCommand(
     long MerchantId,
     int AuditStatus,
-    string AuditRemark = "",
-    long AuditorId = 0,
-    string AuditorName = "") : IRequest<ApiResponse<AuditMerchantResult>>;
+    string AuditRemark = "") : IRequest<ApiResponse<AuditMerchantResult>>;
 
 /// <summary>删除商户。<b>有商品或订单时禁止，只能停用</b>。</summary>
 /// <param name="MerchantId">商户 Id。</param>

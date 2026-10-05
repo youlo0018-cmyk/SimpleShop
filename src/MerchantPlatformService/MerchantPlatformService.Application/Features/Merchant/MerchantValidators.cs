@@ -68,7 +68,9 @@ public static class MerchantValidators
             // 「审核过了但还是待审核」的矛盾记录
             RuleFor(x => x.AuditStatus).Must(Domain.Entities.MerchantAuditStatuses.IsConclusion)
                 .WithMessage("审核结论只能是已通过或已拒绝");
-            RuleFor(x => x.AuditorId).GreaterThan(0).WithMessage("请先登录");
+            // 不再有「请先登录」这条规则：审核人已从请求体移除，
+            // 未登录的判断改由 Handler 读租户上下文来做（返回 401 而不是 400 ——
+            // 「没登录」和「参数填错」是两回事，混在参数校验里会让前端提示错方向）。
             RuleFor(x => x.AuditRemark).MaximumLength(500).WithMessage("审核意见最多 500 个字符");
 
             // 拒绝时必须写原因：商户要知道为什么被拒，否则只能反复提交碰运气

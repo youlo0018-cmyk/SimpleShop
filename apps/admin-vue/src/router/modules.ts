@@ -113,7 +113,7 @@ export const adminRoutes: RouteRecordRaw[] = [
       listRoute('', 'merchant-list', '商户列表', 'merchant:read', 'merchants'),
       { path: 'create', name: 'merchant-create', ...ph('create', '新建商户', 'merchant:create') },
       { path: 'edit/:id', name: 'merchant-edit', ...ph('edit/:id', '编辑商户', 'merchant:update') },
-      { path: 'audit', name: 'merchant-audit', ...ph('audit', '商户审核', 'merchant:audit') },
+      listRoute('audit', 'merchant-audit', '商户审核', 'merchant:audit', 'merchantAudits'),
     ],
   },
 
@@ -135,7 +135,7 @@ export const adminRoutes: RouteRecordRaw[] = [
       listRoute('', 'product-list', '商品列表', 'product:read', 'products'),
       { path: 'create', name: 'product-create', ...ph('create', '新建商品', 'product:create') },
       { path: 'edit/:id', name: 'product-edit', ...ph('edit/:id', '编辑商品', 'product:update') },
-      { path: 'audit', name: 'product-audit', ...ph('audit', '商品审核', 'product:audit') },
+      listRoute('audit', 'product-audit', '商品审核', 'product:audit', 'productAudits'),
     ],
   },
   {

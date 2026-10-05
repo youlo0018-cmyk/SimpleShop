@@ -63,6 +63,7 @@
           <template #default="{ row }">
             <el-button
               v-for="a in config.actions"
+              v-show="!a.showWhen || a.showWhen(row)"
               :key="a.label"
               :type="a.type || 'text'"
               :danger="a.danger"
@@ -214,7 +215,14 @@ async function load() {
   loading.value = true;
   try {
     const body: any = {};
-    if (config.value.byStatus && status.value) body.status = status.value;
+    if (config.value.byStatus) {
+      const picked = status.value || Number(config.value.defaultStatus || 0);
+      // statusField：页签绑到哪个查询字段。
+      // 商户列表的 `status` 是**启停**（1/2），审核状态是另一个字段 `auditStatus`。
+      // 一律发 `status` 的话，点「待审核」会发 status=10 —— 后端按启停校验直接 400，
+      // 而且这个错**在只加载首屏（status=0）时完全看不出来**，是点一下页签才炸。
+      if (picked) body[config.value.statusField || 'status'] = picked;
+    }
     if (config.value.search && keyword.value.trim()) body.keyword = keyword.value.trim();
     body.page = page.value;
     body.pageSize = pageSize.value;
@@ -317,7 +325,17 @@ async function submitConfirm() {
 }
 
 watch([status, config], () => reload());
-onMounted(load);
+onMounted(() => {
+  // defaultStatus：让「审核」这类专用页一进来就落在待审核上，
+  // 而不是先显示全量再让用户自己点一下页签。
+  // 用配置声明而不是新写一个组件，是因为两者的表格、筛选、分页完全一样，
+  // 只差一个默认页签 —— 为此复制一套组件就是两份要同步维护的代码。
+  const initial = Number(config.value.defaultStatus || 0);
+  if (initial && tabs.value.some((t: any) => t.value === initial)) {
+    status.value = initial;
+  }
+  load();
+});
 </script>
 
 <style scoped>
