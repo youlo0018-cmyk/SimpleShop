@@ -1989,6 +1989,86 @@ FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET �
 - **S1 剩余**：UserService（后台账号）、AuthService（OpenIddict RS256 令牌）、ToolService（统一上传）、
   以及 Gateway 的双令牌验签与 RBAC（这些都还没写，是 S1 的最后一块）。
 
+---
+
+## 2026-10-05（对接阶段）：后台前端全部对接完成，占位页清零
+
+### 状态
+
+| 项 | 结果 |
+|---|---|
+| 单元测试 | **321 / 321** |
+| 端到端回归 | **514 / 514**（16 个脚本） |
+| UI 回归 | **43 菜单页 + 10 非菜单页 + 3 条流程**，全绿，逐页截图 |
+| 占位页 | **0 个**（PlaceholderView 已不再被任何路由引用） |
+| 构建 | 0 warning / 0 error |
+| 截图目录 | `tests/visual/current/`（含流程分步截图） |
+
+### 三个安全缺陷（都是「静默、不报错、测不出来」那一类）
+
+1. **30 条权限点的 `api_path` 与真实端点对不上 = 30 个接口完全不鉴权。**
+   网关判定是「查不到映射 → `requiredCode` 为 null → 放行」，所以路径写错的后果
+   不是 403，而是任何登录用户都能调。典型：角色 CRUD 全绑成了
+   `/gateway/permissions/Roles*`，而真实端点在 `/gateway/roles/*`。
+   根治靠 `scripts/check-permission-paths.ps1`（静态核对，已挂进 `run-all.ps1` 第一道关）。
+2. **6 处接口 500 而不是 400**：FluentValidation 默认级联是 `Continue`，
+   `NotNull()` 失败后同链的 `Must(x => x!.Count)` 照样执行，`!` 只是编译期断言。
+   `products/Save` 与 `products/Create` 传空规格时都是 500 —— 商品建档整条链路不可用。
+3. **`AuditMerchantCommand` 仍带 `AuditorId` / `AuditorName`**：Handler 早已改成从令牌取，
+   但字段留在契约里就是一个静默伪造入口。已从契约删除。
+
+另外发现 **ToolService 整个服务没注册校验管道**（只注册了 `AddMediatR`），
+以及 **4 个项目没开 `CS1591`**（「100% XML 注释」在那 4 个项目里形同虚设）。
+
+### 后端补齐的端点（占位页里有 6 个是「后端压根没有」）
+
+- ProductService：products/Create（与 Save 分开才能分别授予建档与改价）、products/SearchIndex/{Reconcile,Reindex}、logistics-companies/*（新建字典表 + 内置数据）
+- MarketingService：券模板 List/Update/Delete、券活动 List/Update、核销记录 List
+- PointService：points/RecordsAll（后台跨客户）、points/Rules + points/SaveRules
+- PaymentService：admin/payments/List、refunds/Detail
+- ToolService：files/List、files/Delete
+
+### 前端架构：一个通用组件 + 配置，不为每页写组件
+
+- ListView + list-configs：全部列表页
+- FormView + form-configs：账号 / 平台 / 商户 / 活动 / 场次 / 小程序配置
+- ConfigView + config-configs：地区地址 / 优惠优先级 / 积分规则
+- TreeView + tree-configs：分类 / 角色权限
+- ReportView + report-configs：四张报表
+- DetailView + detail-configs：客户详情 / 退款详情
+
+单独写视图的五个（形状确实不同，硬塞进通用组件会让它长出一堆专用分支）：
+
+- ProductFormView：规格 + SKU 笛卡尔积矩阵
+- DesignBuilderView：拖拽搭建器
+- SeckillItemsView / IndexReconcileView / PickupVerifyView
+
+枚举文案一律由后端下发（DATA_SPEC 4.5）：本轮给 CouponTypes / CouponStatuses / TargetTypes / PointActions / LogisticsCompanyStatuses 补了 NameOf，前端 dict.js 只管颜色。
+
+### 装修搭建器必须记住的三个接口事实
+
+- design/Platform 要 platformId —— 平台装修是每平台一份，页头必须有平台选择器。
+- PublishPlatform 只收 platformId、不收配置内容 —— 它转的是已存的草稿。所以「发布」必须先静默存一次草稿，否则改完直接点发布会发布上一版且界面显示成功。
+- 只提交当前这一页的配置（pages 下只放当前页），后端保留其它页；整份提交会把首页排版覆盖掉。
+
+### UI 回归的三个坑（写新流程前先看这段）
+
+- 操作列是 fixed="right"，Element Plus 会为固定列渲染一份隐藏副本，它排在 DOM 前面 —— 点按钮不加 :visible 会选中那份永远不可点的副本。
+- 确认对话框没打开时 el-dialog 也在 DOM 里，而它的确定按钮可能与表格里的同名（「拒绝」），不限定 scope 就会点到隐藏的那个。
+- Playwright click 默认等 30 秒，失败步骤不加 timeout 会让整轮多花 30 秒。
+
+### 本项目特有的几个坑（都已写进 CODING_STANDARD）
+
+- 各端点 PageSize 上限不统一（50 / 100 / 200），前端兜底要用最小那个，否则一律 400。
+- utils 用 .js，类型靠 src/env.d.ts 手写声明 —— 新增导出函数必须同步补声明，否则 vue-tsc 报「没有导出成员」而函数明明就在文件里。
+- 客户端 T 的默认方法要显式写（platforms/Options 是 GET，不写就 405）。
+- 各后端 DTO 字段名大小写不一致（Id vs id），下拉映射要兜住，否则静默变成一排 undefined 而页面一行错都不报。
+
+### 排查手法：遇到 500 直接照做
+
+- GET /gateway/logs/Exception/List 拿到记录后，用 POST /gateway/logs/Exception/Stack 取完整堆栈。
+- 异常中间件会把未处理异常发到 exception.log，比盯 500 的响应体快得多。
+
 
 
 
