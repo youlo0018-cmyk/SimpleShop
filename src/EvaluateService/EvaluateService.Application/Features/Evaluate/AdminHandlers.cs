@@ -71,6 +71,16 @@ public sealed class HideEvaluateHandler : IRequestHandler<HideEvaluateCommand, A
     /// </remarks>
     public async Task<ApiResponse> Handle(HideEvaluateCommand request, CancellationToken ct)
     {
+        // 🔴 操作人从**令牌租户上下文**取，不从请求体取。
+        // 之前这里是 request.OperatorId，调用方可以自称任意操作人，
+        // 而 hidden_by_id 是「谁隐藏了这条评价」的审计凭据 ——
+        // 审计人可伪造，这条审计记录就没有意义了。
+        var ctx = TenantContextHolder.Current;
+        if (ctx.UserId <= 0)
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.Unauthorized, "登录状态已失效，请重新登录");
+        }
+
         var evaluate = await _repo.GetByIdAsync(request.EvaluateId, ct).ConfigureAwait(false);
         if (evaluate is null)
         {
@@ -80,7 +90,7 @@ public sealed class HideEvaluateHandler : IRequestHandler<HideEvaluateCommand, A
         var ok = await _repo.SetHiddenAsync(
             request.EvaluateId, request.IsHidden,
             (request.HiddenReason ?? string.Empty).Trim(),
-            request.OperatorId, ct).ConfigureAwait(false);
+            ctx.UserId, ct).ConfigureAwait(false);
 
         if (!ok) return ApiResponseFactory.Fail(BaseApiResponseCode.InternalError, "操作失败，请重试");
 

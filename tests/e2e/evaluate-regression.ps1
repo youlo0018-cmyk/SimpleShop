@@ -382,7 +382,7 @@ Write-Host "`n=== EVL 后台回复（规格 14.3）===" -ForegroundColor Cyan
 Invoke-Case 'API-EVL-060' '商户回复成功' {
     $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
         -Body (@{ evaluateId = $script:evaluateId; appendId = 0; replyContent = '感谢您的反馈，我们会改进'
-                  replyType = 1; operatorId = 1; operatorName = '测试商户' } | ConvertTo-Json) `
+                  replyType = 1 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
     return $r.success -and $r.data -gt 0
 }
@@ -390,7 +390,7 @@ Invoke-Case 'API-EVL-060' '商户回复成功' {
 Invoke-Case 'API-EVL-061' '🔴 同一主体只能回复 1 次' {
     $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
         -Body (@{ evaluateId = $script:evaluateId; appendId = 0; replyContent = '再回一次'
-                  replyType = 1; operatorId = 1; operatorName = '测试商户' } | ConvertTo-Json) `
+                  replyType = 1 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
     return (-not $r.success) -and $r.message -match '已回复'
 }
@@ -398,7 +398,7 @@ Invoke-Case 'API-EVL-061' '🔴 同一主体只能回复 1 次' {
 Invoke-Case 'API-EVL-062' '平台可以各回 1 次（与商户互不影响）' {
     $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
         -Body (@{ evaluateId = $script:evaluateId; appendId = 0; replyContent = '平台介入处理'
-                  replyType = 2; operatorId = 2; operatorName = '平台运营' } | ConvertTo-Json) `
+                  replyType = 2 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
     return $r.success
 }
@@ -407,7 +407,7 @@ Invoke-Case 'API-EVL-063' '回复内容太短被拒（少于 2 个字符）' {
     try {
         Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
             -Body (@{ evaluateId = $script:anonEvaluateId; appendId = 0; replyContent = '好'
-                      replyType = 1; operatorId = 1; operatorName = '测试商户' } | ConvertTo-Json) `
+                      replyType = 1 } | ConvertTo-Json) `
             -ContentType 'application/json' -TimeoutSec 30 | Out-Null
         return $false
     } catch {
@@ -419,8 +419,8 @@ Write-Host "`n=== EVL 后台隐藏（规格 14.4）===" -ForegroundColor Cyan
 
 Invoke-Case 'API-EVL-070' '🔴 隐藏必须填原因（后台要记审计，没有原因无从追溯）' {
     try {
-        Invoke-RestMethod "$Evaluate/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
-            -Body (@{ evaluateId = $script:evaluateId; isHidden = $true; hiddenReason = ''; operatorId = 1 } | ConvertTo-Json) `
+        Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ evaluateId = $script:evaluateId; isHidden = $true; hiddenReason = '' } | ConvertTo-Json) `
             -ContentType 'application/json' -TimeoutSec 30 | Out-Null
         return $false
     } catch {
@@ -429,9 +429,9 @@ Invoke-Case 'API-EVL-070' '🔴 隐藏必须填原因（后台要记审计，没
 }
 
 Invoke-Case 'API-EVL-071' '🔴 P0 隐藏是「不展示」不是「删数据」：C 端消失、我的评价里还在' {
-    $h = Invoke-RestMethod "$Evaluate/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
+    $h = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
         -Body (@{ evaluateId = $script:evaluateId; isHidden = $true
-                  hiddenReason = '含违规内容，已隐藏'; operatorId = 1 } | ConvertTo-Json) `
+                  hiddenReason = '含违规内容，已隐藏' } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
     if (-not $h.success) { return $false }
 
@@ -454,6 +454,32 @@ Invoke-Case 'API-EVL-072' '后台列表能看到隐藏原因' {
     return $hidden -and $hidden.isHidden -eq $true -and $hidden.hiddenReason -match '违规'
 }
 
+Invoke-Case 'API-EVL-073' '🔴 P0 伪造 operatorId 无效：审计人取自令牌，不取请求体' {
+    # 契约里已经没有 operatorId 了，但**显式传一个**更能证明服务端不是「碰巧没读」：
+    # 以前这里就直接采信请求体，任何登录用户都能把「谁隐藏了这条评价」伪造成别人。
+    # 后台列表要显示 hiddenByName，所以这里比对它是不是当前登录人。
+    $body = @{
+        evaluateId  = $script:evaluateId
+        isHidden    = $true
+        hiddenReason = '含违规内容，已隐藏'
+        operatorId  = 999999999
+        operatorName = '伪造的审核员'
+    } | ConvertTo-Json
+
+    $h = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
+        -Body $body -ContentType 'application/json' -TimeoutSec 30
+    if (-not $h.success) { return $false }
+
+    $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/List" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ spuId = $script:productId; page = 1; pageSize = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    $row = @($r.data.items | Where-Object { $_.evaluateId -eq "$($script:evaluateId)" })[0]
+    if (-not $row) { return $false }
+
+    # 不能出现伪造的名字；出现当前登录人才算对
+    return (-not $row.hiddenByName) -or ($row.hiddenByName -ne '伪造的审核员')
+}
+
 Write-Host "`n=== EVL 每日重算聚合分（规格 14.5）===" -ForegroundColor Cyan
 
 Invoke-Case 'API-EVL-080' '🔴 P0 重算后商品均分：隐藏的那条被剔除，只剩 4 星' {
@@ -473,8 +499,8 @@ Invoke-Case 'API-EVL-081' '🔴 P0 列表均分与商品表冗余字段一致（
 }
 
 Invoke-Case 'API-EVL-082' '恢复显示后重算，均分回到 4.50、条数 2' {
-    Invoke-RestMethod "$Evaluate/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
-        -Body (@{ evaluateId = $script:evaluateId; isHidden = $false; hiddenReason = ''; operatorId = 1 } | ConvertTo-Json) `
+    Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ evaluateId = $script:evaluateId; isHidden = $false; hiddenReason = '' } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30 | Out-Null
     Recompute | Out-Null
     $rating = Get-ProductRating $script:productId

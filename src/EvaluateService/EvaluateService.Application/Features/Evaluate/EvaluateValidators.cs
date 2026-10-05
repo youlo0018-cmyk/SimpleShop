@@ -125,7 +125,9 @@ public static class EvaluateValidators
         public HideEvaluateValidator()
         {
             RuleFor(x => x.EvaluateId).GreaterThan(0).WithMessage("评价信息不正确");
-            RuleFor(x => x.OperatorId).GreaterThan(0).WithMessage("请先登录");
+            // 不再有「请先登录」这条：操作人已从请求体移除，
+            // 未登录的判断改由 Handler 读租户上下文来做（返回 401 而不是 400 ——
+            // 「没登录」和「参数填错」是两件事，混在参数校验里会让前端提示错方向）。
 
             // 隐藏时必须写原因：后台要记审计（「为什么这条被下架」），
             // 没有原因的话出问题无从追溯。取消隐藏时不需要。
@@ -145,7 +147,6 @@ public static class EvaluateValidators
         {
             RuleFor(x => x.EvaluateId).GreaterThan(0).WithMessage("评价信息不正确");
             RuleFor(x => x.AppendId).GreaterThanOrEqualTo(0).WithMessage("追评信息不正确");
-            RuleFor(x => x.OperatorId).GreaterThan(0).WithMessage("请先登录");
             RuleFor(x => x.ReplyType).InclusiveBetween(1, 2).WithMessage("回复主体不正确");
             RuleFor(x => x.ReplyContent).NotEmpty().WithMessage("请填写回复内容")
                 .MaximumLength(500).WithMessage("回复内容最多 500 个字符")

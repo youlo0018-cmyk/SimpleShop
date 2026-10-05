@@ -94,8 +94,13 @@ public record QueryAdminEvaluatesCommand(
 /// <param name="EvaluateId">评价 Id。</param>
 /// <param name="IsHidden">是否隐藏。</param>
 /// <param name="HiddenReason">隐藏原因，隐藏时必填。</param>
-/// <param name="OperatorId">操作人 Id。</param>
-public record HideEvaluateCommand(long EvaluateId, bool IsHidden, string HiddenReason, long OperatorId)
+/// <remarks>
+/// <b>刻意不接受操作人字段</b>：操作人由 Handler 从令牌租户上下文取。
+/// 这里曾经有 <c>OperatorId</c> 且 Handler <b>直接采信请求体</b> ——
+/// 也就是说任何登录用户都能把「谁隐藏了这条评价」这条审计记录伪造成别人。
+/// 隐藏原因是写进后台审计的凭证，审计人可伪造等于审计失效。
+/// </remarks>
+public record HideEvaluateCommand(long EvaluateId, bool IsHidden, string HiddenReason)
     : IRequest<ApiResponse>;
 
 /// <summary>回复评价（后台）。</summary>
@@ -103,8 +108,11 @@ public record HideEvaluateCommand(long EvaluateId, bool IsHidden, string HiddenR
 /// <param name="AppendId">被回复的追评 Id，0 表示回复首评。</param>
 /// <param name="ReplyContent">回复内容。</param>
 /// <param name="ReplyType">1 商户 / 2 平台。</param>
-/// <param name="OperatorId">操作人 Id。</param>
-/// <param name="OperatorName">操作人姓名。</param>
+/// <remarks>
+/// <b>刻意不接受操作人字段</b>：Handler 已改成从令牌租户上下文取，
+/// 但字段留在契约里就是静默伪造入口 —— 不传时行为正确，
+/// 一旦有人传了，回复记录里的「谁回的」就被改写而接口照常返回成功。
+/// </remarks>
 public record ReplyEvaluateCommand(
-    long EvaluateId, long AppendId, string ReplyContent, int ReplyType,
-    long OperatorId, string OperatorName) : IRequest<ApiResponse<long>>;
+    long EvaluateId, long AppendId, string ReplyContent, int ReplyType)
+    : IRequest<ApiResponse<long>>;
