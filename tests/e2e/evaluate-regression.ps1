@@ -16,6 +16,8 @@ param(
     [string]$Gateway = 'http://127.0.0.1:5008',
     [string]$Evaluate = 'http://127.0.0.1:5084',
     [string]$Order = 'http://127.0.0.1:5064',
+    # 物流公司字典在商品服务里（DATA_SPEC 5.23）：发货现在必填物流公司与运单号。
+    [string]$Product = 'http://127.0.0.1:5058',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
@@ -88,12 +90,32 @@ function Recompute() {
         -Body (@{ writeBack = $true } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 120
 }
 
+<#
+.SYNOPSIS
+    取一个启用中的物流公司 Id。
+.DESCRIPTION
+    发货必填物流公司，而字典在商品服务里。这里只取一次并缓存 ——
+    25 条用例每条都发一次货，逐条去查字典会给商品服务平白加上几十次请求。
+#>
+function Get-LogisticsId {
+    if ($script:logisticsId) { return $script:logisticsId }
+    $r = Invoke-RestMethod "$Product/logistics-companies/Options" -Method Post `
+        -ContentType 'application/json' -Body '{}' -TimeoutSec 30
+    $first = @($r.data)[0]
+    if (-not $first) { throw '没有可用的物流公司，先执行 02-seed-logistics-companies.sql' }
+    $script:logisticsId = $first.logisticsId
+    return $script:logisticsId
+}
+
 function Complete-EvlOrder([string]$OrderNo) {
     # 实物快递要走完三步才到「已完成」：支付 → 发货 → 确认收货。
     # 少发货那一步，ConfirmReceipt 会被状态机挡下，订单停在「待发货」，
     # 后面「完成才能评价」的断言就全都失去意义了。
     (AdminOrderPost 'SimulatePayment' @{ orderNo = $OrderNo; succeed = $true; remark = '评价回归' }) | Out-Null
-    (AdminOrderPost 'Ship' @{ orderNo = $OrderNo; remark = '已发出' }) | Out-Null
+    # 发货**必填**物流公司与运单号：不填的话订单停在待发货，
+    # 后面 25 条用例会一起变成「订单没走到已完成」，而报错点看着像评价的问题。
+    (AdminOrderPost 'Ship' @{ orderNo = $OrderNo; remark = '已发出'
+        logisticsCompanyId = (Get-LogisticsId); trackingNo = 'SF-EVL-0001' }) | Out-Null
     return Invoke-RestMethod "$Order/orders/ConfirmReceipt" -Method Post `
         -Body (@{ customerId = $script:customerId; orderNo = $OrderNo } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30

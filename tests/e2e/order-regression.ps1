@@ -30,6 +30,8 @@ param(
     [string]$Marketing = 'http://127.0.0.1:5072',
     [string]$Inventory = 'http://127.0.0.1:5062',
     [string]$PointService = 'http://127.0.0.1:5082',
+    # 物流公司字典在商品服务里（DATA_SPEC 5.23）：发货要选公司，而公司表不在订单服务。
+    [string]$Product = 'http://127.0.0.1:5058',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
@@ -108,6 +110,35 @@ function OrderPost([string]$Op, $Body) { return Invoke-Api "$Order/orders/$Op" '
 
 function AdminOrderPost([string]$Op, $Body) { return Invoke-Api "$Order/admin/orders/$Op" 'Post' $Body }
 
+<#
+.SYNOPSIS
+    取一个启用中的物流公司 Id。
+.DESCRIPTION
+    发货现在**必填**物流公司（客服接到物流异常时，没单号的订单无从追责）。
+    订单服务不接受前端传来的公司名，而是自己去商品服务取权威名称，
+    所以这里必须给一个**真实存在**的 Id，否则会被挡下来。
+#>
+function Get-LogisticsId {
+    if ($script:logisticsId) { return $script:logisticsId }
+    $r = Invoke-RestMethod "$Product/logistics-companies/Options" -Method Post `
+        -ContentType 'application/json' -Body '{}' -TimeoutSec 30
+    $first = @($r.data)[0]
+    if (-not $first) { throw '没有可用的物流公司，先执行 02-seed-logistics-companies.sql' }
+    $script:logisticsId = $first.logisticsId
+    return $script:logisticsId
+}
+
+<#
+.SYNOPSIS
+    构造一个合法的发货请求体。
+.DESCRIPTION
+    统一带上物流公司与运单号，免得每条用例各写一遍、漏掉其中一项时
+    报出来的是「请选择物流公司」而不是「运单号没填」——两种失败长得一样很难分辨。
+#>
+function New-ShipBody([string]$OrderNo, [string]$TrackingNo = 'SF1234567890') {
+    return @{ orderNo = $OrderNo; remark = '已发出'; logisticsCompanyId = (Get-LogisticsId); trackingNo = $TrackingNo }
+}
+
 function Get-Stock([long]$SkuId) {
     $r = Invoke-RestMethod "$Inventory/internal/inventory/Snapshot?skuIds=$SkuId" -TimeoutSec 30
     return @($r.data | Where-Object { $_.skuId -eq $SkuId })[0]
@@ -119,6 +150,24 @@ function Get-PointBalance([long]$CustomerId) {
 
 function Get-Order([string]$OrderNo) {
     return (Invoke-RestMethod "$Order/orders/Detail?orderNo=$OrderNo&customerId=$($script:customerId)" -TimeoutSec 30).data
+}
+
+<#
+.SYNOPSIS
+    取后台订单详情。
+.DESCRIPTION
+    与 <see cref="Get-Order"/>（C 端详情）**不同**的只有一处，但那一处很关键：
+    后台详情才会给每一行带上 refundedQuantity 与 refundableAmount（行级可退余额）。
+    部分退款的金额上限全靠这两个字段，用 C 端详情算出来永远是 0，
+    于是第二次退款会以「金额必须大于 0」被拒 —— 而单看代码完全看不出原因。
+#>
+function Get-AdminOrder([string]$OrderNo) {
+    $list = AdminOrderPost 'List' @{ keyword = $OrderNo; page = 1; pageSize = 5 }
+    $hit = @($list.data.items | Where-Object { $_.orderNo -eq $OrderNo })[0]
+    if (-not $hit) { throw "后台订单列表里找不到 $OrderNo" }
+    return (Invoke-RestMethod "$Order/admin/orders/Detail" -Method Post `
+        -Body (@{ orderId = $hit.orderId } | ConvertTo-Json) -ContentType 'application/json' `
+        -TimeoutSec 30).data
 }
 
 function New-IdempotencyKey([string]$Tag) { return "ORD-$Tag-$($script:suffix)" }
@@ -150,6 +199,28 @@ function New-OrderBody([string]$Tag, [int]$DeliveryType = 1, [int]$Quantity = 2,
         freight         = $Freight
         remark          = "回归$Tag"
     }
+}
+
+<#
+.SYNOPSIS
+    两个 SKU 各一行的订单体。
+.DESCRIPTION
+    部分退款要「退一件、留一件」才测得出与整单退的区别：
+    单行订单退一次就已经退光了，第二次退必然超额度，测不出「多次部分退款」这个能力。
+#>
+function New-TwoLineOrderBody([string]$Tag) {
+    $body = New-OrderBody $Tag
+    $line2 = [ordered]@{
+        spuId       = [long]$script:productId
+        skuId       = [long]$script:secondSkuId
+        quantity    = 1
+        unitPrice   = 10.00
+        productName = "订单商品B$($script:suffix)"
+        skuSpecText = '蓝 / L'
+        deliveryType = 1
+    }
+    $body.lines = @($body.lines[0], $line2)
+    return $body
 }
 
 Write-Host "`n=== ORD 准备：商品 + 库存 + 券 + 积分 ===" -ForegroundColor Cyan
@@ -191,11 +262,15 @@ Invoke-Case 'API-ORD-000' '建两个 SKU 的商品并各自初始化库存' {
     foreach ($s in $d.data.skus) { $byCode[$s.skuCode] = [long]$s.id }
 
     $script:skuIds = @($byCode["ORD-A$($script:suffix)"])
+    # 第二个 SKU 单独存：多次部分退款的用例需要一张**两行**的订单
+    # （退一行、留一行），而 skuIds 这个名字历来只装主 SKU。
+    $script:secondSkuId = [long]$byCode["ORD-B$($script:suffix)"]
     $script:lowStockSkuId = $byCode["ORD-C$($script:suffix)"]
     $script:spuId = [long]$d.data.id
 
     return $d.data.skus.Count -eq 3 `
         -and $script:skuIds[0] -gt 0 `
+        -and $script:secondSkuId -gt 0 `
         -and $script:lowStockSkuId -gt 0 `
         -and (Get-Stock $script:skuIds[0]).available -eq $script:initStock `
         -and (Get-Stock $script:lowStockSkuId).available -eq $script:lowStock
@@ -410,10 +485,28 @@ Invoke-Case 'API-ORD-053' '🔴 重复支付不再重复扣库存（幂等）' {
 
 Write-Host "`n=== ORD 发货与收货 ===" -ForegroundColor Cyan
 
-Invoke-Case 'API-ORD-060' '发货：20 → 30（不填物流信息）' {
-    $r = AdminOrderPost 'Ship' @{ orderNo = $script:basicOrderNo; remark = '已发出' }
+Invoke-Case 'API-ORD-060' '发货：20 → 30，并写入物流公司与运单号' {
+    $r = AdminOrderPost 'Ship' (New-ShipBody $script:basicOrderNo)
     $d = Get-Order $script:basicOrderNo
-    return $r.success -and $d.status -eq 30
+    Write-Host ("        物流 {0} / {1}" -f $d.logisticsCompanyName, $d.trackingNo) -ForegroundColor DarkGray
+    return $r.success -and $d.status -eq 30 -and $d.trackingNo -eq 'SF1234567890' -and $d.logisticsCompanyName
+}
+
+Invoke-Case 'API-ORD-059' '🔴 P0 发货必须填物流公司与运单号' {
+    # 没有单号的「已发货」只是一个空口状态：客服接到物流异常时无从追责。
+    $r = OrderPost 'Create' (New-OrderBody 'needlogistics')
+    $no = $r.data.orderNo
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+
+    $noCompany = AdminOrderPost 'Ship' @{ orderNo = $no; remark = '忘了选'; trackingNo = 'SF0001' }
+    $noTracking = AdminOrderPost 'Ship' @{ orderNo = $no; remark = '忘了填'; logisticsCompanyId = (Get-LogisticsId) }
+    $ok = AdminOrderPost 'Ship' (New-ShipBody $no 'SF7654321')
+
+    # 校验失败的顶层 message 统一是「请求参数校验失败」，具体原因在 errors 里
+    # （CODING_STANDARD 3.4：前端只用 errors 做 tip 提示）
+    return (-not $noCompany.success) -and ($noCompany.errors.PSObject.Properties.Name -contains 'LogisticsCompanyId') `
+        -and (-not $noTracking.success) -and ($noTracking.errors.PSObject.Properties.Name -contains 'TrackingNo') `
+        -and $ok.success
 }
 
 Invoke-Case 'API-ORD-061' '已发货的订单不能再取消' {
@@ -450,7 +543,7 @@ Invoke-Case 'API-ORD-063' '🔴 用户确认收货后不可退款' {
 Invoke-Case 'API-ORD-064' '🔴 重复发货按幂等处理（回「已发货」，不是报错）' {
     # 运营在列表上误点两下是常事，回红色报错会让人以为货没发出去、于是点第三次。
     # 这条排在确认收货之后，所以单子已是 50：状态**不能**被这个重复动作改回去。
-    $r = AdminOrderPost 'Ship' @{ orderNo = $script:basicOrderNo; remark = '又点了一次' }
+    $r = AdminOrderPost 'Ship' (New-ShipBody $script:basicOrderNo 'SF0000000000')
     $d = Get-Order $script:basicOrderNo
     return $r.success -and $r.message -match '已发货' -and $d.status -eq 50
 }
@@ -480,13 +573,107 @@ Invoke-Case 'API-ORD-072' '已发货订单退款走 replenish（回补 deducted�
     $no = $r.data.orderNo
     AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
     $before = Get-Stock $script:skuIds[0]
-    AdminOrderPost 'Ship' @{ orderNo = $no; remark = '已发出' } | Out-Null
+    AdminOrderPost 'Ship' (New-ShipBody $no) | Out-Null
 
     $refund = AdminOrderPost 'Refund' @{ orderNo = $no; remark = '客户申请' }
     $after = Get-Stock $script:skuIds[0]
     $d = Get-Order $no
     return $refund.success -and $d.status -eq 60 `
         -and $after.deducted -eq ($before.deducted - 2) -and $after.available -eq ($before.available + 2)
+}
+
+Write-Host "`n=== ORD 多次部分退款 ===" -ForegroundColor Cyan
+
+$script:partialOrderNo = ''
+
+Invoke-Case 'API-ORD-075' '建一张两行订单，为多次部分退款做准备' {
+    $r = OrderPost 'Create' (New-TwoLineOrderBody 'partial')
+    $script:partialOrderNo = $r.data.orderNo
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $script:partialOrderNo; succeed = $true; remark = '回归' } | Out-Null
+    $d = Get-AdminOrder $script:partialOrderNo
+    return $r.success -and @($d.items).Count -eq 2
+}
+
+Invoke-Case 'API-ORD-076' '🔴 P0 第一次部分退款：只退一行，订单**不**变成已退款' {
+    $d = Get-AdminOrder $script:partialOrderNo
+    $line = @($d.items)[0]
+    $before = Get-Stock $line.skuId
+
+    # 退这一行的**全部金额**，但只退 1 件 —— 订单还剩一行没退，不能变成 60 已退款
+    $r = AdminOrderPost 'Refund' @{
+        orderNo = $script:partialOrderNo
+        remark  = '第一件破损'
+        lines   = @(@{ orderItemId = $line.orderItemId; quantity = 1; amount = $line.payableAmount })
+    }
+
+    $after = Get-AdminOrder $script:partialOrderNo
+    Write-Host ("        本次退 {0}，累计 {1}，还能退 {2}" -f `
+            $r.data.amount, $after.refundedAmount, $after.remainingRefundable) -ForegroundColor DarkGray
+
+    # 库存按**本次退的件数**回补，不是整行数量：
+    # 这一行有 2 件，只退 1 件就只应回补 1 件，按整行回补会直接超卖。
+    $back = Get-Stock $line.skuId
+    return $r.success -and $r.data.fullyRefunded -eq $false `
+        -and $after.status -ne 60 `
+        -and $after.refundedAmount -gt 0 `
+        -and ($back.available - $before.available) -eq 1
+}
+
+Invoke-Case 'API-ORD-077' '🔴 P0 第二次部分退款：退另一行，此时才整单退完' {
+    $d = Get-AdminOrder $script:partialOrderNo
+    $line = @($d.items)[1]
+    $left = [decimal]$line.refundableAmount
+
+    $r = AdminOrderPost 'Refund' @{
+        orderNo = $script:partialOrderNo
+        remark  = '第二件也退'
+        lines   = @(@{ orderItemId = $line.orderItemId; quantity = $line.quantity; amount = $left })
+    }
+
+    $after = Get-AdminOrder $script:partialOrderNo
+    Write-Host ("        第二次退 {0}，累计 {1}，状态 {2}" -f `
+            $r.data.amount, $after.refundedAmount, $after.status) -ForegroundColor DarkGray
+
+    return $r.success -and $r.data.fullyRefunded -eq $true `
+        -and $after.status -eq 60 `
+        -and $after.remainingRefundable -eq 0
+}
+
+Invoke-Case 'API-ORD-078' '🔴 P0 已退完的订单不能再退（否则就是超退）' {
+    $r = AdminOrderPost 'Refund' @{ orderNo = $script:partialOrderNo; remark = '还想再退' }
+    return (-not $r.success)
+}
+
+Invoke-Case 'API-ORD-079' '🔴 P0 超出行级可退余额的退款被拒，并说明还能退多少' {
+    $r = OrderPost 'Create' (New-TwoLineOrderBody 'overrefund')
+    $no = $r.data.orderNo
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+    $d = Get-AdminOrder $no
+    $line = @($d.items)[0]
+
+    # 退的行金额比该行实付还多 100 元 —— 必须被行级余额挡住
+    $r1 = AdminOrderPost 'Refund' @{
+        orderNo = $no; remark = '退太多'
+        lines   = @(@{ orderItemId = $line.orderItemId; quantity = 1; amount = ([decimal]$line.payableAmount + 100) })
+    }
+
+    # 退的件数比该行数量还多 —— 必须被件数上限挡住（否则库存会多回补）
+    $r2 = AdminOrderPost 'Refund' @{
+        orderNo = $no; remark = '退太多件'
+        lines   = @(@{ orderItemId = $line.orderItemId; quantity = 99; amount = 1 })
+    }
+
+    # 上面两次都被拒之后，这一行仍应原封不动
+    $after = Get-AdminOrder $no
+    return (-not $r1.success) -and $r1.message -match '还能退' `
+        -and (-not $r2.success) -and $r2.message -match '最多还能退' `
+        -and $after.refundedAmount -eq 0 -and $after.status -ne 60
+}
+
+Invoke-Case 'API-ORD-079b' '退款记录可查，且按时间升序（多次部分退款的历史）' {
+    $r = AdminOrderPost 'Refunds' @{ orderId = (Get-AdminOrder $script:partialOrderNo).orderId }
+    return $r.success -and @($r.data).Count -eq 2 `
+        -and $r.data[0].createdAt -le $r.data[1].createdAt
 }
 
 Write-Host "`n=== ORD 自提取货码（RSA）===" -ForegroundColor Cyan

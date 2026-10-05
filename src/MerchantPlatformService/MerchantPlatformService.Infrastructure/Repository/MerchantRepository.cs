@@ -130,13 +130,16 @@ public sealed class MerchantRepository : CrudRepository<Merchant>, IMerchantRepo
                 UpdatedAt = DateTime.UtcNow
             });
 
-        // 审核通过时顺带启用商户。Set 两次会生成两条 UPDATE 语句，
-        // 所以这里是往**同一个** Set 里追加，而不是再链一次 —— 必须是同一条语句，
-        // 否则中间崩掉就留下「已通过审核但仍停用」的商户（详见接口注释）。
+        // 审核通过时顺带启用商户。FreeSql 会把多次 Set **合并进同一条 UPDATE**，
+        // 正好满足「状态与启停必须原子写入」的要求（详见接口注释）。
+        //
+        // ⚠️ 第二个 Set 里**绝不能再带 UpdatedAt**：第一次 Set 已经写过这一列，
+        // 再写一次 PostgreSQL 直接报 42601「multiple assignments to same column」，
+        // 表现为审核接口 500 —— 而错误信息完全指不到「你多写了一列」。
         if (newStatus.HasValue)
         {
             var status = newStatus.Value;
-            update = update.Set(a => new Merchant { Status = status, UpdatedAt = DateTime.UtcNow });
+            update = update.Set(a => new Merchant { Status = status });
         }
 
         return await update.ExecuteAffrowsAsync(ct);
