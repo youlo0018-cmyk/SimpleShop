@@ -11,7 +11,13 @@ namespace MerchantPlatformService.Application.Features.Design;
 /// <param name="IsValid">是否通过校验。</param>
 /// <param name="ConfigJson">规范化后的配置 JSON；校验失败时为空。</param>
 /// <param name="Error">失败原因（面向运营的中文完整句）；通过时为空。</param>
-public sealed record DesignSaveResult(bool IsValid, string ConfigJson, string Error);
+/// <param name="Warnings">
+/// 告警清单（如「商户配色已剔除」）。<b>必须回给调用方</b>：
+/// 只写日志的话运营永远不知道自己传的东西被改了，
+/// 下次还会再传一遍，然后觉得「这破页面怎么不理我」。
+/// </param>
+public sealed record DesignSaveResult(
+    bool IsValid, string ConfigJson, string Error, IReadOnlyList<string> Warnings);
 
 /// <summary>保存装修草稿的公共逻辑。</summary>
 internal static class DesignDraftSaver
@@ -50,7 +56,7 @@ internal static class DesignDraftSaver
         }
         catch (System.Text.Json.JsonException)
         {
-            return new DesignSaveResult(false, string.Empty, "配置不是合法的 JSON");
+            return new DesignSaveResult(false, string.Empty, "配置不是合法的 JSON", []);
         }
 
         var check = DesignValidator.Validate(config, forMerchant);
@@ -62,12 +68,13 @@ internal static class DesignDraftSaver
 
         if (!check.IsValid)
         {
-            return new DesignSaveResult(false, string.Empty, string.Join("；", check.Errors));
+            return new DesignSaveResult(
+                false, string.Empty, string.Join("；", check.Errors), check.Warnings);
         }
 
         if (check.ProductIds.Count == 0)
         {
-            return new DesignSaveResult(true, config.ToJson(), string.Empty);
+            return new DesignSaveResult(true, config.ToJson(), string.Empty, check.Warnings);
         }
 
         var rejected = await products.CheckForDesignAsync(
@@ -77,14 +84,16 @@ internal static class DesignDraftSaver
         {
             // 查不到 ≠ 没问题。这里必须拦住，否则装修页就成了绕过审核的后门
             return new DesignSaveResult(
-                false, string.Empty, "商品服务暂时不可用，无法校验所选商品，请稍后重试");
+                false, string.Empty, "商品服务暂时不可用，无法校验所选商品，请稍后重试",
+                check.Warnings);
         }
 
         return rejected.Count == 0
-            ? new DesignSaveResult(true, config.ToJson(), string.Empty)
+            ? new DesignSaveResult(true, config.ToJson(), string.Empty, check.Warnings)
             : new DesignSaveResult(
                 false, string.Empty,
-                string.Join("；", rejected.Select(a => $"商品 {a.ProductId}：{a.Reason}")));
+                string.Join("；", rejected.Select(a => $"商品 {a.ProductId}：{a.Reason}")),
+                check.Warnings);
     }
 }
 
@@ -126,7 +135,7 @@ public sealed class SavePlatformDraftHandler
 
         await _design.SavePlatformDraftAsync(request.PlatformId, saved.ConfigJson, ct).ConfigureAwait(false);
         return ApiResults.Ok(
-            DesignResultFactory.FromDraft(saved.ConfigJson, string.Empty, 0),
+            DesignResultFactory.FromDraft(saved.ConfigJson, string.Empty, 0, saved.Warnings),
             "草稿已保存，发布后生效");
     }
 }
@@ -185,7 +194,7 @@ public sealed class SaveMerchantDraftHandler
             request.MerchantId, merchant.PlatformId, saved.ConfigJson, ct).ConfigureAwait(false);
 
         return ApiResults.Ok(
-            DesignResultFactory.FromDraft(saved.ConfigJson, string.Empty, 0),
+            DesignResultFactory.FromDraft(saved.ConfigJson, string.Empty, 0, saved.Warnings),
             "草稿已保存，发布后生效");
     }
 }

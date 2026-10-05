@@ -48,6 +48,14 @@ public static class DesignValidator
         var products = new List<long>();
 
         ValidateTheme(config.Theme, errors);
+
+        // 商户装修的主题三档色同样要剔除：只剔组件里的 props 不够，
+        // 商户完全可以把 primary/tabColor/background 换掉，
+        // 而那正是「颜色继承平台」这条规则最显眼的三处。
+        // 顺序在 ValidateTheme 之后 —— 先确认它是个合法颜色再剔除，
+        // 否则传个乱码进来会被当成「成功剔除」，运营永远不知道自己填错了。
+        if (forMerchant) StripTheme(config.Theme, warnings);
+
         ValidateTabBar(config.TabBar, errors);
         ValidatePages(config, forMerchant, errors, warnings, products);
 
@@ -227,6 +235,36 @@ public static class DesignValidator
             component.Props.Remove(key);
             warnings.Add($"组件「{component.Id}」的配色字段 {key} 已剔除：商户装修的颜色继承平台，不可自定义");
         }
+    }
+
+    /// <summary>剔除商户装修里的主题三档色并告警。</summary>
+    /// <param name="theme">主题（就地清空）。</param>
+    /// <param name="warnings">告警收集。</param>
+    /// <remarks>
+    /// 与 <see cref="StripColors"/> 同一套理由：**剔除而不是报错**。
+    /// 搭建器的表单会把当前配色一起提交，直接拒绝会让店铺装修整份存不进去，
+    /// 而商户真正想改的往往只是组件顺序。
+    ///
+    /// <para>清空成空串而不是填平台色值：配色是<b>平台级</b>配置，
+    /// 抄一份进商户配置就等于将来平台改色时要同步改 N 份商户配置，
+    /// 漏改一处就会有一家店颜色不对。留空让渲染端回落到平台主题才是单一来源。</para>
+    /// </remarks>
+    private static void StripTheme(DesignTheme theme, List<string> warnings)
+    {
+        foreach (var (name, value) in new[]
+        {
+            ("主题色", theme.Primary),
+            ("TabBar 选中色", theme.TabColor),
+            ("页面背景色", theme.Background),
+        })
+        {
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            warnings.Add($"{name} {value} 已剔除：商户装修的颜色继承平台，不可自定义");
+        }
+
+        theme.Primary = string.Empty;
+        theme.TabColor = string.Empty;
+        theme.Background = string.Empty;
     }
 
     /// <summary>收集手动指定的商品，并校验数量上限。</summary>

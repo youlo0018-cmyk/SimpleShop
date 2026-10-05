@@ -31,6 +31,24 @@ internal static class DesignResultFactory
         return new DesignResult(json, version, hasDraft, []);
     }
 
+    /// <summary>按「草稿优先」装配读取结果，并把本次保存的告警一并带回。</summary>
+    /// <param name="draftJson">草稿 JSON。</param>
+    /// <param name="publishedJson">已发布 JSON。</param>
+    /// <param name="version">已发布版本号。</param>
+    /// <param name="warnings">本次保存产生的告警（如配色被剔除）。</param>
+    /// <returns>装修配置。</returns>
+    /// <remarks>
+    /// 保存接口必须把告警**原样回传**。日志里记了不算完 ——
+    /// 搭建器要靠它告诉运营「你传的配色没生效」，否则运营只会看到自己设的红色
+    /// 变成了平台色，却不知道是自己没权限改。
+    /// </remarks>
+    public static DesignResult FromDraft(
+        string draftJson, string publishedJson, int version, IReadOnlyList<string> warnings)
+    {
+        var result = FromDraft(draftJson, publishedJson, version);
+        return result with { Warnings = warnings };
+    }
+
     /// <summary>小程序只读已发布配置，不暴露草稿。</summary>
     /// <param name="publishedJson">已发布 JSON。</param>
     /// <param name="version">已发布版本号。</param>

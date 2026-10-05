@@ -110,11 +110,25 @@ function New-PlatformConfig([string]$Type = 'banner', [int]$Span = 12, [int]$Hei
     }
 }
 
-function New-MerchantConfig([string]$Type = 'shopHeader', [int]$Span = 12, [hashtable]$Props = @{}) {
+<#
+.SYNOPSIS
+    造一份商户装修配置。
+.DESCRIPTION
+    加 Theme 参数是因为「商户不能改配色」这条要能**主动传进去**才测得到：
+    默认传空串的话，即使后端根本没做剔除，这条用例也会通过 ——
+    一条永远绿的回归等于没有回归。
+#>
+function New-MerchantConfig(
+    [string]$Type = 'shopHeader', [int]$Span = 12, [hashtable]$Props = @{}, [hashtable]$Theme = @{}) {
+    # ⚠️ 逐项赋值而不是 `@{默认} + $Theme`：PowerShell 的哈希表相加遇到重复键会
+    # 直接抛「Item has already been added」，而调用方恰恰只想**覆盖**某几档色。
+    $t = @{ primary = ''; tabColor = ''; background = '' }
+    foreach ($k in $Theme.Keys) { $t[$k] = $Theme[$k] }
+
     return @{
         platformCode = ''
         version = 0
-        theme = @{ primary = ''; tabColor = ''; background = '' }
+        theme = $t
         tabBar = @()
         pages = @{
             store = @{ components = @(@{ id = 'm1'; type = $Type; span = $Span; height = 120; props = $Props }) }
@@ -314,6 +328,29 @@ Invoke-Case 'API-DS-043' '🔴 商户传的配色字段被剔除（不报错，�
     # 商户不能改任何配色（用户明确要求）。这里剔除而不是报错——
     # 后台属性面板根本不提供颜色选择器，报错只会让整个店铺装修存不进去
     return $g.data.configJson -notmatch 'ff0000' -and $g.data.configJson -notmatch '00ff00'
+}
+
+Invoke-Case 'API-DS-043b' '🔴 P0 商户改**主题配色**同样被剔除，且告警回传给运营' {
+    # API-DS-043 只覆盖了组件 props 里的配色。三档主题色（primary / tabColor / background）
+    # 是「颜色继承平台」这条规则最显眼的三处，之前完全没管：
+    # 商户把整站改成自己的红，页面照常打开、颜色也真的变了，没有任何拦截或提示。
+    $theme = @{ primary = '#FF0000'; tabColor = '#00FF00'; background = '#0000FF' }
+    $json = New-MerchantConfig -Theme $theme | ConvertTo-Json -Depth 12
+    $r = MpPost '/design/SaveMerchantDraft' @{ merchantId = $script:merchantId; configJson = $json }
+    if (-not $r.success) { return $false }
+
+    $g = MpGet "/design/Merchant?merchantId=$($script:merchantId)"
+    # ① 三档色确实没存下来
+    $stripped = $g.data.configJson -notmatch 'FF0000' -and
+                $g.data.configJson -notmatch '00FF00' -and
+                $g.data.configJson -notmatch '0000FF'
+    # ② 告警必须**回传给调用方**。只写日志的话运营看不到，
+    #    只会发现自己设的红色变成了平台色，然后以为「这破页面不理我」。
+    $warned = @($r.data.warnings).Count -ge 3 -and
+              (@($r.data.warnings) -join ';') -match '已剔除'
+
+    Write-Host ("        告警 {0} 条：{1}" -f @($r.data.warnings).Count, (@($r.data.warnings)[0])) -ForegroundColor DarkGray
+    return $stripped -and $warned
 }
 
 Invoke-Case 'API-DS-044' '手动指定**已上架**的本商户商品：保存通过' {
