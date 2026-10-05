@@ -3,6 +3,7 @@ import { REPORTS } from './report-configs';
 import { LISTS } from './list-configs';
 import { TREES } from './tree-configs';
 import { CONFIGS } from './config-configs';
+import { FORMS } from './form-configs';
 
 // 菜单与路由的单一来源（BUSINESS.md 5.2 的 23 组功能模块）。
 // meta.title 同时用于侧边栏文字与浏览器标题，meta.icon 是 Element Plus 图标名。
@@ -72,6 +73,18 @@ function configRoute(path: string, name: string, title: string, perm: string, co
   };
 }
 
+// 新建 / 编辑表单同构：一个 FormView + 各自的字段声明。
+// 编辑与新建共用一套字段，靠 route.params.id 是否存在区分。
+function formRoute(path: string, name: string, title: string, perm: string, configKey: keyof typeof FORMS) {
+  return {
+    path,
+    name,
+    component: () => import('@/views/FormView.vue'),
+    props: { config: FORMS[configKey] },
+    meta: { title, perm },
+  };
+}
+
 export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'dashboard',
@@ -86,7 +99,8 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '账号', icon: 'User', perm: 'user:read' },
     children: [
       listRoute('', 'user-list', '账号列表', 'user:read', 'users'),
-      { path: 'create', name: 'user-create', ...ph('create', '新建账号', 'user:create') },
+      formRoute('create', 'user-create', '新建账号', 'user:create', 'user'),
+      formRoute('edit/:id', 'user-edit', '编辑账号', 'user:update', 'user'),
     ],
   },
   {
@@ -112,8 +126,8 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '平台', icon: 'OfficeBuilding', perm: 'platform:read' },
     children: [
       listRoute('', 'platform-list', '平台列表', 'platform:read', 'platforms'),
-      { path: 'create', name: 'platform-create', ...ph('create', '新建平台', 'platform:create') },
-      { path: 'edit/:id', name: 'platform-edit', ...ph('edit/:id', '编辑平台', 'platform:update') },
+      formRoute('create', 'platform-create', '新建平台', 'platform:create', 'platform'),
+      formRoute('edit/:id', 'platform-edit', '编辑平台', 'platform:update', 'platform'),
       { path: 'app-config/:id', name: 'platform-app-config', ...ph('app-config/:id', '小程序配置', 'platform:update') },
       configRoute('regions', 'platform-regions', '地区地址配置', 'region:update', 'regions'),
     ],
@@ -123,8 +137,8 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '商户', icon: 'Shop', perm: 'merchant:read' },
     children: [
       listRoute('', 'merchant-list', '商户列表', 'merchant:read', 'merchants'),
-      { path: 'create', name: 'merchant-create', ...ph('create', '新建商户', 'merchant:create') },
-      { path: 'edit/:id', name: 'merchant-edit', ...ph('edit/:id', '编辑商户', 'merchant:update') },
+      formRoute('create', 'merchant-create', '新建商户', 'merchant:create', 'merchant'),
+      formRoute('edit/:id', 'merchant-edit', '编辑商户', 'merchant:update', 'merchant'),
       listRoute('audit', 'merchant-audit', '商户审核', 'merchant:audit', 'merchantAudits'),
     ],
   },
