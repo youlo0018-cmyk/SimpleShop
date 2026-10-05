@@ -71,13 +71,27 @@
              而控制台一行错都没有，纯看代码很难发现。
              v-if 放在 el-table-column 上是没问题的（它是普通组件）。 -->
         <el-table-column
-          v-if="config.actions"
+          v-if="config.actions || config.editRoute"
           label="操作"
-          :width="config.actionsWidth || 160"
+          :width="config.actionsWidth || (config.actions ? 160 : 100)"
           fixed="right"
           align="center"
         >
           <template #default="{ row }">
+            <!--
+              「编辑」是**显式按钮**而不是只靠「点整行」：
+              点行进详情是加分项，但不是所有人都知道整行可点。
+              账号这种必须改字段的地方，给一个看得见、瞄得准的入口。
+              点开仍然是新页（不是弹窗）。
+            -->
+            <el-button
+              v-if="config.editRoute"
+              type="primary"
+              link
+              @click.stop="router.push(config.editRoute(row))"
+            >
+              编辑
+            </el-button>
             <el-button
               v-for="a in config.actions"
               v-show="!a.showWhen || a.showWhen(row)"

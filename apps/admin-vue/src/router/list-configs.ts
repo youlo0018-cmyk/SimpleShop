@@ -86,6 +86,7 @@ export const LISTS = {
     createRoute: '/products/create',
     createLabel: '新建商品',
     rowRoute: (r: any) => `/products/edit/${r.id}`,
+    editRoute: (r: any) => `/products/edit/${r.id}`,
     endpoint: '/gateway/products/List',
     method: 'GET',
     tabs: [
@@ -309,6 +310,7 @@ export const LISTS = {
     createRoute: '/users/create',
     createLabel: '新建账号',
     rowRoute: (r: any) => `/users/edit/${r.id}`,
+    editRoute: (r: any) => `/users/edit/${r.id}`,
     endpoint: '/gateway/users/List',
     method: 'GET',
     search: true,
@@ -347,6 +349,7 @@ export const LISTS = {
     createRoute: '/platforms/create',
     createLabel: '新建平台',
     rowRoute: (r: any) => `/platforms/edit/${r.id}`,
+    editRoute: (r: any) => `/platforms/edit/${r.id}`,
     endpoint: '/gateway/platforms/List',
     method: 'POST',
     search: true,
@@ -369,6 +372,7 @@ export const LISTS = {
     createRoute: '/merchants/create',
     createLabel: '新建商户',
     rowRoute: (r: any) => `/merchants/edit/${r.id}`,
+    editRoute: (r: any) => `/merchants/edit/${r.id}`,
     endpoint: '/gateway/merchants/List',
     method: 'POST',
     tabs: [
@@ -437,6 +441,7 @@ export const LISTS = {
     createRoute: '/promotions/create',
     createLabel: '新建活动',
     rowRoute: (r: any) => `/promotions/edit/${r.activityId ?? r.id}`,
+    editRoute: (r: any) => `/promotions/edit/${r.activityId ?? r.id}`,
     endpoint: '/gateway/marketing/activities/List',
     method: 'POST',
     search: true,
@@ -460,6 +465,7 @@ export const LISTS = {
     // 点行进「场次商品」而不是编辑：运营从场次列表进来时，
     // 十有八九是要往里加商品，而那才是场次真正要反复做的事。
     rowRoute: (r: any) => `/seckill/items/${r.sessionId ?? r.id}`,
+    editRoute: (r: any) => `/seckill/edit/${r.sessionId ?? r.id}`,
     endpoint: '/gateway/marketing/seckill/sessions/List',
     method: 'POST',
     tabs: [

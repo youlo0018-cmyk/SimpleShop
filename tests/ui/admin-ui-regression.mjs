@@ -96,6 +96,17 @@ const FLOWS = [
       { desc: '停在新建页而不是弹窗', expect: '.form__grid, .form', shot: 'flow-create-3-page' },
     ],
   },
+  {
+    // 「编辑」要给一个**看得见**的按钮，不能只靠「整行可点」——
+    // 不是所有人都知道整行能点。点开同样是新页。
+    name: '账号列表 -> 点「编辑」-> 开新页',
+    start: '#/users',
+    steps: [
+      { desc: '进入账号列表', goto: '#/users', shot: 'flow-edit-1-list' },
+      { desc: '点该行「编辑」', clickText: '编辑', clickScope: '.el-table', shot: 'flow-edit-2-form' },
+      { desc: '停在编辑页而不是弹窗', expect: '.form__grid, .form', shot: 'flow-edit-3-page' },
+    ],
+  },
 ];
 
 const slug = (s) =>
