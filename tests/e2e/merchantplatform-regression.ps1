@@ -335,6 +335,32 @@ Invoke-Case 'API-MP-027' '审核通过：状态变已通过，且**不再连带�
     return $r.success -and $r.data.offShelvedCount -eq 0 -and $row.auditStatusName -eq '已通过'
 }
 
+Invoke-Case 'API-MP-028' '🔴 P0 停用商户：**连带下架**该商户全部已上架商品' {
+    # BUSINESS.md「商户资质与商品资质的联动」把「停用」和「审核拒绝」列为同一类副作用。
+    # 之前停用只改了一个 Status 字段，于是店都停了、商品还在货架上照常能下单 ——
+    # 而搜索走 ES 不走 C 端可见性过滤，商品页与搜索两头都漏。
+
+    # 先把商品重新上架：MP-022 的拒绝已经把它下架了，不上架就没东西可测
+    $up = MpAdminPost '/products/ChangeListing' @{ productId = $script:productId; status = 1 }
+    if (-not $up.success) { return $false }
+
+    $r = MpAdminPost '/merchants/ChangeStatus' @{ merchantId = $script:merchantId; status = 2 }
+    if (-not $r.success) { return $false }
+
+    $d = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:productId)" `
+        -Headers $script:adminHeaders -TimeoutSec 30
+
+    Write-Host ("        {0}" -f $r.message) -ForegroundColor DarkGray
+    return $d.data.status -eq 2 -and $r.message -match '停用'
+}
+
+Invoke-Case 'API-MP-028b' '已通过审核的商户可重新启用（幂等回来，供后续清理）' {
+    # 顺带守住「启用前必须已过审」这条：这里商户是已通过状态，所以必须能启用成功。
+    # 反过来（待审核时启用）由 ChangeMerchantStatusHandler 拒绝，两边合起来才是完整规则。
+    $r = MpAdminPost '/merchants/ChangeStatus' @{ merchantId = $script:merchantId; status = 1 }
+    return $r.success -and $r.message -match '启用'
+}
+
 Write-Host "`n=== MP 地区地址 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-MP-030' '未配置时回落到内置默认（isCustom = false）' {

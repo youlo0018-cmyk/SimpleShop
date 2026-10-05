@@ -369,10 +369,22 @@ public sealed class ChangeMerchantStatusHandler
     : IRequestHandler<ChangeMerchantStatusCommand, ApiResponse>
 {
     private readonly IMerchantRepository _merchants;
+    private readonly IProductPort _products;
+    private readonly ILogger<ChangeMerchantStatusHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="merchants">商户仓储。</param>
-    public ChangeMerchantStatusHandler(IMerchantRepository merchants) => _merchants = merchants;
+    /// <param name="products">商品服务端口（停用时连带下架用）。</param>
+    /// <param name="logger">日志器。</param>
+    public ChangeMerchantStatusHandler(
+        IMerchantRepository merchants,
+        IProductPort products,
+        ILogger<ChangeMerchantStatusHandler> logger)
+    {
+        _merchants = merchants;
+        _products = products;
+        _logger = logger;
+    }
 
     /// <summary>执行启停。</summary>
     /// <param name="request">命令。</param>
@@ -417,8 +429,42 @@ public sealed class ChangeMerchantStatusHandler
                 BaseApiResponseCode.BusinessError, "该商户状态已被其他人修改，请刷新后重试");
         }
 
-        return ApiResponseFactory.Ok(
-            request.Status == PlatformStatuses.Enabled ? "商户已启用" : "商户已停用");
+        if (request.Status == PlatformStatuses.Enabled)
+        {
+            return ApiResponseFactory.Ok("商户已启用");
+        }
+
+        // 🔴 停用必须连带下架该商户全部已上架商品（BUSINESS.md「商户资质与商品资质的联动」）。
+        // 之前这里只改了一个 Status 字段，于是「店都停了，商品还在货架上、还能下单」——
+        // 用户会看到一个不营业的店照常卖货，而搜索走 ES 不走 C 端可见性过滤，
+        // 漏斗两头都破。审核拒绝走的是同一条副作用，停用不能例外。
+        var outcome = await _products.OffShelfByMerchantAsync(request.MerchantId, ct)
+            .ConfigureAwait(false);
+
+        if (outcome is null)
+        {
+            // 下架失败**不回滚停用**：合规决定必须生效，商品还在架上严重度远低于
+            // 「停用了还能接单」。失败计数交给日志与对账任务兜底。
+            _logger.LogError(
+                "商户 {MerchantId} 已停用，但连带下架商品失败，商品可能仍在售，需人工处理",
+                request.MerchantId);
+        }
+        else
+        {
+            if (outcome.IndexFailed > 0)
+            {
+                _logger.LogError(
+                    "商户 {MerchantId} 停机下架 {Count} 个商品，但有 {Failed} 个索引同步失败，将由对账任务兜底",
+                    request.MerchantId, outcome.OffShelved, outcome.IndexFailed);
+            }
+
+            return ApiResponseFactory.Ok(
+                outcome.OffShelved > 0
+                    ? $"商户已停用，已连带下架 {outcome.OffShelved} 个商品"
+                    : "商户已停用");
+        }
+
+        return ApiResponseFactory.Ok("商户已停用");
     }
 }
 
