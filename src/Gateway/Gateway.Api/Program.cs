@@ -48,7 +48,18 @@ builder.Services.AddSingleton<DualTokenValidator>();
 // 网关这一层过早加自动重试反而会把写操作重放一遍（幂等性尚未全面验证的阶段尤其危险）。
 builder.Services.AddOcelot(builder.Configuration);
 
-builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
+// 两个探针，职责不同（下面 MapHealthChecks 处有对应说明）：
+//   /health —— **存活**：只回答「进程还在不在」，不碰任何外部依赖。
+//   /ready  —— **就绪**：额外探真实依赖，回答「现在能不能接流量」。
+builder.Services
+    .AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy())
+    .AddCheck<GatewayHealthCheck>("gateway");
+
+builder.Services.AddHttpClient("GatewayHealthProbe", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
 
 builder.Services.AddAppEventLogging(builder.Configuration);
 
@@ -59,7 +70,52 @@ var app = builder.Build();
 app.UseAppExceptionHandling();
 app.UseAppRequestLogging();
 app.UseMiddleware<GatewaySecurityMiddleware>();
-app.MapHealthChecks("/health");
+
+// 🔴 为什么必须拆成两个探针：
+//
+// 启动脚本是**串行**拉服务的，网关排在权限中心前面。刚起来的头几秒里权限中心
+// 必然还没监听 —— 如果 /health 就去探它，脚本会判定「网关起不来」而把一个
+// 完全正常的网关误杀。反过来，如果 /health 只探自己，它又会在权限中心挂掉时
+// 继续回 Healthy，编排系统照样往一个鉴权全挂的网关上打流量。
+//
+// 于是拆开：/health 只管活着（永远快、永远不误杀），/ready 管能不能干活。
+// 这也是 K8s 里 livenessProbe 与 readinessProbe 分开的同一个道理。
+var probeResponse = static async (HttpContext context, HealthReport report) =>
+{
+    context.Response.ContentType = "application/json; charset=utf-8";
+
+    var payload = new
+    {
+        status = report.Status.ToString(),
+        totalMs = report.TotalDuration.TotalMilliseconds,
+        // 依赖明细逐条摊平：{"PermissionService":"Healthy: 3ms","Routes":"Healthy: 33 条路由已加载"}
+        dependencies = report.Entries.ToDictionary(
+            a => a.Key,
+            a => a.Value.Data.Count > 0
+                ? string.Join("；", a.Value.Data.Select(d => $"{d.Key}={d.Value}"))
+                : a.Value.Status.ToString()),
+    };
+
+    await context.Response.WriteAsJsonAsync(payload);
+};
+
+// 存活探针：只挂 self，不含任何依赖检查。慢启动或下游故障都**不该**让它变红 ——
+// 把它判死等于因为别人挂了而自杀重启。
+app.MapHealthChecks(
+    "/health",
+    new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+    {
+        Predicate = _ => false,
+        ResponseWriter = probeResponse,
+    });
+
+// 就绪探针：探真实依赖（权限中心 + 路由表），供编排系统决定要不要摘流量。
+app.MapHealthChecks(
+    "/ready",
+    new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+    {
+        ResponseWriter = probeResponse,
+    });
 
 // Ocelot 是**终结性**中间件：匹配不到路由就直接返回 404，不会往下传给端点。
 // 所以 /health 必须绕过它，否则健康检查会被 Ocelot 判成「没有对应路由」。
