@@ -159,8 +159,20 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '商品', icon: 'Goods', perm: 'product:read' },
     children: [
       listRoute('', 'product-list', '商品列表', 'product:read', 'products'),
-      { path: 'create', name: 'product-create', ...ph('create', '新建商品', 'product:create') },
-      { path: 'edit/:id', name: 'product-edit', ...ph('edit/:id', '编辑商品', 'product:update') },
+      // 商品表单单独一个视图：规格项 + SKU 笛卡尔积矩阵是它独有的形状，
+      // 硬塞进通用 FormView 会让它长出一堆「只有商品才用得上」的分支。
+      {
+        path: 'create',
+        name: 'product-create',
+        component: () => import('@/views/ProductFormView.vue'),
+        meta: { title: '新建商品', perm: 'product:create' },
+      },
+      {
+        path: 'edit/:id',
+        name: 'product-edit',
+        component: () => import('@/views/ProductFormView.vue'),
+        meta: { title: '编辑商品', perm: 'product:update' },
+      },
       listRoute('audit', 'product-audit', '商品审核', 'product:audit', 'productAudits'),
     ],
   },
