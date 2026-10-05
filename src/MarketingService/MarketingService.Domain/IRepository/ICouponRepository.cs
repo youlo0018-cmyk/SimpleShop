@@ -115,4 +115,87 @@ public interface ICouponRepository
     Task<CouponReportAggregate> AggregateAsync(
         DateTime from, DateTime to, long merchantId, long platformId,
         CancellationToken ct = default);
+
+    /// <summary>分页查券模板（后台）。</summary>
+    /// <param name="page">页码，从 1 起。</param>
+    /// <param name="pageSize">每页条数。</param>
+    /// <param name="keyword">模板名关键字。</param>
+    /// <param name="couponType">券类型过滤，0 表示不限。</param>
+    /// <param name="status">状态过滤，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>模板列表与总数。幂等只读。</returns>
+    Task<(List<CouponTemplate> Items, long Total)> PageTemplatesAsync(
+        int page, int pageSize, string keyword, int couponType, int status, long platformId,
+        CancellationToken ct = default);
+
+    /// <summary>更新券模板的可变字段。</summary>
+    /// <param name="template">携带 Id 与待更新字段的模板。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。幂等。</returns>
+    /// <remarks>
+    /// **不写 issued_quantity**：那是发放流程累加的计数，
+    /// 让后台能直接改它就等于可以凭空造出「已发放」数据，报表随即失真。
+    /// </remarks>
+    Task<int> UpdateTemplateAsync(CouponTemplate template, CancellationToken ct = default);
+
+    /// <summary>软删券模板。</summary>
+    /// <param name="templateId">模板 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。幂等。</returns>
+    Task<int> DeleteTemplateAsync(long templateId, CancellationToken ct = default);
+
+    /// <summary>分页查券活动（后台）。</summary>
+    /// <param name="page">页码，从 1 起。</param>
+    /// <param name="pageSize">每页条数。</param>
+    /// <param name="keyword">活动名关键字。</param>
+    /// <param name="status">状态过滤，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>活动列表与总数。幂等只读。</returns>
+    Task<(List<CouponActivity> Items, long Total)> PageActivitiesAsync(
+        int page, int pageSize, string keyword, int status, long platformId,
+        CancellationToken ct = default);
+
+    /// <summary>更新券活动的可变字段。</summary>
+    /// <param name="activity">携带 Id 与待更新字段的活动。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。幂等。</returns>
+    /// <remarks>
+    /// **不写 claimed_quantity**：理由同 <see cref="UpdateTemplateAsync"/>。
+    /// 另有一条更硬的约束：<c>ClaimQuantity</c> 不允许改到<b>小于已领取数</b>，
+    /// 否则「发了 100 张、已领 80 张」会被改成「总量 50 张」，
+    /// 报表上凭空多出 30 张不存在的券。
+    /// </remarks>
+    Task<int> UpdateActivityAsync(CouponActivity activity, CancellationToken ct = default);
+
+    /// <summary>分页查用户券（后台「券核销记录」）。</summary>
+    /// <param name="page">页码，从 1 起。</param>
+    /// <param name="pageSize">每页条数。</param>
+    /// <param name="status">券状态过滤，0 表示不限。</param>
+    /// <param name="templateId">模板 Id，0 表示不限。</param>
+    /// <param name="orderNo">订单号过滤，空表示不限。</param>
+    /// <param name="keyword">券码关键字。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>用户券列表与总数。幂等只读。</returns>
+    /// <remarks>
+    /// <b>用户券表就是核销记录的数据源</b>：它一行 = 一张已发出的券，
+    /// 带着领取时间、占用订单号与核销时间，不需要额外的 coupon_record 表。
+    /// 另建一张记录表只会带来「两处数据对不上」的老问题。
+    /// </remarks>
+    Task<(List<UserCoupon> Items, long Total)> PageUserCouponsAsync(
+        int page, int pageSize, int status, long templateId, string orderNo, string keyword,
+        CancellationToken ct = default);
+
+    /// <summary>按 Id 集合批量取券模板（给列表补 name 用）。</summary>
+    /// <param name="templateIds">模板 Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>命中的模板；<b>不保证与传入顺序一致</b>，调用方自行按 Id 建字典。</returns>
+    /// <remarks>
+    /// 存在的唯一理由是**避免 N+1**：券活动列表要显示模板名，
+    /// 在循环里逐行 <c>GetTemplateAsync</c> 的话一页 20 行就是 20 次查询。
+    /// 一次 IN 查询拿回整页。
+    /// </remarks>
+    Task<List<CouponTemplate>> ListTemplatesByIdsAsync(
+        IReadOnlyCollection<long> templateIds, CancellationToken ct = default);
 }

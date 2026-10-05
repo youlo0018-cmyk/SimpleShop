@@ -36,7 +36,7 @@ public record SaveProductCommand(
     int SortOrder = 0,
     string Remark = "",
     IReadOnlyList<SpecInput>? Specs = null,
-    IReadOnlyList<SkuInput>? Skus = null) : IRequest<ApiResponse<long>>;
+    IReadOnlyList<SkuInput>? Skus = null) : IRequest<ApiResponse<long>>, IProductSaveShape;
 
 /// <summary>规格项及其取值。</summary>
 /// <param name="SpecName">规格项名，如「颜色」「尺码」。</param>
@@ -182,43 +182,12 @@ public static class ProductValidators
     /// 例如「SKU 的规格值必须覆盖全部规格项」「划线原价不得低于售价」「分类必须是第 3 级」
     /// —— 它们要查库或比对集合，不是单字段校验能表达的。
     /// </remarks>
-    private sealed class SaveProductValidator : AbstractValidator<SaveProductCommand>
+    internal sealed class SaveProductValidator : ProductSaveValidatorBase<SaveProductCommand>
     {
         /// <summary>构造校验器。</summary>
         public SaveProductValidator()
         {
             RuleFor(x => x.ProductId).GreaterThanOrEqualTo(0).WithMessage("商品 Id 不能为负数");
-            RuleFor(x => x.SpuName).NotEmpty().Length(2, 128).WithMessage("商品名必须为 2-128 个字符");
-            RuleFor(x => x.SubTitle).MaximumLength(200).WithMessage("副标题最多 200 个字符");
-            RuleFor(x => x.CategoryId).GreaterThan(0).WithMessage("必须选择商品分类");
-            RuleFor(x => x.BrandId).GreaterThanOrEqualTo(0).WithMessage("品牌 Id 不能为负数");
-            RuleFor(x => x.MainImage).NotEmpty().MaximumLength(512).WithMessage("请上传商品主图");
-            RuleFor(x => x.Images).MaximumLength(2000).WithMessage("轮播图数据过长");
-            RuleFor(x => x.DetailImages).MaximumLength(2000).WithMessage("详情图数据过长");
-            RuleFor(x => x.Description).MaximumLength(4000).WithMessage("商品描述最多 4000 个字符");
-            RuleFor(x => x.Remark).MaximumLength(512).WithMessage("备注最多 512 个字符");
-            RuleFor(x => x.OriginalPrice).GreaterThanOrEqualTo(0).WithMessage("划线原价不能为负数");
-            RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0).WithMessage("排序不能为负数");
-            RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 上架 或 2 下架");
-
-            RuleFor(x => x.DeliveryType)
-                .Must(d => d is ProductEnums.DeliveryTypes.PhysicalExpress or ProductEnums.DeliveryTypes.Virtual or ProductEnums.DeliveryTypes.PhysicalSelfPickup)
-                .WithMessage("配送方式只能是 1 实物快递 / 2 虚拟商品 / 3 实物自提");
-
-            // 金额一律两位小数（DATA_SPEC「金额舍入口径」）
-            RuleFor(x => x.OriginalPrice)
-                .Must(p => p == decimal.Round(p, 2))
-                .WithMessage("划线原价最多两位小数");
-
-            RuleFor(x => x.Specs)
-                .NotNull().WithMessage("必须提供规格定义")
-                .Must(s => s!.Count > 0).WithMessage("至少要有一个规格项")
-                .Must(s => s!.Count <= 5).WithMessage("规格项最多 5 个");
-
-            RuleFor(x => x.Skus)
-                .NotNull().WithMessage("必须提供 SKU 列表")
-                .Must(s => s!.Count > 0).WithMessage("至少要有一个 SKU")
-                .Must(s => s!.Count <= 100).WithMessage("SKU 最多 100 个");
         }
     }
 

@@ -250,7 +250,7 @@
 | 账号 | `user:read` `user:create` `user:update` `user:status` |
 | 客户 | `customer:read` `customer:update` `customer:status` |
 | 角色权限 | `permission:read` `permission:create` `permission:update` `permission:delete` `permission:manage` |
-| 平台 | `platform:read` `platform:create` `platform:update` `platform:audit` |
+| 平台 | `platform:read` `platform:create` `platform:update` |
 | 商户 | `merchant:read` `merchant:create` `merchant:update` `merchant:audit` |
 | 地区地址 | `region:read` `region:update` |
 | 分类 | `category:read` `category:create` `category:update` `category:delete` |
@@ -271,7 +271,17 @@
 | 文件 | `file:upload` |
 | 日志 | `log:read` |
 
-内置权限点共 **78 个**，分布在上表 **23 个模块**中。新增权限点走权限点管理界面（见 5.4），不靠改种子脚本。
+内置权限点共 **77 个**，分布在上表 **23 个模块**中。新增权限点走权限点管理界面（见 5.4），不靠改种子脚本。
+
+> **2026-10 修正**
+>
+> 1. 原清单里的 `platform:audit` 已删除。平台由超管直接创建，没有「提交 → 审核」流程
+>    （有审核流程的是商户与商品），该权限点绑的 `/gateway/platforms/Audit` **端点从来不存在**。
+>    网关对「查不到映射」的路径是**放行**而非拒绝，所以一个绑不到任何端点的权限点
+>    只会让人误以为「平台审核」这件事受控。
+> 2. 同批次纠正了 30 条绑错的 `api_path`（原路径与真实端点对不上 = 该接口完全不鉴权）。
+>    `scripts/check-permission-paths.ps1` 现在把每条 `api_path` 按 ocelot 规则翻成下游路径，
+>    与控制器真实路由逐条比对，对不上就非零退出，并挂在 `tests/e2e/run-all.ps1` 里。
 
 ### 5.3 网关 RBAC
 

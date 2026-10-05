@@ -22,6 +22,24 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
+# 先跑静态核对：权限点绑的 api_path 是否真的对得上某个后端端点。
+# 放在最前面是因为它**不需要起服务**（秒级），而且它是唯一能抓到
+# 「api_path 写错 = 接口彻底不鉴权」这一类缺陷的手段 ——
+# 那种缺陷对任何账号都返回 200，用超管测一万遍也测不出来。
+Write-Host ("#" * 70) -ForegroundColor DarkGray
+Write-Host "# 运行 check-permission-paths.ps1（静态核对权限路径）" -ForegroundColor Cyan
+Write-Host ("#" * 70) -ForegroundColor DarkGray
+
+$permCheck = Join-Path $PSScriptRoot '..\..\scripts\check-permission-paths.ps1'
+$permOutput = (& $permCheck 6>&1 2>&1 | Out-String)
+$permExit = $LASTEXITCODE
+Write-Host $permOutput
+
+if ($permExit -ne 0) {
+    Write-Host "权限路径核对未通过，后续端到端回归不再执行（否则测的是一套不鉴权的接口）" -ForegroundColor Red
+    exit 1
+}
+
 $scripts = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*-regression.ps1' | Sort-Object Name
 if ($Filter) { $scripts = $scripts | Where-Object { $_.Name -like "*$Filter*" } }
 

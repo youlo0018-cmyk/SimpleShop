@@ -239,6 +239,23 @@ public static class CouponTypes
 
     /// <summary>满赠：达门槛送另一张券。</summary>
     public const int Gift = 4;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="couponType">券类型。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    /// <remarks>
+    /// DATA_SPEC 4.5：枚举文案由**后端下发**，前端不维护一份对照表。
+    /// 两边各写一份的结果是后端加了新类型、前端忘了改，
+    /// 界面直接显示一个裸数字（比显示「未知」糟糕得多）。
+    /// </remarks>
+    public static string NameOf(int couponType) => couponType switch
+    {
+        FullReduction => "满减券",
+        Discount => "折扣券",
+        Cash => "代金券",
+        Gift => "满赠券",
+        _ => "未知"
+    };
 }
 
 /// <summary>用户券状态。</summary>
@@ -255,6 +272,18 @@ public static class CouponStatuses
 
     /// <summary>已过期。</summary>
     public const int Expired = 4;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="status">券状态。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    public static string NameOf(int status) => status switch
+    {
+        Unused => "未使用",
+        Occupied => "已占用",
+        Consumed => "已核销",
+        Expired => "已过期",
+        _ => "未知"
+    };
 }
 
 /// <summary>占券记录状态。</summary>
@@ -281,6 +310,37 @@ public static class TargetTypes
 
     /// <summary>指定 SKU。</summary>
     public const int BySku = 3;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="targetType">适用范围。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    public static string NameOf(int targetType) => targetType switch
+    {
+        All => "全场",
+        BySpu => "指定商品",
+        BySku => "指定规格",
+        _ => "未知"
+    };
+}
+
+/// <summary>通用启停状态。券模板与券活动的 <c>status</c> 列都用它。</summary>
+public static class EnableStatuses
+{
+    /// <summary>启用。</summary>
+    public const int Enabled = 1;
+
+    /// <summary>停用。停用后不可领取，<b>已发出的券不受影响</b>。</summary>
+    public const int Disabled = 2;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="status">状态值。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    public static string NameOf(int status) => status switch
+    {
+        Enabled => "启用",
+        Disabled => "停用",
+        _ => "未知"
+    };
 }
 
 /// <summary>平台优惠优先级。</summary>

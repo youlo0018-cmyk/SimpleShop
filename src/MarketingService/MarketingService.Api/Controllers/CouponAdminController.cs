@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using Collaboration.Domain.Infrastructure;
 using FreeSql;
+using MarketingService.Application.Features.Coupon;
 using MarketingService.Domain.Entities;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
@@ -43,6 +44,43 @@ public sealed class CouponAdminController : ControllerBase
         return Ok(ApiResults.Ok(request.Id, "创建成功"));
     }
 
+    /// <summary>分页查询券模板。</summary>
+    /// <param name="command">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>券模板分页结果。</returns>
+    /// <remarks>
+    /// 列表里带出 <c>IssuedQuantity</c>（已发放数）与模板规则，
+    /// 运营才能在列表上直接判断「这个券还剩多少、门槛是多少」，
+    /// 不必逐个点进详情。
+    /// </remarks>
+    [HttpPost("coupon-templates/List")]
+    public Task<ApiResponse<PagedResult<CouponTemplateItem>>> ListTemplates(
+        [FromBody] QueryCouponTemplatesCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>编辑券模板。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// <b>改模板不影响已发出的券</b>（DATA_SPEC 5.12 快照机制），
+    /// 所以这里不做任何「同步到已发券」的动作，返回消息里也明确提示了这一点。
+    /// </remarks>
+    [HttpPost("coupon-templates/Update")]
+    public Task<ApiResponse> UpdateTemplate(
+        [FromBody] UpdateCouponTemplateCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>删除券模板（软删）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>已发出的券有快照，删模板不影响它们计算与展示。停发请改状态为「停用」。</remarks>
+    [HttpPost("coupon-templates/Delete")]
+    public Task<ApiResponse> DeleteTemplate(
+        [FromBody] DeleteCouponTemplateCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>查询券模板。</summary>
     /// <param name="templateId">模板 Id。</param>
     /// <returns>模板。</returns>
@@ -77,6 +115,46 @@ public sealed class CouponAdminController : ControllerBase
         _db.Insert(request).ExecuteAffrows();
         return Ok(ApiResults.Ok(request.Id, "创建成功"));
     }
+
+    /// <summary>分页查询券活动。</summary>
+    /// <param name="command">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>券活动分页结果，含关联模板名。</returns>
+    /// <remarks>
+    /// 列表冗余了 <c>TemplateName</c>（DATA_SPEC 4.1「下拉框显示 name，绝不显示 id」）：
+    /// 券活动名字常年起得很随意，只显示模板 Id 的列表等于让人去猜。
+    /// </remarks>
+    [HttpPost("coupon-activities/List")]
+    public Task<ApiResponse<PagedResult<CouponActivityItem>>> ListActivities(
+        [FromBody] QueryCouponActivitiesCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>编辑券活动。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// 🔴 <b>发放量不许改到小于已领取数</b>：活动池子是独立计数，
+    /// 调到比已领取还小，报表上就会凭空多出一堆不存在的券。
+    /// 这是唯一一条后台不能自由修改的字段。
+    /// </remarks>
+    [HttpPost("coupon-activities/Update")]
+    public Task<ApiResponse> UpdateActivity(
+        [FromBody] UpdateCouponActivityCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>分页查询券核销记录。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>用户券分页结果。</returns>
+    /// <remarks>
+    /// 数据源是 <c>user_coupon</c>（一行 = 一张已发出的券），
+    /// 不另建记录表——两张表并存只会带来「两处数据对不上」的老问题。
+    /// </remarks>
+    [HttpPost("coupon-records/List")]
+    public Task<ApiResponse<PagedResult<CouponRecordItem>>> ListCouponRecords(
+        [FromBody] QueryCouponRecordsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 
     /// <summary>把客户端传来的时间归一到 UTC。</summary>
     /// <param name="value">原始时间。</param>

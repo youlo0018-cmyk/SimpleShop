@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PaymentService.Application.Features.Payment;
 using PaymentService.Application.Features.Refund;
+using PaymentService.Application.Features.Admin;
 using PaymentService.Application.Services;
 using PaymentService.Infrastructure;
 
@@ -29,6 +30,7 @@ public static class ApiServiceCollectionExtensions
         // 校验器写在嵌套静态类里，AddValidatorsFromAssembly 扫不到，必须显式注册
         PaymentValidators.AddPaymentValidators(services);
         RefundValidators.AddRefundValidators(services);
+        PaymentAdminValidators.AddPaymentAdminValidators(services);
 
         services.AddSingleton<IPaymentOptions, PaymentOptions>();
         AddOrderPort(services, configuration);

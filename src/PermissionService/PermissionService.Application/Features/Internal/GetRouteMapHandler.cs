@@ -31,8 +31,15 @@ public sealed class GetRouteMapHandler : IRequestHandler<GetRouteMapCommand, Api
             .Where(a => a.Status == 1 && a.ApiPath != null && a.ApiPath != string.Empty)
             .ToListAsync(ct);
 
+        // 一个权限点可以绑**多条**路径（BUSINESS.md 5.4「ApiPath（绑定的 /gateway/* 路径，可多个）」），
+        // 用逗号分隔存。这里必须展开成「一条路径一条映射」：
+        // 网关的字典是 path → code，一行只能给一个 code，
+        // 不展开的话「装修商户」那种没有公共前缀的一组端点就绑不上。
+        //
+        // 之前只把 ApiPath 当成单条路径，于是这类需求只能退而求其次绑一个公共前缀，
+        // 而前缀要么覆盖过大（把平台装修也放进去），要么根本不存在。
         var entries = rows
-            .Select(a => new RouteMapEntry(a.ApiPath.Trim(), a.Code.Trim()))
+            .SelectMany(a => SplitPaths(a.ApiPath).Select(p => new RouteMapEntry(p, a.Code.Trim())))
             // 同一路径理论上只绑定一个权限点；真出现重复时保留排序靠前的那个，
             // 不能让网关随机挑一个——那会让「这个接口到底要什么权限」变成薛定谔的。
             .GroupBy(a => a.Path, StringComparer.OrdinalIgnoreCase)
@@ -42,4 +49,18 @@ public sealed class GetRouteMapHandler : IRequestHandler<GetRouteMapCommand, Api
 
         return ApiResults.Ok(entries);
     }
+
+    /// <summary>把逗号分隔的路径串拆成单条路径。</summary>
+    /// <param name="apiPath">原始 ApiPath 文本，可为空。</param>
+    /// <returns>去掉空白项并 trim 后的路径列表。</returns>
+    /// <remarks>
+    /// 用**逗号**而不是换行 / 分号：ApiPath 是单行 varchar(512)，
+    /// 换行在管理界面里保存时会被悄悄截断或折行，逗号是最不容易出意外的。
+    /// 同时兼容中英文逗号——后台表单里中文输入法打出来的是「，」。
+    /// </remarks>
+    private static IReadOnlyList<string> SplitPaths(string? apiPath)
+        => (apiPath ?? string.Empty)
+            .Split([',', '，', ';', '；'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => p.Length > 0)
+            .ToArray();
 }

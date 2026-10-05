@@ -19,6 +19,7 @@ public static class InfrastructureServiceCollectionExtensions
     {
         services.AddScoped<ICategoryRepository, CategoryRepository>();
         services.AddScoped<IBrandRepository, BrandRepository>();
+    services.AddScoped<ILogisticsCompanyRepository, LogisticsCompanyRepository>();
         services.AddScoped<IProductRepository, ProductRepository>();
 
         AddSearchIndex(services, configuration);

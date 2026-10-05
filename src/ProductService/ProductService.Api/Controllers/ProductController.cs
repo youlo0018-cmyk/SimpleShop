@@ -57,6 +57,20 @@ public sealed class ProductController : ControllerBase
     public Task<ApiResponse<long>> Save([FromBody] SaveProductCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>新建商品。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回新商品 Id。</returns>
+    /// <remarks>
+    /// 字段与 <c>products/Save</c> 完全一致，但**只建不改**：
+    /// 之所以单独开一个端点而不是让权限点都绑 Save，是因为「能建档」与「能改价」
+    /// 得能分开授予——共用一个端点就只能二选一，要么建档权限附带改价能力，要么谁都建不了。
+    /// 本命令里没有 ProductId 字段，所以不存在「传了个 Id 就改成别的商品」的可能。
+    /// </remarks>
+    [HttpPost("Create")]
+    public Task<ApiResponse<long>> Create([FromBody] CreateProductCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>提交审核：把商品送回待审核队列。</summary>
     /// <param name="command">提交命令。</param>
     /// <param name="ct">取消令牌。</param>

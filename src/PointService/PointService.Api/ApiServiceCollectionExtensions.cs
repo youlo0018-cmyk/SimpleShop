@@ -2,6 +2,7 @@ using Collaboration.Domain.MediatR;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using PointService.Application.Features.Admin;
 using PointService.Application.Features.Operations;
 using PointService.Infrastructure;
 
@@ -22,6 +23,7 @@ public static class ApiServiceCollectionExtensions
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         PointValidators.AddPointValidators(services);
+        PointRuleValidators.AddPointRuleValidators(services);
 
         services.AddInfrastructure();
         return services;

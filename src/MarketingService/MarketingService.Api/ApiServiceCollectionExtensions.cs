@@ -31,6 +31,7 @@ public static class ApiServiceCollectionExtensions
 
         // 嵌套静态类里的校验器 AddValidatorsFromAssembly 扫不到，显式注册
         CouponValidators.AddCouponValidators(services);
+        AdminCouponValidators.AddAdminCouponValidators(services);
         PromotionValidators.AddPromotionValidators(services);
         SeckillValidators.AddSeckillValidators(services);
         GrabValidators.AddGrabValidators(services);

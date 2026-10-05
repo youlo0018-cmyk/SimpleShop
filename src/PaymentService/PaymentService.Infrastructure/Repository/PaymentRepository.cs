@@ -57,4 +57,33 @@ public sealed class PaymentRepository : CrudRepository<PaymentOrder>, IPaymentRe
         => (int)await Db.Select<PaymentOrder>()
             .Where(a => a.OrderNo == orderNo && a.Status == PaymentStatuses.Pending)
             .CountAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<PagedPayments> PageAsync(
+        int status, string keyword, long platformId, long merchantId,
+        int page, int pageSize, CancellationToken ct = default)
+    {
+        var select = Db.Select<PaymentOrder>()
+            .Where(a => status <= 0 || a.Status == status)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            select = select.Where(a => a.PaymentNo.Contains(kw) || a.OrderNo.Contains(kw));
+        }
+
+        var total = await select.CountAsync(ct).ConfigureAwait(false);
+
+        // 按创建时间倒序：新单在前。同一毫秒创建的用 Id 兜底，
+        // 否则翻页时同一单会出现在两页里
+        var items = await select
+            .OrderByDescending(a => a.CreatedAt).OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return new PagedPayments(items, total, page, pageSize);
+    }
 }

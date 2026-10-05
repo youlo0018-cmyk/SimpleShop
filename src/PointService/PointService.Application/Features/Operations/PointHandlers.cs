@@ -3,6 +3,7 @@ using MediatR;
 using Microsoft.Extensions.Logging;
 using PointService.Domain.Entities;
 using PointService.Domain.IRepository;
+using PointService.Domain.Services;
 
 namespace PointService.Application.Features.Operations;
 
@@ -10,10 +11,16 @@ namespace PointService.Application.Features.Operations;
 public sealed class EarnPointsHandler : IRequestHandler<EarnPointsCommand, ApiResponse<PointBalance>>
 {
     private readonly IPointRepository _points;
+    private readonly IPointRuleProvider _rules;
 
     /// <summary>构造处理器。</summary>
     /// <param name="points">积分仓储。</param>
-    public EarnPointsHandler(IPointRepository points) => _points = points;
+    /// <param name="rules">积分规则提供器。</param>
+    public EarnPointsHandler(IPointRepository points, IPointRuleProvider rules)
+    {
+        _points = points;
+        _rules = rules;
+    }
 
     /// <summary>执行发放。</summary>
     /// <param name="request">发放命令。</param>
@@ -21,9 +28,11 @@ public sealed class EarnPointsHandler : IRequestHandler<EarnPointsCommand, ApiRe
     /// <returns>成功返回最新余额。</returns>
     public async Task<ApiResponse<PointBalance>> Handle(EarnPointsCommand request, CancellationToken ct)
     {
+        var rules = await _rules.GetAsync(ct).ConfigureAwait(false);
+
         var outcome = await _points.EarnAsync(
             request.CustomerId, request.Source, request.Quantity, request.BizNo,
-            request.Action, request.Remark, PointRules.ValidDays, ct);
+            request.Action, request.Remark, rules.ValidDays, ct);
 
         if (!outcome.Succeeded)
         {
@@ -74,10 +83,16 @@ public sealed class LockPointsHandler : IRequestHandler<LockPointsCommand, ApiRe
 public sealed class EarnByOrderHandler : IRequestHandler<EarnByOrderCommand, ApiResponse<PointBalance>>
 {
     private readonly IPointRepository _points;
+    private readonly IPointRuleProvider _rules;
 
     /// <summary>构造处理器。</summary>
     /// <param name="points">积分仓储。</param>
-    public EarnByOrderHandler(IPointRepository points) => _points = points;
+    /// <param name="rules">积分规则提供器。</param>
+    public EarnByOrderHandler(IPointRepository points, IPointRuleProvider rules)
+    {
+        _points = points;
+        _rules = rules;
+    }
 
     /// <summary>执行发放。</summary>
     /// <param name="request">发放命令。</param>
@@ -93,7 +108,9 @@ public sealed class EarnByOrderHandler : IRequestHandler<EarnByOrderCommand, Api
     /// </remarks>
     public async Task<ApiResponse<PointBalance>> Handle(EarnByOrderCommand request, CancellationToken ct)
     {
-        var earned = (long)Math.Floor(request.PaidAmount * PointRules.PointsPerYuanPerYuan);
+        // 规则来自配置（后台可改），不是常量。
+        var rules = await _rules.GetAsync(ct).ConfigureAwait(false);
+        var earned = (long)Math.Floor(request.PaidAmount * rules.EarnPointsPerYuan);
 
         if (earned <= 0)
         {
@@ -108,7 +125,7 @@ public sealed class EarnByOrderHandler : IRequestHandler<EarnByOrderCommand, Api
 
         var outcome = await _points.EarnAsync(
             request.CustomerId, PointSources.OrderCompleted, earned, request.BizNo,
-            "earn", request.Remark, PointRules.ValidDays, ct);
+            "earn", request.Remark, rules.ValidDays, ct);
 
         if (!outcome.Succeeded)
         {

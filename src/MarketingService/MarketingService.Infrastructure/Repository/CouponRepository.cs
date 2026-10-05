@@ -423,4 +423,154 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
             rate,
             Math.Round(discount, 2, MidpointRounding.AwayFromZero));
     }
+
+    /// <inheritdoc />
+    public async Task<(List<CouponTemplate> Items, long Total)> PageTemplatesAsync(
+        int page, int pageSize, string keyword, int couponType, int status, long platformId,
+        CancellationToken ct = default)
+    {
+        var select = _db.Select<CouponTemplate>()
+            .Where(a => couponType <= 0 || a.CouponType == couponType)
+            .Where(a => status <= 0 || a.Status == status)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            select = select.Where(a => a.TemplateName.Contains(kw));
+        }
+
+        var total = await select.CountAsync(ct).ConfigureAwait(false);
+
+        // 排序：显式排序值在前，再按 Id 兜底。
+        // 少了那个 Id：两个模板 SortOrder 相同时顺序由数据库决定，翻页会重复或漏行。
+        var items = await select
+            .OrderBy(a => a.SortOrder)
+            .OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return (items, total);
+    }
+
+    /// <inheritdoc />
+    public Task<int> UpdateTemplateAsync(CouponTemplate template, CancellationToken ct = default)
+        // 显式列出要更新的列：IssuedQuantity / PlatformId / MerchantId 都不该由后台表单改。
+        // 用 SetDtoIgnore 的话，多写一个属性到命令上就会被顺带写进去——
+        // 而 IssuedQuantity 一旦能被改，报表的「已发放」就成了可以手工编造的数字。
+        => _db.Update<CouponTemplate>()
+            .Where(a => a.Id == template.Id)
+            .Set(a => new CouponTemplate
+            {
+                TemplateName = template.TemplateName,
+                CouponType = template.CouponType,
+                ThresholdAmount = template.ThresholdAmount,
+                DiscountAmount = template.DiscountAmount,
+                DiscountRate = template.DiscountRate,
+                GiftTemplateId = template.GiftTemplateId,
+                ValidDays = template.ValidDays,
+                TotalQuantity = template.TotalQuantity,
+                PerUserLimit = template.PerUserLimit,
+                PerOrderLimit = template.PerOrderLimit,
+                SortOrder = template.SortOrder,
+                Status = template.Status,
+                UpdatedAt = DateTime.UtcNow
+            })
+            .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public Task<int> DeleteTemplateAsync(long templateId, CancellationToken ct = default)
+        => _db.Update<CouponTemplate>()
+            .Where(a => a.Id == templateId)
+            .Set(a => new CouponTemplate { IsDeleted = true, DeletedAt = DateTime.UtcNow })
+            .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<(List<CouponActivity> Items, long Total)> PageActivitiesAsync(
+        int page, int pageSize, string keyword, int status, long platformId,
+        CancellationToken ct = default)
+    {
+        var select = _db.Select<CouponActivity>()
+            .Where(a => status <= 0 || a.Status == status)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            select = select.Where(a => a.ActivityName.Contains(kw));
+        }
+
+        var total = await select.CountAsync(ct).ConfigureAwait(false);
+        var items = await select
+            .OrderBy(a => a.SortOrder)
+            .OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return (items, total);
+    }
+
+    /// <inheritdoc />
+    public Task<int> UpdateActivityAsync(CouponActivity activity, CancellationToken ct = default)
+        => _db.Update<CouponActivity>()
+            .Where(a => a.Id == activity.Id)
+            .Set(a => new CouponActivity
+            {
+                ActivityName = activity.ActivityName,
+                TemplateId = activity.TemplateId,
+                ClaimStartTime = activity.ClaimStartTime,
+                ClaimEndTime = activity.ClaimEndTime,
+                ClaimQuantity = activity.ClaimQuantity,
+                PerUserLimit = activity.PerUserLimit,
+                TargetType = activity.TargetType,
+                Targets = activity.Targets,
+                SortOrder = activity.SortOrder,
+                Status = activity.Status,
+                UpdatedAt = DateTime.UtcNow
+            })
+            .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<(List<UserCoupon> Items, long Total)> PageUserCouponsAsync(
+        int page, int pageSize, int status, long templateId, string orderNo, string keyword,
+        CancellationToken ct = default)
+    {
+        var select = _db.Select<UserCoupon>()
+            .Where(a => status <= 0 || a.Status == status)
+            .Where(a => templateId <= 0 || a.TemplateId == templateId);
+
+        if (!string.IsNullOrWhiteSpace(orderNo))
+        {
+            var no = orderNo.Trim();
+            select = select.Where(a => a.OrderNo == no);
+        }
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            select = select.Where(a => a.CouponCode.Contains(kw));
+        }
+
+        var total = await select.CountAsync(ct).ConfigureAwait(false);
+
+        // 领取时间倒序：核销记录页是「最近发生了什么」，不是「按模板分组」。
+        var items = await select
+            .OrderByDescending(a => a.ReceiveAt)
+            .OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return (items, total);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<CouponTemplate>> ListTemplatesByIdsAsync(
+        IReadOnlyCollection<long> templateIds, CancellationToken ct = default)
+        => await _db.Select<CouponTemplate>()
+            .Where(a => templateIds.Contains(a.Id))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
 }

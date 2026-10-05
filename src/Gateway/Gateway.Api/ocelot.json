@@ -530,6 +530,42 @@
           "Port": 5064
         }
       ]
+    },
+    {
+      "//说明": "后台支付单。与 /gateway/payments/*（C 端下单链路自己调）分成两个上游前缀，权限点才能只绑后台这一组。",
+      "UpstreamPathTemplate": "/gateway/admin/payments/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/admin/payments/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5066
+        }
+      ]
+    },
+    {
+      "//说明": "物流公司字典（DATA_SPEC 5.23）。放 ProductService：它是发货表单的下拉数据源，与 brand / category 同类字典。",
+      "UpstreamPathTemplate": "/gateway/logistics-companies/{everything}",
+      "UpstreamHttpMethod": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE"
+      ],
+      "DownstreamPathTemplate": "/logistics-companies/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "127.0.0.1",
+          "Port": 5058
+        }
+      ]
     }
   ]
 }

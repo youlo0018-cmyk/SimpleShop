@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using PointService.Application.Features.Admin;
 using PointService.Application.Features.Operations;
 
 namespace PointService.Api.Controllers;
@@ -53,4 +54,32 @@ public sealed class PointController : ControllerBase
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
         => _mediator.Send(new QueryPointRecordsCommand(customerId, page, pageSize), ct);
+
+    /// <summary>读取积分规则（后台「积分规则维护」页）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>当前规则 + 规格默认值。</returns>
+    /// <remarks>
+    /// 与 C 端的 <c>Records</c>（某个客户自己的流水）刻意分开：
+    /// 后台要看的是<b>全站</b>流水，而这里那条必须带 customerId 才能查。
+    /// 两者混在一个接口上，权限点就没法只绑后台那一个。
+    /// </remarks>
+    [HttpPost("Rules")]
+    public Task<ApiResponse<PointRulesView>> Rules(
+        [FromBody] QueryPointRulesCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>保存积分规则（整组覆盖）。</summary>
+    /// <param name="command">命令，7 条规则全量提交。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// <b>不追溯已发放的积分</b>：改了有效期或余额上限只对之后的发放生效。
+    /// 已发放批次保持原有到期时间——用户手里的积分是「已承诺」的，
+    /// 追溯变更等于单方面改合同。
+    /// </remarks>
+    [HttpPost("SaveRules")]
+    public Task<ApiResponse> SaveRules(
+        [FromBody] SavePointRulesCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 }

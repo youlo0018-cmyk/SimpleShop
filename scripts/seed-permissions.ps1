@@ -1,10 +1,11 @@
 <#
 .SYNOPSIS
-    播种权限树：5 个业务大类 + 23 个功能模块 + 79 个权限点。
+    播种权限树：5 个业务大类 + 23 个功能模块 + 77 个权限点。
 .DESCRIPTION
     依据 BUSINESS.md 5.2 的权限点清单与 5.4 的 4 层树结构。
     幂等：已存在的 code 不重复插入，先删后插按 code 对齐。
     ID 使用确定性编号（结构节点 2001/2101 段，叶子 3001 段）便于排障与关联。
+    api_path 支持逗号分隔的多条路径（BUSINESS.md 5.4「ApiPath 可多个」）。
 #>
 [CmdletBinding()]
 param(
@@ -46,16 +47,34 @@ $leaves = [ordered]@{
     # 写成两遍会撞 uk_permission_code，整个播种直接失败。
     '2102' = @(@('customer:read', '客户列表与详情', '/gateway/admin/customers/*'),
              @('customer:status', '启停客户', '/gateway/admin/customers/ChangeStatus'))
-    '2103' = @(@('permission:read', '角色列表', '/gateway/permissions/Roles'), @('permission:create', '新建角色', '/gateway/permissions/Roles/Create'),
-             @('permission:update', '编辑角色', '/gateway/permissions/Roles/Update'), @('permission:delete', '删除角色', '/gateway/permissions/Roles/Delete'),
+    # 角色 CRUD 在**另一个控制器**上（RoleController，路由是 roles/），
+    # 权限树 CRUD 在 PermissionController（路由是 permissions/）。
+    # 之前四个角色权限点全绑成了 /gateway/permissions/Roles*，
+    # 那里根本没有 Roles 子路径 —— 网关查不到映射就**放行**，
+    # 等于「角色增删改」四个接口完全不鉴权（scripts/check-permission-paths.ps1 抓出来的）。
+    '2103' = @(@('permission:read', '角色列表', '/gateway/roles/List'), @('permission:create', '新建角色', '/gateway/roles/Create'),
+             @('permission:update', '编辑角色', '/gateway/roles/Update'), @('permission:delete', '删除角色', '/gateway/roles/Delete'),
              @('permission:manage', '权限点管理', '/gateway/permissions/*'))
+    # platform:audit 之前绑 /gateway/platforms/Audit，而该端点**根本不存在**
+    # （平台只有 List/Create/Update/Delete/Options）。
+    # 商户审核是真实流程（merchants/Audit），平台审核在规格里没有对应流程，
+    # 所以这个叶子节点本就不该存在——按 BUSINESS.md 5.2 的清单删除它，
+    # 权限点总数随之从 78 变为 77（见 BUSINESS.md 同步说明）。
     '2104' = @(@('platform:read', '平台列表', '/gateway/platforms/List'), @('platform:create', '新建平台', '/gateway/platforms/Create'),
-             @('platform:update', '编辑平台', '/gateway/platforms/Update'), @('platform:audit', '平台审核', '/gateway/platforms/Audit'))
+             @('platform:update', '编辑平台', '/gateway/platforms/Update'))
     '2105' = @(@('merchant:read', '商户列表', '/gateway/merchants/List'), @('merchant:create', '新建商户', '/gateway/merchants/Create'),
              @('merchant:update', '编辑商户', '/gateway/merchants/Update'), @('merchant:audit', '商户审核', '/gateway/merchants/Audit'))
-    '2106' = @(@('region:read', '地区地址查看', '/gateway/platform-configs/Regions'), @('region:update', '地区地址维护', '/gateway/platform-configs/SaveRegions'))
-    '2107' = @(@('category:read', '分类列表', '/gateway/categories/List'), @('category:create', '新建分类', '/gateway/categories/Create'),
+    # 地区在 MerchantPlatformService 的独立控制器上，路由是 regions/，
+    # **不存在** platform-configs 这个前缀。
+    '2106' = @(@('region:read', '地区地址查看', '/gateway/regions/Get'), @('region:update', '地区地址维护', '/gateway/regions/Save'))
+    # 分类只有一个树形接口，没有单独的 List。
+    '2107' = @(@('category:read', '分类列表', '/gateway/categories/Tree'), @('category:create', '新建分类', '/gateway/categories/Create'),
              @('category:update', '编辑分类', '/gateway/categories/Update'), @('category:delete', '删除分类', '/gateway/categories/Delete'))
+    # DATA_SPEC 5.6 明确要求 Create 与 Save **两个端点**：
+    # Create 只建（传了 ProductId 直接拒绝），Save 只改（Id 必须存在）。
+    # 之前只有 Save 一个端点，于是 product:create 无处可绑——它绑的
+    # /gateway/products/Create 查不到映射，**新建商品接口等于不鉴权**。
+    # 拆成两个端点还有一个好处：「能改价」与「能建档」变成两种可分别授予的能力。
     '2109' = @(@('product:read', '商品列表', '/gateway/products/List'), @('product:create', '新建商品', '/gateway/products/Create'),
              @('product:update', '编辑商品', '/gateway/products/Save'), @('product:audit', '商品审核', '/gateway/products/Audit'),
              @('product:delete', '删除商品', '/gateway/products/Delete'))
@@ -68,20 +87,33 @@ $leaves = [ordered]@{
              @('order:pickup-ready', '备货完成', '/gateway/admin/orders/SelfPickupReady'),
              @('order:simulate', '模拟支付', '/gateway/admin/orders/SimulatePayment'),
              @('order:refund', '订单退款', '/gateway/admin/orders/Refund'),
-             @('logistics:manage', '物流公司维护', '/gateway/logistics/*'))
-    '2112' = ,@(@('payment:read', '支付单列表', '/gateway/payments/List'))
-    '2113' = @(@('refund:read', '退款单列表', '/gateway/refunds/List'), @('refund:apply', '发起退款', '/gateway/payments/Refund'),
+             # 物流公司字典（DATA_SPEC 5.23）落在 ProductService：它是发货表单的下拉数据源。
+             # 之前绑的是不存在的 /gateway/logistics/*，同样等于不鉴权。
+             @('logistics:manage', '物流公司维护', '/gateway/logistics-companies/*'))
+    # 支付单：后台走 /gateway/admin/payments/List（真实端点在 AdminPaymentController 上）。
+    # 这里必须和真实端点一字不差 —— 网关按 api_path 最长匹配，匹配不到就是**放行**。
+    '2112' = ,@(@('payment:read', '支付单列表', '/gateway/admin/payments/List'))
+    # 退款单详情与审批同在 /gateway/refunds/* 下，用 /* 通配一次覆盖，省得再加叶子。
+    # 退款「发起」在 refunds/Apply 上，不在 payments/ 下（那边是支付单）。
+    '2113' = @(@('refund:read', '退款单列表与详情', '/gateway/refunds/List'), @('refund:apply', '发起退款', '/gateway/refunds/Apply'),
              @('refund:approve', '审批退款', '/gateway/refunds/Approve'), @('refund:reject', '拒绝退款', '/gateway/refunds/Reject'))
     '2114' = @(@('marketing:read', '活动列表', '/gateway/marketing/activities/List'), @('marketing:create', '新建活动', '/gateway/marketing/activities/Create'),
              @('marketing:update', '编辑活动', '/gateway/marketing/activities/Update'), @('marketing:delete', '删除活动', '/gateway/marketing/activities/Delete'))
+    # 券模板 / 券活动之前只绑了 List 与 Create，但真实端点当时只有 Get 与 Create，
+    # 于是 List / Update / Delete 全都查不到映射 —— 不鉴权。端点已补齐，路径对齐。
     '2115' = @(@('coupon-template:read', '券模板列表', '/gateway/marketing/coupon-templates/List'), @('coupon-template:create', '新建券模板', '/gateway/marketing/coupon-templates/Create'),
              @('coupon-template:update', '编辑券模板', '/gateway/marketing/coupon-templates/Update'), @('coupon-template:delete', '删除券模板', '/gateway/marketing/coupon-templates/Delete'),
              @('coupon-activity:read', '券活动列表', '/gateway/marketing/coupon-activities/List'), @('coupon-activity:create', '新建券活动', '/gateway/marketing/coupon-activities/Create'),
              @('coupon-activity:update', '编辑券活动', '/gateway/marketing/coupon-activities/Update'), @('coupon-record:read', '券核销记录', '/gateway/marketing/coupon-records/List'))
-    '2116' = @(@('marketing-config:read', '营销配置查看', '/gateway/marketing-config/Get'), @('marketing-config:update', '营销配置维护', '/gateway/marketing-config/Save'))
-    '2117' = @(@('seckill:read', '秒杀场次列表', '/gateway/marketing/seckill-sessions/List'), @('seckill:create', '新建场次', '/gateway/marketing/seckill-sessions/Create'),
-             @('seckill:update', '编辑场次', '/gateway/marketing/seckill-sessions/Update'), @('seckill:end', '结束中止场次', '/gateway/marketing/seckill-sessions/End'))
-    '2118' = @(@('point:read', '积分报表', '/gateway/points/Report'), @('point:rule-update', '积分规则维护', '/gateway/points/Rules'))
+    # 营销配置在 marketing 命名空间下：/gateway/marketing/marketing-config/{Get,Save}。
+    '2116' = @(@('marketing-config:read', '营销配置查看', '/gateway/marketing/marketing-config/Get'), @('marketing-config:update', '营销配置维护', '/gateway/marketing/marketing-config/Save'))
+    # 秒杀场次是 **seckill/sessions/**（两段），不是 seckill-sessions（一段）。
+    # 结束动作的真名是 Finish，不是 End。
+    '2117' = @(@('seckill:read', '秒杀场次列表', '/gateway/marketing/seckill/sessions/List'), @('seckill:create', '新建场次', '/gateway/marketing/seckill/sessions/Create'),
+             @('seckill:update', '编辑场次', '/gateway/marketing/seckill/sessions/Update'), @('seckill:end', '结束中止场次', '/gateway/marketing/seckill/sessions/Finish'))
+    # 积分报表在 PointService 的 reports/Point 上，不在 points/Report。
+    # 积分流水列表挂在 points/Records（新增），规则维护挂在 points/Rules（新增）。
+    '2118' = @(@('point:read', '积分报表与流水', '/gateway/points/Records'), @('point:rule-update', '积分规则维护', '/gateway/points/Rules'))
     # ⚠️ 后台评价端点在 EvaluateAdminController 上，路由是 **evaluates/admin/**
     # （真实路径 /gateway/evaluates/admin/Reply 等）。
     # 这里原本绑的是 /gateway/evaluates/Reply —— 少了一层 admin，
@@ -89,11 +121,18 @@ $leaves = [ordered]@{
     # 等于三个后台评价接口（列表 / 隐藏 / 回复）**完全没有鉴权**。
     '2119' = @(@('evaluate:read', '评价列表', '/gateway/evaluates/admin/List'), @('evaluate:manage', '隐藏评价', '/gateway/evaluates/admin/Hide'),
              @('evaluate:reply', '评价回复', '/gateway/evaluates/admin/Reply'))
-    '2120' = @(@('design:read', '装修查看', '/gateway/platform-configs/Design'), @('design:update', '装修维护', '/gateway/platform-configs/SaveDraft'),
-             @('design:merchant', '商户装修', '/gateway/merchant-configs/*'))
+    # 装修在 MerchantPlatformService 的 design/ 下。
+    # 七个端点里平台装修与商户装修**交错排列**（Platform / Merchant / Components /
+    # SavePlatformDraft / SaveMerchantDraft / PublishPlatform / PublishMerchant），
+    # 没有任何一个公共前缀能把它们干净地分开——所以只能一个权限点绑多条路径。
+    # 这正是 BUSINESS.md 5.4「ApiPath 可多个」的用武之地，逗号分隔。
+    '2120' = @(@('design:read', '平台装修查看', '/gateway/design/Platform,/gateway/design/Components'),
+             @('design:update', '平台装修维护', '/gateway/design/SavePlatformDraft,/gateway/design/PublishPlatform'),
+             @('design:merchant', '商户店铺装修', '/gateway/design/Merchant,/gateway/design/SaveMerchantDraft,/gateway/design/PublishMerchant'))
     '2121' = @(@('dashboard:view', '工作台看板', '/gateway/reports/Report'), @('report:view', '经营报表', '/gateway/reports/*'),
              @('report:marketing', '营销效果报表', '/gateway/reports/Marketing'), @('report:seckill', '秒杀效果报表', '/gateway/reports/Seckill'))
-    '2122' = ,@(@('search:reindex', '重建商品索引', '/gateway/products/Reindex'))
+    # 重建索引与索引对账都在 ProductService（端点本轮新增）。
+    '2122' = ,@(@('search:reindex', '重建商品索引与对账', '/gateway/products/SearchIndex/*'))
     '2123' = @(@('file:upload', '文件上传', '/gateway/files/*'), @('log:read', '日志查询', '/gateway/logs/*'))
 }
 

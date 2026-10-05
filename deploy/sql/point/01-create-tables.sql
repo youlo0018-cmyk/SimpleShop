@@ -108,6 +108,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_point_record_idem
 
 CREATE INDEX IF NOT EXISTS idx_point_record_customer ON point_record (customer_id, created_at);
 
+-- ============================================================================
+-- 积分规则配置（权限点 point:rule-update，后台「积分规则维护」页）
+--
+-- 设计取舍：为什么是「覆盖表」而不是「把规则做成行」——
+--   规则只有 7 条且**永远存在**（代码里 PointRules 有默认值），
+--   做成行的话每次发放积分都要查一次配置表来拿规则，
+--   而积分是下单主链路上的同步调用，多一次查询就多一个抖动点。
+--   所以这里是「只有被改过的规则才进表」，查不到就用代码默认值。
+--   这也让单元测试在没有这张表数据时仍然跑出与规格一致的结果。
+--
+-- rule_key 用规则名（如 balance_cap / sign_in_rewards），
+-- rule_value 用文本存，签到奖励存 JSON 数组 [1,2,3,5,8,10,15]。
+-- 数值列存字符串是刻意的：不同规则的取值形态不同（整数 / 小数 / JSON），
+-- 强行拆成多列会为了「列好看」把规则模型搞复杂。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS point_rule_config (
+    id            bigint        NOT NULL,
+    created_at    timestamp     NOT NULL,
+    updated_at    timestamp     NULL,
+    is_deleted    boolean       NOT NULL DEFAULT false,
+    deleted_at    timestamp     NULL,
+    rule_key      varchar(64)   NOT NULL,
+    rule_value    varchar(512)  NOT NULL,
+    description   varchar(256)  NOT NULL DEFAULT '',
+    updated_by_id bigint        NOT NULL DEFAULT 0,
+    updated_by_name varchar(64) NOT NULL DEFAULT '',
+    CONSTRAINT pk_point_rule_config PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_point_rule_config_key
+    ON point_rule_config (rule_key) WHERE is_deleted = false;
+
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO simpleshop_app;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO simpleshop_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO simpleshop_app;

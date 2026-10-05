@@ -44,4 +44,29 @@ public interface IPaymentRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>数量。</returns>
     Task<int> CountPendingAsync(string orderNo, CancellationToken ct = default);
+
+    /// <summary>后台分页查支付单。</summary>
+    /// <param name="status">状态过滤，0 表示不限。</param>
+    /// <param name="keyword">按支付单号 / 订单号模糊匹配。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="page">页码，从 1 起。</param>
+    /// <param name="pageSize">每页条数。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>当前页数据与总条数。</returns>
+    /// <remarks>
+    /// 之前支付单**只能按订单号查单条**（<c>GetByOrderNoAsync</c>），后台没有任何分页入口 ——
+    /// 运营想看「今天有哪些单支付失败」都做不到。
+    /// </remarks>
+    Task<PagedPayments> PageAsync(
+        int status, string keyword, long platformId, long merchantId,
+        int page, int pageSize, CancellationToken ct = default);
 }
+
+/// <summary>支付单分页结果。</summary>
+/// <param name="Items">当前页数据。</param>
+/// <param name="Total">总条数。</param>
+/// <param name="Page">当前页码。</param>
+/// <param name="PageSize">每页条数。</param>
+public sealed record PagedPayments(
+    IReadOnlyList<PaymentOrder> Items, long Total, int Page, int PageSize);

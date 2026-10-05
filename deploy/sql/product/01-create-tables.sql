@@ -59,6 +59,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_brand_name
     ON brand (brand_name) WHERE is_deleted = false;
 CREATE INDEX IF NOT EXISTS idx_brand_platform ON brand (platform_id, status);
 
+-- 物流公司字典（DATA_SPEC 5.23）
+-- 独立小表：它是「发货」表单里那个可搜索下拉的数据源，运营会自己新增快递公司，
+-- 所以不能硬编码在前端常量里。放在 ProductService 而不是 OrderService 的理由是
+-- 它本质是**商品/订单共用的字典数据**，与 brand / category 同一类。
+CREATE TABLE IF NOT EXISTS logistics_company (
+    id            bigint        NOT NULL,
+    created_at    timestamp     NOT NULL,
+    updated_at    timestamp     NULL,
+    is_deleted    boolean       NOT NULL DEFAULT false,
+    deleted_at    timestamp     NULL,
+    created_by_id bigint        NOT NULL DEFAULT 0,
+    created_by_name varchar(64) NOT NULL DEFAULT '',
+    operation_id  bigint        NOT NULL DEFAULT 0,
+    operation_name varchar(64)  NOT NULL DEFAULT '',
+    platform_id   bigint        NOT NULL DEFAULT 0,
+    merchant_id   bigint        NOT NULL DEFAULT 0,
+    -- 展示名，如「顺丰速运」。全局唯一（partial unique，软删不占坑）。
+    company_name  varchar(64)   NOT NULL,
+    -- 编码，如 sf / yto。发货单与快递鸟一类对接用；本项目只做展示，留字段是为了以后接单号查询不用改表。
+    company_code  varchar(32)   NOT NULL DEFAULT '',
+    -- Logo 走 ToolService 上传，发货详情与订单列表可能展示。
+    logo          varchar(512)  NOT NULL DEFAULT '',
+    -- 排序，小的在前；发货表单下拉按它排。
+    sort_order    int           NOT NULL DEFAULT 0,
+    -- 1 启用 / 2 停用。停用后不再出现在下拉里，**已发货的单不受影响**。
+    status        int           NOT NULL DEFAULT 1,
+    remark        varchar(512)  NOT NULL DEFAULT '',
+    CONSTRAINT pk_logistics_company PRIMARY KEY (id)
+);
+
+-- 用 partial unique 而不是普通唯一：软删的那条不该继续占着名字，
+-- 否则运营删掉「顺丰」后再也加不回来（只能去改历史数据）。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_logistics_company_name
+    ON logistics_company (company_name) WHERE is_deleted = false;
+CREATE INDEX IF NOT EXISTS idx_logistics_company_platform
+    ON logistics_company (platform_id, status);
+
 -- 商品（SPU）
 CREATE TABLE IF NOT EXISTS product (
     id            bigint        NOT NULL,

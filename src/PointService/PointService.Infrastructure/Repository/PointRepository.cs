@@ -25,12 +25,15 @@ namespace PointService.Infrastructure.Repository;
 public sealed class PointRepository : CrudRepository<PointAccount>, IPointRepository
 {
     private readonly IFreeSql _db;
+    private readonly IPointRuleProvider _rules;
 
     /// <summary>构造仓储。</summary>
     /// <param name="freeSql">已注册全局过滤的 FreeSql 单例。</param>
-    public PointRepository(IFreeSql freeSql) : base(freeSql)
+    /// <param name="rules">积分规则提供器。后台可改，所以不能直接读常量了。</param>
+    public PointRepository(IFreeSql freeSql, IPointRuleProvider rules) : base(freeSql)
     {
         _db = freeSql;
+        _rules = rules;
     }
 
     /// <inheritdoc />
@@ -43,13 +46,17 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
             return new PointOutcome(false, false, 0, 0, Error: "发放数量必须为正数");
         }
 
+        // 规则在**进事务之前**取好：事务体是同步委托，里面不能 await，
+        // 而在事务里查配置表等于把配置读取的失败概率算进积分发放的成功率。
+        var rules = await _rules.GetAsync(ct).ConfigureAwait(false);
+
         return await RunIdempotentAsync(customerId, bizNo, action, ct, () =>
         {
             var account = GetOrCreateAccount(customerId, out var created);
             var before = Snapshot(account);
 
             // 余额上限：超出部分截断不入账（BUSINESS.md 13.7）
-            var room = Math.Max(0, PointRules.BalanceCap - before.Available);
+            var room = Math.Max(0, rules.BalanceCap - before.Available);
             var actual = Math.Min(quantity, room);
             var capped = actual < quantity;
 
@@ -388,6 +395,9 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
         var already = false;
         var result = new PointOutcome(false, false, 0, 0, Error: "未执行");
 
+        // 同 EarnAsync：规则必须在进事务前取好（事务体是同步委托，不能 await）。
+        var rules = await _rules.GetAsync(ct).ConfigureAwait(false);
+
         try
         {
             await Task.Run(() => _db.Transaction(() =>
@@ -400,8 +410,8 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
                 {
                     already = true;
                     streak = account.SignStreak;
-                    reward = account.SignStreak >= 1 && account.SignStreak <= PointRules.SignInRewards.Length
-                        ? PointRules.SignInRewards[account.SignStreak - 1]
+                    reward = account.SignStreak >= 1 && account.SignStreak <= rules.SignInRewards.Count
+                        ? rules.SignInRewards[account.SignStreak - 1]
                         : 0;
                     result = new PointOutcome(true, true, account.Available, account.Frozen, account.TotalEarned, account.TotalUsed);
                     return;
@@ -414,11 +424,11 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
                 streak = signedYesterday ? account.SignStreak + 1 : 1;
 
                 // 7 天一轮：第 8 天回到第 1 天档位
-                var slot = ((streak - 1) % PointRules.SignInRewards.Length) + 1;
-                reward = PointRules.SignInRewards[slot - 1];
+                var slot = ((streak - 1) % rules.SignInRewards.Count) + 1;
+                reward = rules.SignInRewards[slot - 1];
 
                 var before = Snapshot(account);
-                var room = Math.Max(0, PointRules.BalanceCap - before.Available);
+                var room = Math.Max(0, rules.BalanceCap - before.Available);
                 var actual = Math.Min(reward, room);
                 var capped = actual < reward;
 
@@ -450,7 +460,8 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
 
                 if (actual > 0)
                 {
-                    var expireAt = DateTime.UtcNow.AddDays(PointRules.ValidDays);
+                    // 签到积分单独成一批，有效期与普通积分一致（BUSINESS.md 13.6）。
+                    var expireAt = DateTime.UtcNow.AddDays(rules.ValidDays);
                     _db.Insert(new PointLot
                     {
                         Id = SnowflakeId.NewId(),

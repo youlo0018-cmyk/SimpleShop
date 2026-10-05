@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using PaymentService.Application.Features.Admin;
 using PaymentService.Application.Features.Refund;
 
 namespace PaymentService.Api.Controllers;
@@ -60,5 +61,21 @@ public sealed class RefundController : ControllerBase
     [HttpPost("List")]
     public Task<ApiResponse<PagedRefundDtos>> List(
         [FromBody] QueryRefundsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>退款单详情（含退款明细行与审批信息）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>退款单详情。</returns>
+    /// <remarks>
+    /// 列表接口只回单头，**退到哪一行、退了多少**要在这里才看得到；
+    /// 部分退款（10.2「部分退不退运费」）的争议基本都发生在这层明细上。
+    ///
+    /// <para>审批人 <c>ApproverName</c> 由服务端在审批时写入，
+    /// 这里只读不传 —— 详情接口不接受调用方指定审批人。</para>
+    /// </remarks>
+    [HttpPost("Detail")]
+    public Task<ApiResponse<AdminRefundDetailDto>> Detail(
+        [FromBody] QueryAdminRefundDetailCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 }
