@@ -1,4 +1,5 @@
 using Collaboration.Domain.Entities;
+using Collaboration.Domain.Infrastructure;
 using FreeSql.DataAnnotations;
 
 namespace MerchantPlatformService.Domain.Entities;
@@ -10,7 +11,7 @@ namespace MerchantPlatformService.Domain.Entities;
 /// 本表的 <c>platform_id</c> / <c>merchant_id</c> 恒为 0——它自己就是租户根。
 /// </remarks>
 [Table(Name = "platform")]
-public class Platform : AdminEntityBase
+public class Platform : AdminEntityBase, ITenantRoot
 {
     /// <summary>平台名称，全局唯一（trim 后比较）。</summary>
     [Column(Name = "platform_name", StringLength = 128)]

@@ -3,7 +3,7 @@ using Collaboration.Domain.Validation;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
-using PermissionService.Application.Security;
+using Collaboration.Domain.MediatR;
 
 namespace PermissionService.Application.Features.Role;
 

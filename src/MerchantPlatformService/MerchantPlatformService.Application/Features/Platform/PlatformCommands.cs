@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.MediatR;
 using MediatR;
 
 namespace MerchantPlatformService.Application.Features.Platform;
@@ -18,6 +19,12 @@ namespace MerchantPlatformService.Application.Features.Platform;
 /// <param name="FreeShippingThreshold">满额包邮门槛，0 表示不启用。</param>
 /// <param name="Status">1 启用 / 2 停用。</param>
 /// <param name="Remark">备注。</param>
+/// <remarks>
+/// <b>仅超级管理员可执行</b>：平台是整个系统的租户顶层，谁能建平台等于谁能在系统里开一块新地盘。
+/// 这条规则不能只靠「别把 platform:create 勾给平台角色」——权限点是运行时可配置的实体，
+/// 某天有人在权限管理界面把它勾给了一个平台角色，网关就会放行。
+/// 所以这里挂 ISuperAdminOnly：**不看权限点，只看租户身份**，超管之外一律 403。
+/// </remarks>
 public record CreatePlatformCommand(
     string PlatformName,
     string PlatformCode,
@@ -32,7 +39,11 @@ public record CreatePlatformCommand(
     decimal ShippingFee = 0m,
     decimal FreeShippingThreshold = 0m,
     int Status = 1,
-    string Remark = "") : IRequest<ApiResponse<long>>;
+    string Remark = "") : IRequest<ApiResponse<long>>, ISuperAdminOnly
+{
+    /// <inheritdoc />
+    public string AuditNote => "新建平台";
+}
 
 /// <summary>编辑平台。<c>PlatformCode</c> 传什么都无效，一律保留原值。</summary>
 /// <param name="PlatformId">平台 Id。</param>

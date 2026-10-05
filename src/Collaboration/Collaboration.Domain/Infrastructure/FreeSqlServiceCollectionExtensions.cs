@@ -23,7 +23,20 @@ public static class FreeSqlServiceCollectionExtensions
             throw new InvalidOperationException("FreeSql 连接串为空，配置校验被绕过了。");
         }
 
-        services.AddSingleton(_ =>
+        // 🔴 必须是 Scoped，不能是 Singleton。
+        //
+        // 原因：FilterRegistrar.Register 会读取 TenantContextHolder.Current 来构造
+        // 「租户过滤」条件（PlatformId = 我的平台）。这个注册动作发生在
+        // IFreeSql **第一次被解析**的时候：
+        //   - Singleton 下它只发生一次，条件被**永久锁定**成第一个请求的租户；
+        //   - 如果第一个请求恰好是匿名/探活请求，结果就是**永远不注册租户过滤**。
+        // 实测后果：一个平台账号能看到全部 50 个平台，也能改别人的平台。
+        // 这是一个静默的、跨全部 16 个服务的多租户隔离失效。
+        //
+        // 代价说明：FreeSql 实例改为每请求一个。它本身只是个对象图，
+        // 真正的连接由 Npgsql 连接池复用，所以这不是「每请求开一个连接」。
+        // 用一点对象分配换回租户隔离，这个交换是必须的。
+        services.AddScoped(_ =>
         {
             // FreeSql 3.5 的 UseConnectionString 第三参 providerType 是**可选**的，
             // 由 DataType 自动解析 provider。手动传 typeof(PostgreSQLProvider<NpgsqlConnection>)

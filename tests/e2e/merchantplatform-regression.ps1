@@ -69,11 +69,15 @@ $tokenJson = ($tokenResp.Content.ReadAsStringAsync().GetAwaiter().GetResult()) |
 $script:adminHeaders = @{ Authorization = "Bearer $($tokenJson.access_token)" }
 
 function MpPost([string]$Path, $Body) {
-    # $Path 自带前导 /，这里只能直接拼接。
-    # 写成 "$Merchant/$Path" 会拼出双斜杠 `//platforms/...`，全部 404——
-    # 现象是「接口明明存在却 404」，排查方向会被完全带偏
-    return Invoke-RestMethod "$Merchant$Path" -Method Post -Headers $script:adminHeaders `
+    # 必须走网关：服务端只信任网关验签后注入的 X-Claim-*。
+    # 直连 5070 时上下文是匿名，ISuperAdminOnly 会把创建平台挡成 403。
+    return Invoke-RestMethod "$Gateway/gateway$Path" -Method Post -Headers $script:adminHeaders `
         -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
+}
+
+function MpGet([string]$Path) {
+    # 读接口同样走网关，保证租户上下文与真实后台一致。
+    return Invoke-RestMethod "$Gateway/gateway$Path" -Headers $script:adminHeaders -TimeoutSec 60
 }
 
 function MpAdminPost([string]$Path, $Body) {
@@ -334,8 +338,7 @@ Invoke-Case 'API-MP-027' '审核通过：状态变已通过，且**不再连带�
 Write-Host "`n=== MP 地区地址 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-MP-030' '未配置时回落到内置默认（isCustom = false）' {
-    $r = Invoke-RestMethod "$Merchant/regions/Get?platformId=$($script:platformId)" `
-        -Headers $script:adminHeaders -TimeoutSec 30
+    $r = MpGet "/regions/Get?platformId=$($script:platformId)"
     return $r.success -and $r.data.isCustom -eq $false -and $r.data.regionsJson -match '北京市'
 }
 
@@ -362,15 +365,13 @@ Invoke-Case 'API-MP-033' '🔴 子节点缺 name 被拒（前端按 name 渲染�
 Invoke-Case 'API-MP-034' '保存自定义地区数据成功，读回来 isCustom = true' {
     $json = '[{"name":"测试省","children":[{"name":"测试市","children":[{"name":"测试区"}]}]}]'
     $s = MpPost '/regions/Save' @{ platformId = $script:platformId; regionsJson = $json }
-    $g = Invoke-RestMethod "$Merchant/regions/Get?platformId=$($script:platformId)" `
-        -Headers $script:adminHeaders -TimeoutSec 30
+    $g = MpGet "/regions/Get?platformId=$($script:platformId)"
     return $s.success -and $g.data.isCustom -eq $true -and $g.data.regionsJson -match '测试省'
 }
 
 Invoke-Case 'API-MP-035' '恢复默认：传空串清空配置，回落内置默认' {
     $s = MpPost '/regions/Save' @{ platformId = $script:platformId; regionsJson = '' }
-    $g = Invoke-RestMethod "$Merchant/regions/Get?platformId=$($script:platformId)" `
-        -Headers $script:adminHeaders -TimeoutSec 30
+    $g = MpGet "/regions/Get?platformId=$($script:platformId)"
     return $s.success -and $g.data.isCustom -eq $false -and $g.data.regionsJson -match '北京市'
 }
 

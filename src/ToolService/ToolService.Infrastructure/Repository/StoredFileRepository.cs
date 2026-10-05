@@ -53,7 +53,7 @@ public sealed class StoredFileRepository : CrudRepository<StoredFile>, IStoredFi
     }
 
     /// <inheritdoc />
-    public Task<int> DeleteAsync(long id, CancellationToken ct = default)
+    public new Task<int> DeleteAsync(long id, CancellationToken ct = default)
         => Db.Update<StoredFile>()
             .Where(a => a.Id == id)
             .Set(a => new StoredFile { IsDeleted = true, DeletedAt = DateTime.UtcNow })

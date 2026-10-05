@@ -67,13 +67,13 @@ $tokenJson = ($tokenResp.Content.ReadAsStringAsync().GetAwaiter().GetResult()) |
 $script:adminHeaders = @{ Authorization = "Bearer $($tokenJson.access_token)" }
 
 function MpPost([string]$Path, $Body) {
-    # $Path 自带前导 /，只能直接拼接；写成 "$Merchant/$Path" 会拼出双斜杠而全部 404
-    return Invoke-RestMethod "$Merchant$Path" -Method Post -Headers $script:adminHeaders `
+    # 走网关而不是直连服务：租户上下文由网关验签后注入，超管建平台才不会被匿名 403 挡住。
+    return Invoke-RestMethod "$Gateway/gateway$Path" -Method Post -Headers $script:adminHeaders `
         -Body ($Body | ConvertTo-Json -Depth 12) -ContentType 'application/json' -TimeoutSec 60
 }
 
 function MpGet([string]$Path) {
-    return Invoke-RestMethod "$Merchant$Path" -Headers $script:adminHeaders -TimeoutSec 60
+    return Invoke-RestMethod "$Gateway/gateway$Path" -Headers $script:adminHeaders -TimeoutSec 60
 }
 
 function GwPost([string]$Path, $Body) {

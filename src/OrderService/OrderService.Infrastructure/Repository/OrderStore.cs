@@ -40,7 +40,7 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
         => await _db.Select<Order>().Where(a => a.OrderNo == orderNo).FirstAsync(ct);
 
     /// <inheritdoc />
-    public async Task<Order?> GetByIdAsync(long orderId, CancellationToken ct = default)
+    public new async Task<Order?> GetByIdAsync(long orderId, CancellationToken ct = default)
         => await _db.Select<Order>().Where(a => a.Id == orderId).FirstAsync(ct);
 
     /// <inheritdoc />

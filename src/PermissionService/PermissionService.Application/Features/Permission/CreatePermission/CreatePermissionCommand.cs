@@ -2,7 +2,7 @@ using Collaboration.Domain.Common;
 using Collaboration.Domain.Validation;
 using FluentValidation;
 using MediatR;
-using PermissionService.Application.Security;
+using Collaboration.Domain.MediatR;
 
 namespace PermissionService.Application.Features.Permission.CreatePermission;
 

@@ -7,7 +7,6 @@ using PermissionService.Application.Features.Permission.QueryTree;
 using PermissionService.Infrastructure;
 using PermissionService.Application.Features.Role;
 using PermissionService.Application.Features.Internal;
-using PermissionService.Application.Security;
 
 namespace PermissionService.Api;
 

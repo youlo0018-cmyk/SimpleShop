@@ -25,9 +25,16 @@ function Q([string]$v) {
 
 # 角色：Name / Code / AllowedScopes / DataScope / 权限点匹配前缀
 # 前缀为空表示「全部权限点」
+# Exclude：从匹配结果里**剔除**的权限点编码（逗号分隔）。
+# 为什么需要它：「平台运营」的 module 前缀是 platform，而 platform 下同时有
+# platform:read / platform:update / platform:create —— 用前缀一把捞会把
+# **新建平台**也带上，那违反「平台由超级管理员添加」。
+# 写成「前缀 + 排除」而不是「逐个列举权限点」：列举的话以后新增
+# platform 下的其它权限点（比如平台导出）就默认拿不到，而它们本意是给运营的。
 $roles = @(
     @{ Name = '平台管理员';   Code = 'platform-admin';     Scopes = 1; DataScope = 2; Prefix = '' },
-    @{ Name = '平台运营';     Code = 'platform-operator';  Scopes = 1; DataScope = 2; Prefix = 'platform|merchant|category|product|inventory|order|refund|marketing|coupon|seckill|point|evaluate|design|report|dashboard|region|permission|user|customer' },
+    @{ Name = '平台运营';     Code = 'platform-operator';  Scopes = 1; DataScope = 2; Prefix = 'platform|merchant|category|product|inventory|order|refund|marketing|coupon|seckill|point|evaluate|design|report|dashboard|region|permission|user|customer'
+       Exclude = 'platform:create' },
     @{ Name = '平台财务';     Code = 'platform-finance';   Scopes = 1; DataScope = 2; Prefix = 'order|payment|refund|report|dashboard' },
     @{ Name = '商户管理员';   Code = 'merchant-admin';     Scopes = 2; DataScope = 2; Prefix = '' },
     @{ Name = '商户运营';     Code = 'merchant-operator';  Scopes = 2; DataScope = 1; Prefix = 'product|inventory|order' },
@@ -66,6 +73,11 @@ foreach ($r in $roles) {
     } else {
         $rx = $r.Prefix -split '\|'
         $allPerms | Where-Object { $code = $_.Code; ($rx | Where-Object { $code.StartsWith($_) }).Count -gt 0 }
+    }
+    # 应用排除项。放在前缀筛选**之后**，语义是「先按模块捞，再从里面剔掉个别动作」。
+    if (-not [string]::IsNullOrEmpty($r.Exclude)) {
+        $ex = $r.Exclude -split ','
+        $targets = $targets | Where-Object { $ex -notcontains $_.Code }
     }
     foreach ($p in $targets) { $bindCsv += "$rid,$($p.Id),$now" }
 }

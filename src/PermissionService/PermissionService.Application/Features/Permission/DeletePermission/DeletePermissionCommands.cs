@@ -1,6 +1,6 @@
 using Collaboration.Domain.Common;
 using MediatR;
-using PermissionService.Application.Security;
+using Collaboration.Domain.MediatR;
 
 namespace PermissionService.Application.Features.Permission.DeletePermission;
 

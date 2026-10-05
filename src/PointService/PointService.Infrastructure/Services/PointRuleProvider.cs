@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FreeSql;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using PointService.Domain.Entities;
 using PointService.Domain.Services;
 
@@ -18,7 +19,7 @@ public sealed class PointRuleProvider : IPointRuleProvider
     /// <summary>缓存有效期（秒）。</summary>
     private const int CacheSeconds = 30;
 
-    private readonly IFreeSql _db;
+    private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<PointRuleProvider> _logger;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
@@ -26,11 +27,18 @@ public sealed class PointRuleProvider : IPointRuleProvider
     private DateTimeOffset _loadedAt = DateTimeOffset.MinValue;
 
     /// <summary>构造提供器。</summary>
-    /// <param name="db">FreeSql 实例。</param>
+    /// <param name="scopes">作用域工厂。用来在需要查库时开一个短作用域取 IFreeSql。</param>
     /// <param name="logger">日志器。</param>
-    public PointRuleProvider(IFreeSql db, ILogger<PointRuleProvider> logger)
+    /// <remarks>
+    /// <b>为什么注入作用域工厂而不是直接注入 IFreeSql</b>：本类是 Singleton（规则要跨请求缓存 30 秒），
+    /// 而 IFreeSql 是 Scoped —— 因为它要按「当前请求的租户」构造全局过滤条件（见
+    /// FreeSqlServiceCollectionExtensions 的说明）。单例直接持有 Scoped 依赖会被 DI 校验拒绝
+    /// （fail-fast，正是我们想要的）。所以这里只在**真正要查库**的那一刻开一个短作用域，
+    /// 用完即弃，缓存仍在单例上。
+    /// </remarks>
+    public PointRuleProvider(IServiceScopeFactory scopes, ILogger<PointRuleProvider> logger)
     {
-        _db = db;
+        _scopes = scopes;
         _logger = logger;
     }
 
@@ -44,7 +52,13 @@ public sealed class PointRuleProvider : IPointRuleProvider
         {
             if (IsFresh()) return _cached!;
 
-            var rows = await _db.Select<PointRuleConfig>()
+            // 开一个短作用域取 IFreeSql：积分规则是**全局**配置（不按租户分），
+            // 所以这里用哪个租户的上下文查都一样。真正要紧的是别把 Scoped 的
+            // IFreeSql 关在单例里 —— 那等于让第一个请求的租户条件永久生效。
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IFreeSql>();
+
+            var rows = await db.Select<PointRuleConfig>()
                 .Where(a => a.RuleValue != null && a.RuleValue != string.Empty)
                 .ToListAsync(ct)
                 .ConfigureAwait(false);

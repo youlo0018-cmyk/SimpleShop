@@ -26,6 +26,12 @@ public static class ApiServiceCollectionExtensions
 
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(appAssembly));
         services.AddValidatorsFromAssembly(appAssembly);
+
+        // 鉴权管道必须注册在**参数校验之前**（MediatR 按注册顺序执行）。
+        // 反过来会让未授权请求先撞 400 校验错误 —— 既白做一次校验，
+        // 又让「你没权限」变成「你参数填错了」，排查时被带偏。
+        // 目前只有「新建平台」挂 ISuperAdminOnly，其余请求直接放行。
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(SuperAdminBehavior<,>));
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         // 校验器写在嵌套静态类里，AddValidatorsFromAssembly 扫不到，必须显式注册

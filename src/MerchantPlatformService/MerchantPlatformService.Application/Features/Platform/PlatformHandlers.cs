@@ -80,23 +80,28 @@ public sealed class UpdatePlatformHandler : IRequestHandler<UpdatePlatformComman
             return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "平台不存在");
         }
 
-        platform.PlatformName = request.PlatformName.Trim();
+        // 一律用 T() 而不是 request.X.Trim()：契约里这些字段的**默认值是空串**，
+        // 但 JSON 里显式传 null 会覆盖默认值 —— 于是 .Trim() 抛 NullReferenceException，
+        // 接口回 500 而不是 400。前端从列表页回填时最容易踩：列表 DTO 少一个字段
+        // （黑色幽默：平台列表 DTO 恰恰就没有 logo / notice / remark），
+        // 前端读出来就是 undefined，提交时成了 null。
+        platform.PlatformName = T(request.PlatformName);
         // 🔴 PlatformCode **不赋值**：小程序用 PLATFORM_CODE 锁死它，改了等于让
         // 已发布的小程序找不到对应平台。后台表单通常把 Code 一起提交回来，
         // 这里静默忽略而不是报错，运营就不会以为自己改坏了什么（规格 5.1「复制编码」）。
-        platform.ContactName = request.ContactName.Trim();
-        platform.ContactPhone = request.ContactPhone.Trim();
-        platform.Logo = request.Logo.Trim();
-        platform.MallName = request.MallName.Trim();
-        platform.Notice = request.Notice.Trim();
-        platform.PrimaryColor = request.PrimaryColor.Trim();
-        platform.TabColor = request.TabColor.Trim();
-        platform.BackgroundColor = request.BackgroundColor.Trim();
+        platform.ContactName = T(request.ContactName);
+        platform.ContactPhone = T(request.ContactPhone);
+        platform.Logo = T(request.Logo);
+        platform.MallName = T(request.MallName);
+        platform.Notice = T(request.Notice);
+        platform.PrimaryColor = T(request.PrimaryColor);
+        platform.TabColor = T(request.TabColor);
+        platform.BackgroundColor = T(request.BackgroundColor);
         platform.ShippingFee = decimal.Round(request.ShippingFee, 2, MidpointRounding.AwayFromZero);
         platform.FreeShippingThreshold =
             decimal.Round(request.FreeShippingThreshold, 2, MidpointRounding.AwayFromZero);
         platform.Status = request.Status;
-        platform.Remark = request.Remark.Trim();
+        platform.Remark = T(request.Remark);
 
         try
         {
@@ -111,6 +116,17 @@ public sealed class UpdatePlatformHandler : IRequestHandler<UpdatePlatformComman
                 new Dictionary<string, string[]> { [ex.FieldName] = [ex.Message] });
         }
     }
+
+    /// <summary>把可空字符串安全地 trim 成非空字符串。</summary>
+    /// <param name="value">原始值，可能为 null。</param>
+    /// <returns>trim 后的字符串；null 返回空串。</returns>
+    /// <remarks>
+    /// 存在的理由：契约默认值是空串，但 **JSON 里显式传 null 会覆盖默认值**，
+    /// 于是 <c>request.X.Trim()</c> 抛 NullReferenceException，接口回 500。
+    /// 前端从列表页回填时最容易踩 —— 列表 DTO 少一个字段，前端读出来是 undefined，
+    /// 提交时就成了 null。
+    /// </remarks>
+    private static string T(string? value) => (value ?? string.Empty).Trim();
 }
 
 /// <summary>删除平台处理器。</summary>

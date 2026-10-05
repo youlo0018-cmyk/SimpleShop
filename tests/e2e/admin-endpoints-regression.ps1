@@ -58,11 +58,12 @@ $token = Get-AdminToken
 $auth = @{ Authorization = "Bearer $token" }
 
 function Post-Ep {
-    param([string]$Path, [hashtable]$Body)
+    param([string]$Path, [hashtable]$Body, [hashtable]$Headers)
+    if ($null -eq $Headers) { $Headers = $auth }
     try {
         return Invoke-RestMethod -Uri ($Gateway + $Path) -Method Post `
             -Body ($Body | ConvertTo-Json -Compress -Depth 8) `
-            -Headers $auth -ContentType 'application/json' -TimeoutSec 25
+            -Headers $Headers -ContentType 'application/json' -TimeoutSec 25
     }
     catch {
         # 业务失败与参数校验失败都是 HTTP 400 + { success:false, code:400, errors:{...} }。
@@ -443,10 +444,130 @@ else {
     Write-Host '  跳过鉴权用例：未拿到只读账号令牌' -ForegroundColor Yellow
 }
 
+# ---- 新建平台：仅超管，且**不看权限点** ----
+#
+# 这条要验的是「第二道闸」。网关的 RBAC 只回答「你有没有 platform:create」，
+# 而权限点是运行时可配置的实体 —— 某个平台角色被勾上它之后，网关就会放行。
+# 所以服务端还有一层 ISuperAdminOnly：只看租户身份（PlatformId = 0），不看权限点。
+#
+# 造一个**平台维度**的账号（PlatformId != 0）并绑上内置的「平台管理员」角色
+# （该角色绑定了全部权限点，包括 platform:create），
+# 然后用它去建平台 —— 必须被 403，而不是 200。
+$platAdminUser = 'admplatadmin' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$platAdminPwd = 'PlatAdmin123456'
+
+$firstPlatform = (Post-Ep '/gateway/platforms/List' @{ page = 1; pageSize = 1 }).data.items[0]
+
+$platCreate = Invoke-RestMethod -Uri "$UserService/users/Create" -Method Post -Headers $auth `
+    -Body (@{
+        userName   = $platAdminUser
+        password   = $platAdminPwd
+        phone      = '137' + ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString().Substring(5, 8))
+        tenantType = 1
+        nickName   = '平台越权用例'
+        platformId = $firstPlatform.id
+        roleIds    = @(9001)
+    } | ConvertTo-Json -Compress) `
+    -ContentType 'application/json' -TimeoutSec 20 -ErrorAction SilentlyContinue
+
+$platToken = $null
+if ($platCreate.Success) {
+    try {
+        $platToken = (Invoke-RestMethod -Uri "$AuthService/connect/token" -Method Post `
+            -Body "grant_type=password&client_id=admin-app&username=$platAdminUser&password=$platAdminPwd" `
+            -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 20).access_token
+    }
+    catch { $platToken = $null }
+}
+
+if ($platToken) {
+    $platAuth = @{ Authorization = "Bearer $platToken" }
+
+    Invoke-Case 'API-ADM-080' '平台账号即使持有 platform:create 也不能新建平台（403）' {
+        $status = Post-EpStatus '/gateway/platforms/Create' @{
+            platformName  = "越权平台$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+            platformCode  = 'ABCDEF'
+            contactName   = '越权'
+            contactPhone  = '13800000000'
+        } $platAuth
+        $status -eq 403
+    }
+
+    Invoke-Case 'API-ADM-081' '平台账号可以编辑**自己**的平台（租户过滤生效）' {
+        # 「平台可以自己编辑自己的信息」：这条验证它确实能做，
+        # 免得为了堵越权把正常的自助编辑也一起堵死。
+        #
+        # ⚠️ 必须把**整条**记录回传：UpdatePlatformCommand 的校验要求
+        # mallName / 三档颜色都非空，它是「整条更新」不是「局部更新」。
+        # 只传自己关心的两三个字段会被 400 挡下，看起来像「平台改不了自己的信息」，
+        # 实际是前端漏传了字段。（前端对应做法：编辑页先把整条读出来再整体提交。）
+        $r = Post-Ep '/gateway/platforms/Update' @{
+            platformId       = $firstPlatform.id
+            platformName     = $firstPlatform.platformName
+            platformCode     = $firstPlatform.platformCode
+            contactName      = $firstPlatform.contactName
+            contactPhone     = $firstPlatform.contactPhone
+            mallName         = $firstPlatform.mallName
+            logo             = $firstPlatform.logo
+            notice           = $firstPlatform.notice
+            primaryColor     = $firstPlatform.primaryColor
+            tabColor         = $firstPlatform.tabColor
+            backgroundColor  = $firstPlatform.backgroundColor
+            shippingFee      = $firstPlatform.shippingFee
+            freeShippingThreshold = $firstPlatform.freeShippingThreshold
+            status           = $firstPlatform.status
+            remark           = $firstPlatform.remark
+        } $platAuth
+        $r.Success
+    }
+
+    Invoke-Case 'API-ADM-082' '平台账号改不了**别人**的平台（租户过滤挡住）' {
+        # 找一个不属于自己平台的 Id。找不到就跳过（只有 1 个平台时无从验证）。
+        $others = @((Post-Ep '/gateway/platforms/List' @{ page = 1; pageSize = 50 }).data.items |
+            Where-Object { $_.id -ne $firstPlatform.id })
+        if ($others.Count -eq 0) { return $true }
+
+        # 同样回传整条记录：否则失败可能来自校验（400），
+        # 而不是来自租户过滤 —— 那就成了「假通过」：
+        # 断言 -not success 时，参数填错也会让它变绿。
+        $other = $others[0]
+        $r = Post-Ep '/gateway/platforms/Update' @{
+            platformId       = $other.id
+            platformName     = $other.platformName
+            platformCode     = $other.platformCode
+            contactName      = $other.contactName
+            contactPhone     = $other.contactPhone
+            mallName         = $other.mallName
+            logo             = $other.logo
+            notice           = $other.notice
+            primaryColor     = $other.primaryColor
+            tabColor         = $other.tabColor
+            backgroundColor  = $other.backgroundColor
+            shippingFee      = $other.shippingFee
+            freeShippingThreshold = $other.freeShippingThreshold
+            status           = $other.status
+            remark           = $other.remark
+        } $platAuth
+        # 行级过滤让这条 UPDATE 影响 0 行，Handler 会回「平台不存在」而不是成功
+        -not $r.Success
+    }
+}
+else {
+    Write-Host '  跳过新建平台越权用例：未能建出平台维度的测试账号' -ForegroundColor Yellow
+}
+
 # 收尾：把临时账号停用。
 # 不清理的话每跑一次就在库里多一个启用状态的账号——跑几十次之后
 # 账号列表被测试数据淹没，看起来像真的出了问题。
 # 项目没有「删除账号」端点（刻意如此，审计要求留痕），所以用停用。
+if ($platCreate.Success -and $platCreate.data) {
+    try {
+        Invoke-RestMethod -Uri "$UserService/users/UpdateStatus" -Method Post -Headers $auth `
+            -Body (@{ userId = $platCreate.data; status = 2 } | ConvertTo-Json -Compress) `
+            -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+    }
+    catch { }
+}
 if ($createUser.Success -and $createUser.data) {
     try {
         Invoke-RestMethod -Uri "$UserService/users/UpdateStatus" -Method Post `

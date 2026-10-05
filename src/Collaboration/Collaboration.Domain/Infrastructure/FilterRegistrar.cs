@@ -17,9 +17,9 @@ namespace Collaboration.Domain.Infrastructure;
 /// </remarks>
 public static class FilterRegistrar
 {
-    private static readonly MethodInfo ApplyIfMethod = typeof(GlobalFilter)
+    private static readonly MethodInfo ApplyOnlyMethod = typeof(GlobalFilter)
         .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-        .First(m => m.Name == "ApplyIf" && m.IsGenericMethodDefinition);
+        .First(m => m.Name == "ApplyOnly" && m.IsGenericMethodDefinition);
 
     /// <summary>为指定程序集里的全部实体注册全局过滤。</summary>
     /// <param name="freeSql">已构建的 FreeSql 实例。</param>
@@ -27,6 +27,7 @@ public static class FilterRegistrar
     public static void Register(IFreeSql freeSql, params Assembly[] entityAssemblies)
     {
         var ctx = TenantContextHolder.Current;
+        var types = new List<Type>();
 
         foreach (var assembly in entityAssemblies)
         {
@@ -34,27 +35,72 @@ public static class FilterRegistrar
             {
                 if (!type.IsClass || type.IsAbstract) continue;
                 if (!typeof(EntityBase).IsAssignableFrom(type)) continue;
-                RegisterFor(freeSql.GlobalFilter, type, ctx);
+                types.Add(type);
             }
+        }
+
+        // 软删是所有实体共有的规则。用 EntityBase 做 ApplyOnly，
+        // FreeSql 会按「查询实体的类型是否可从 EntityBase 赋值」自动匹配，
+        // 因此不需要为每个实体注册一遍，也不会给 platform 等根表叠加租户条件。
+        ApplyOnly(freeSql.GlobalFilter, typeof(EntityBase), "soft_delete", BuildSoftDelete(typeof(EntityBase)));
+
+        // 公开可见性与实体自身类型绑定，名字带类型名，避免不同接口实现互相覆盖。
+        if (ctx.ShouldFilterPublicVisibility)
+        {
+            foreach (var type in types)
+            {
+                RegisterPublicVisibility(freeSql.GlobalFilter, type);
+            }
+        }
+
+        RegisterTenantFilters(freeSql.GlobalFilter, types, ctx);
+        RegisterCustomerFilter(freeSql.GlobalFilter, ctx);
+    }
+
+    /// <summary>注册后台租户过滤。</summary>
+    /// <param name="filter">全局过滤器。</param>
+    /// <param name="types">本服务的全部实体类型。</param>
+    /// <param name="ctx">当前租户上下文。</param>
+    /// <remarks>
+    /// <para>FreeSql 的 <c>ApplyIf</c> 不是按实体隔离的：它会被加入所有查询，
+    /// 再由表达式翻译去碰运气。多个实体注册同名或不同名的过滤器时，
+    /// 每个查询都会拿到全部条件，最后在 SQL 里出现重复字段或串表条件。</para>
+    ///
+    /// <para><c>ApplyOnly&lt;TEntity&gt;</c> 才是按类型生效的原语：
+    /// FreeSql 在拼接 SQL 前会检查 <c>Only</c>，只把表达式参数类型可赋值的实体套进去。
+    /// 这里为每个非租户根的后台实体单独注册，既避免重复叠加，
+    /// 又让 <c>platform</c> 这种租户根表完全不进入租户条件。
+    /// 平台根表的可见性由 <c>PlatformRepository</c> 显式限定。</para>
+    /// </remarks>
+    private static void RegisterTenantFilters(GlobalFilter filter, List<Type> types, TenantContext ctx)
+    {
+        if (ctx.IsSuperAdmin || ctx.IsCustomer || ctx.IsAnonymous) return;
+
+        var merchantId = ctx.IsMerchant ? ctx.MerchantId : (long?)null;
+        foreach (var type in types)
+        {
+            if (!typeof(AdminEntityBase).IsAssignableFrom(type) || typeof(ITenantRoot).IsAssignableFrom(type))
+            {
+                continue;
+            }
+
+            ApplyOnly(filter, type, "tenant:" + type.Name, BuildTenant(type, ctx.PlatformId, merchantId));
         }
     }
 
-    private static void RegisterFor(GlobalFilter filter, Type type, TenantContext ctx)
+    /// <summary>注册客户私有数据过滤。</summary>
+    /// <param name="filter">全局过滤器。</param>
+    /// <param name="ctx">当前租户上下文。</param>
+    /// <remarks>客户令牌只能看自己的数据；该条件绑定到 CustomerEntityBase，不会串到后台实体。</remarks>
+    private static void RegisterCustomerFilter(GlobalFilter filter, TenantContext ctx)
     {
-        Apply(filter, type, "soft_delete", BuildSoftDelete(type));
+        if (!ctx.IsCustomer) return;
 
-        if (typeof(AdminEntityBase).IsAssignableFrom(type) && !ctx.IsSuperAdmin && !ctx.IsCustomer && !ctx.IsAnonymous)
-        {
-            long? merchantId = ctx.IsMerchant ? ctx.MerchantId : null;
-            Apply(filter, type, "tenant", BuildTenant(type, ctx.PlatformId, merchantId));
-        }
-
-        if (typeof(CustomerEntityBase).IsAssignableFrom(type) && ctx.IsCustomer)
-        {
-            Apply(filter, type, "customer", BuildCustomer(type, ctx.UserId));
-        }
-
-        if (ctx.ShouldFilterPublicVisibility) RegisterPublicVisibility(filter, type);
+        ApplyOnly(
+            filter,
+            typeof(CustomerEntityBase),
+            "customer",
+            BuildCustomer(typeof(CustomerEntityBase), ctx.UserId));
     }
 
     private static void RegisterPublicVisibility(GlobalFilter filter, Type type)
@@ -69,17 +115,14 @@ public static class FilterRegistrar
         var method = iface.GetMethod("BuildPublicCondition");
         if (method?.Invoke(instance, new object[] { DateTime.UtcNow }) is LambdaExpression lambda)
         {
-            ApplyLambda(filter, type, "public_visibility", lambda);
+            ApplyOnly(filter, type, "public_visibility:" + type.Name, lambda);
         }
     }
 
-    private static void Apply(GlobalFilter filter, Type type, string name, LambdaExpression where)
-        => ApplyLambda(filter, type, name, where);
-
-    private static void ApplyLambda(GlobalFilter filter, Type type, string name, LambdaExpression where)
+    private static void ApplyOnly(GlobalFilter filter, Type type, string name, LambdaExpression where)
     {
-        var closed = ApplyIfMethod.MakeGenericMethod(type);
-        closed.Invoke(filter, new object?[] { name, null, where, true });
+        var closed = ApplyOnlyMethod.MakeGenericMethod(type);
+        closed.Invoke(filter, new object?[] { name, where, true });
     }
 
     private static LambdaExpression BuildSoftDelete(Type type)
