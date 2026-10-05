@@ -56,7 +56,10 @@ const FLOWS = [
     steps: [
       { desc: '进入订单列表', goto: '#/orders', shot: 'flow-orders-list' },
       { desc: '点击第一行「详情」进入详情', clickText: '详情', clickScope: '.el-table', shot: 'flow-order-detail' },
-      { desc: '详情内金额构成可见', expect: '.card__title', shot: 'flow-order-detail-money' },
+      // 详情页改用 SectionPanel 组件分段，标题类名从 .card__title 变成 .section__title。
+      // 这里断言**实付金额那个大字**而不是标题 —— 标题永远在，
+      // 而金额没加载出来时页面上是一个空格，标题照样渲染，断言标题等于没测。
+      { desc: '详情内实付金额可见', expect: '.amount__value', shot: 'flow-order-detail-money' },
     ],
   },
   {
