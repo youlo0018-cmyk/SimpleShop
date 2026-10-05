@@ -575,6 +575,52 @@ public class OrderCreatorTests
         /// <summary>最后一次状态迁移传入的完成时间。</summary>
         public DateTime? LastCompletedAt;
 
+        /// <summary>发货：下单链路的用例不依赖它，返回 1 表示状态改成功即可。</summary>
+        /// <param name="orderId">订单 Id。</param>
+        /// <param name="fromStatus">期望的原状态。</param>
+        /// <param name="toStatus">目标状态。</param>
+        /// <param name="logisticsCompanyId">物流公司 Id。</param>
+        /// <param name="logisticsCompanyName">物流公司名称。</param>
+        /// <param name="trackingNo">运单号。</param>
+        /// <param name="shippedAt">发货时间。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>1。</returns>
+        public Task<int> TryShipAsync(
+            long orderId, int fromStatus, int toStatus,
+            long logisticsCompanyId, string logisticsCompanyName, string trackingNo,
+            DateTime shippedAt, CancellationToken ct = default)
+            => Task.FromResult(1);
+
+        /// <summary>行级已退余额聚合：下单链路的用例不依赖它，返回空即可。</summary>
+        /// <param name="orderId">订单 Id。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>空字典。</returns>
+        public Task<IReadOnlyDictionary<long, RefundedItemBalance>> AggregateRefundedItemsAsync(
+            long orderId, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyDictionary<long, RefundedItemBalance>>(
+                new Dictionary<long, RefundedItemBalance>());
+
+        /// <summary>写退款记录：下单链路的用例不依赖它，回一个固定 Id。</summary>
+        /// <param name="refund">退款记录。</param>
+        /// <param name="items">退款明细。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>固定 Id。</returns>
+        public Task<long> SaveRefundAsync(
+            OrderRefund refund, IReadOnlyCollection<OrderRefundItem> items, CancellationToken ct = default)
+            => Task.FromResult(1L);
+
+        /// <summary>累加已退金额：下单链路的用例不依赖它，返回 1 表示生效。</summary>
+        /// <param name="orderId">订单 Id。</param>
+        /// <param name="fromStatus">期望的原状态。</param>
+        /// <param name="amount">本次退款金额。</param>
+        /// <param name="fullyRefunded">是否退完。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>1。</returns>
+        public Task<int> TryApplyRefundAsync(
+            long orderId, int fromStatus, decimal amount, bool fullyRefunded,
+            CancellationToken ct = default)
+            => Task.FromResult(1);
+
         /// <summary>报表聚合：下单链路的用例不依赖它，返回空聚合即可。</summary>
         /// <param name="from">区间起。</param>
         /// <param name="to">区间止。</param>

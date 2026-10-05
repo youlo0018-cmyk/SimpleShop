@@ -20,6 +20,7 @@ public static class MerchantValidators
         services.AddScoped<IValidator<AuditMerchantCommand>, AuditMerchantValidator>();
         services.AddScoped<IValidator<DeleteMerchantCommand>, DeleteMerchantValidator>();
         services.AddScoped<IValidator<ResubmitMerchantCommand>, ResubmitMerchantValidator>();
+        services.AddScoped<IValidator<ChangeMerchantStatusCommand>, ChangeMerchantStatusValidator>();
         services.AddScoped<IValidator<QueryMerchantsCommand>, QueryMerchantsValidator>();
     }
 
@@ -95,6 +96,17 @@ public static class MerchantValidators
         /// <summary>构造校验器。</summary>
         public ResubmitMerchantValidator()
             => RuleFor(x => x.MerchantId).GreaterThan(0).WithMessage("商户信息不正确");
+    }
+
+    /// <summary>启停商户校验。</summary>
+    private sealed class ChangeMerchantStatusValidator : AbstractValidator<ChangeMerchantStatusCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public ChangeMerchantStatusValidator()
+        {
+            RuleFor(x => x.MerchantId).GreaterThan(0).WithMessage("商户信息不正确");
+            RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 启用 或 2 停用");
+        }
     }
 
     /// <summary>商户列表校验。</summary>

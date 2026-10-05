@@ -113,8 +113,9 @@ public sealed class MerchantRepository : CrudRepository<Merchant>, IMerchantRepo
     /// <inheritdoc />
     public async Task<int> TryUpdateAuditAsync(long merchantId, int expectedAuditStatus,
         int newAuditStatus, string auditRemark, long auditorId, string auditorName,
-        CancellationToken ct = default)
-        => await Db.Update<Merchant>()
+        CancellationToken ct = default, int? newStatus = null)
+    {
+        var update = Db.Update<Merchant>()
             // 带上「当前审核状态」作为条件：两个管理员同时点审核时，
             // 只有一个能把状态从 10 改成 20，另一个拿到 0 就该直接返回，
             // 而不是把审核人 / 审核时间覆盖掉
@@ -126,6 +127,31 @@ public sealed class MerchantRepository : CrudRepository<Merchant>, IMerchantRepo
                 AuditedAt = DateTime.UtcNow,
                 AuditorId = auditorId,
                 AuditorName = auditorName,
+                UpdatedAt = DateTime.UtcNow
+            });
+
+        // 审核通过时顺带启用商户。Set 两次会生成两条 UPDATE 语句，
+        // 所以这里是往**同一个** Set 里追加，而不是再链一次 —— 必须是同一条语句，
+        // 否则中间崩掉就留下「已通过审核但仍停用」的商户（详见接口注释）。
+        if (newStatus.HasValue)
+        {
+            var status = newStatus.Value;
+            update = update.Set(a => new Merchant { Status = status, UpdatedAt = DateTime.UtcNow });
+        }
+
+        return await update.ExecuteAffrowsAsync(ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> TryUpdateStatusAsync(long merchantId, int expectedStatus, int newStatus,
+        CancellationToken ct = default)
+        => await Db.Update<Merchant>()
+            // 带上「当前启停状态」作为条件：两个管理员同时点「停用」时只有一个生效，
+            // 另一个拿到 0 后回「状态已变化」，而不是覆盖回去
+            .Where(a => a.Id == merchantId && a.Status == expectedStatus)
+            .Set(a => new Merchant
+            {
+                Status = newStatus,
                 UpdatedAt = DateTime.UtcNow
             })
             .ExecuteAffrowsAsync(ct);

@@ -143,12 +143,40 @@ public sealed record OrderSpuForEvaluateDto(
 public sealed record OrderSkuForEvaluateDto(long SkuId, string SkuSpecText, long OrderItemId);
 
 /// <summary>订单详情。</summary>
+/// <param name="OrderId">订单 Id。</param>
+/// <param name="OrderNo">订单号。</param>
+/// <param name="Status">订单状态。</param>
+/// <param name="StatusName">状态中文名。</param>
+/// <param name="CanCancel">当前是否可取消（只有待支付）。</param>
+/// <param name="CanConfirmReceipt">当前是否可由客户确认收货（只有待收货）。</param>
+/// <param name="GoodsTotal">商品总额 = 各行应付之和。</param>
+/// <param name="Freight">运费。</param>
+/// <param name="PointsDeduction">积分抵扣金额。</param>
+/// <param name="PayableAmount">实付金额 = 商品总额 + 运费 − 积分抵扣。</param>
+/// <param name="PointsUsed">本单使用的积分数。</param>
+/// <param name="CouponId">使用的券 Id，0 表示没用券。</param>
+/// <param name="CouponDiscount">整单券优惠额。</param>
+/// <param name="ReceiverName">收货人快照。</param>
+/// <param name="ReceiverPhone">收货电话快照。</param>
+/// <param name="ReceiverAddress">收货地址快照。</param>
+/// <param name="Remark">订单备注。</param>
+/// <param name="CreatedAt">下单时间。</param>
+/// <param name="Items">订单行。</param>
+/// <param name="LogisticsCompanyId">物流公司 Id，0 表示未发货。</param>
+/// <param name="LogisticsCompanyName">物流公司名称快照，<b>下单后改名也不影响这里显示</b>。</param>
+/// <param name="TrackingNo">运单号，未发货为空。</param>
+/// <param name="ShippedAt">发货时间，未发货为空。</param>
+/// <param name="RefundedAmount">已退金额合计。后台据此显示「还能退多少」。</param>
+/// <param name="RemainingRefundable">剩余可退金额，后台退款表单的金额上限。</param>
 public sealed record OrderDetailDto(
     long OrderId, string OrderNo, int Status, string StatusName, bool CanCancel, bool CanConfirmReceipt,
     decimal GoodsTotal, decimal Freight, decimal PointsDeduction, decimal PayableAmount,
     long PointsUsed, long CouponId, decimal CouponDiscount,
     string ReceiverName, string ReceiverPhone, string ReceiverAddress,
-    string Remark, string CreatedAt, IReadOnlyList<OrderItemDto> Items);
+    string Remark, string CreatedAt, IReadOnlyList<OrderItemDto> Items,
+    long LogisticsCompanyId = 0, string LogisticsCompanyName = "",
+    string TrackingNo = "", string ShippedAt = "",
+    decimal RefundedAmount = 0m, decimal RemainingRefundable = 0m);
 
 /// <summary>订单行。</summary>
 /// <param name="OrderItemId">订单行 Id。<b>部分退款按它定位退哪一行</b>，缺了这个字段部分退款无从下手。</param>
@@ -164,11 +192,13 @@ public sealed record OrderDetailDto(
 /// <param name="PayableAmount">本行实付金额。</param>
 /// <param name="DeliveryType">配送方式。</param>
 /// <param name="SourceType">订单来源，见 <see cref="OrderSourceTypes"/>。后台订单列表要靠它区分秒杀单。</param>
+/// <param name="RefundedQuantity">该行已退数量，后台部分退款表单据此限制数量上限。</param>
+/// <param name="RefundableAmount">该行剩余可退金额（行实付 − 行已退）。</param>
 public sealed record OrderItemDto(
     long OrderItemId, long SkuId, long SpuId, string ProductName, string SkuSpecText,
     decimal Price, int Quantity, decimal OriginalAmount,
     decimal ActivityDiscount, decimal CouponDiscount, decimal PayableAmount, int DeliveryType,
-    int SourceType = 1);
+    int SourceType = 1, int RefundedQuantity = 0, decimal RefundableAmount = 0m);
 
 // 分页信封已提到 Collaboration.Domain.Common.PagedResult —— 这个形状所有服务的列表接口都要用，
 // 留一份在这里的话下一个需要分页的服务就会再复制一份，两份字段名改得不一致时前端得为每个服务写一套取值逻辑。

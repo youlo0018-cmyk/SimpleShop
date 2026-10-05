@@ -54,6 +54,12 @@ public static class InfrastructureServiceCollectionExtensions
         AddDownstream<ILowStockPort, HttpLowStockPort>(
             services, configuration, "Services:InventoryServiceBaseUrl", "库存服务");
 
+        // 发货时要往订单写物流公司名快照，字典在商品服务里。
+        // 与上面几个端口一样 fail-fast：少一个地址，运营点「发货」就是 500，
+        // 而错误信息只会指向订单服务，看不出根因在配置。
+        AddDownstream<ILogisticsCompanyPort, HttpLogisticsCompanyPort>(
+            services, configuration, "Services:ProductServiceBaseUrl", "商品服务");
+
         return services;
     }
 

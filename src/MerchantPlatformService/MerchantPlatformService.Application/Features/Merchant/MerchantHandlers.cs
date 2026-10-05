@@ -169,7 +169,14 @@ public sealed class AuditMerchantHandler
             remark,
             ctx.UserId,
             ctx.UserName,
-            ct);
+            ct,
+            // 🔴 审核通过**顺带启用**：新建商户固定是「停用 + 待审核」，
+            // 如果通过审核后仍然停着，运营会看到「已通过」却发现小程序里没有这家店，
+            // 还要再去列表上手动点一次「启用」—— 审核本来就该包含「让它能营业」这一步。
+            // 同理，拒绝时顺带停用，避免出现「已拒绝但仍开着」的矛盾状态。
+            newStatus: request.AuditStatus == MerchantAuditStatuses.Approved
+                ? PlatformStatuses.Enabled
+                : PlatformStatuses.Disabled);
 
         if (affected == 0)
         {
@@ -349,6 +356,69 @@ public sealed class ResubmitMerchantHandler : IRequestHandler<ResubmitMerchantCo
         }
 
         return ApiResponseFactory.Ok("已重新提交审核");
+    }
+}
+
+/// <summary>启用 / 停用商户处理器。</summary>
+/// <remarks>
+/// 停用**不会**把商户从小程序里删掉，历史订单与退款照常处理（规格 5.2）；
+/// 但也<b>不</b>连带下架商品 —— 那是审核拒绝的副作用，与「临时停业」是两回事。
+/// 混在一起会让运营停一次商户就把所有商品弄下架，恢复时还得逐个重新上架。
+/// </remarks>
+public sealed class ChangeMerchantStatusHandler
+    : IRequestHandler<ChangeMerchantStatusCommand, ApiResponse>
+{
+    private readonly IMerchantRepository _merchants;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="merchants">商户仓储。</param>
+    public ChangeMerchantStatusHandler(IMerchantRepository merchants) => _merchants = merchants;
+
+    /// <summary>执行启停。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    public async Task<ApiResponse> Handle(ChangeMerchantStatusCommand request, CancellationToken ct)
+    {
+        var merchant = await _merchants.GetByIdAsync(request.MerchantId, ct);
+        if (merchant is null)
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "商户不存在");
+        }
+
+        // 幂等：已经是目标状态就回成功，不回错。
+        // 列表上的按钮是给运营连点两下的，弹一个红色报错只会让人以为没生效。
+        if (merchant.Status == request.Status)
+        {
+            return ApiResponseFactory.Ok(
+                request.Status == PlatformStatuses.Enabled ? "商户已启用" : "商户已停用");
+        }
+
+        // 🔴 启用前必须已通过审核。
+        // 审核状态与启停状态是两个独立字段，但小程序「只看审核通过的商户」这条规则
+        // 意味着：启用了没审过的商户，在列表上看着是绿色的，实际用户根本看不到 ——
+        // 运营会反复来问「为什么小程序里没有我的店」。这里直接拦住并说清楚原因。
+        if (request.Status == PlatformStatuses.Enabled
+            && merchant.AuditStatus != MerchantAuditStatuses.Approved)
+        {
+            return ApiResponseFactory.Fail(
+                BaseApiResponseCode.BusinessError,
+                merchant.AuditStatus == MerchantAuditStatuses.Pending
+                    ? "该商户还没通过审核，请先完成审核"
+                    : "该商户审核已被拒绝，请先让商户修改资料并重新提交");
+        }
+
+        var affected = await _merchants.TryUpdateStatusAsync(
+            request.MerchantId, merchant.Status, request.Status, ct);
+
+        if (affected == 0)
+        {
+            return ApiResponseFactory.Fail(
+                BaseApiResponseCode.BusinessError, "该商户状态已被其他人修改，请刷新后重试");
+        }
+
+        return ApiResponseFactory.Ok(
+            request.Status == PlatformStatuses.Enabled ? "商户已启用" : "商户已停用");
     }
 }
 

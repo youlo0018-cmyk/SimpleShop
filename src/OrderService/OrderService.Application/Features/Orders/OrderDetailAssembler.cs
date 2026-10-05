@@ -29,5 +29,15 @@ public static class OrderDetailAssembler
                 a.Id, a.SkuId, a.SpuId, a.ProductName, a.SkuSpecText,
                 a.Price, a.Quantity, a.OriginalAmount,
                 a.ActivityDiscount, a.CouponDiscount, a.PayableAmount, a.DeliveryType,
-                a.SourceType)).ToList());
+                a.SourceType)).ToList(),
+            order.LogisticsCompanyId,
+            order.LogisticsCompanyName,
+            order.TrackingNo,
+            // 未发货时给空串而不是 null：DTO 里所有字符串字段都是非空约定，
+            // 前端直接显示即可，少写一处 ?. 判断。
+            order.ShippedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+            order.RefundedAmount,
+            // 剩余可退给到分位就当 0：差 0.004 元还提示「还能退 0.00 元」很奇怪
+            Math.Max(0m, decimal.Round(
+                order.PayableAmount - order.RefundedAmount, 2, MidpointRounding.AwayFromZero)));
 }

@@ -89,6 +89,7 @@ public record QueryProductDetailCommand(long ProductId) : IRequest<ApiResponse<P
 /// <param name="Keyword">按商品名模糊搜索。</param>
 /// <param name="CategoryId">按分类过滤。</param>
 /// <param name="BrandId">按品牌过滤。</param>
+/// <param name="MerchantId">按商户过滤，0 表示不限；后台「某商户的商品」入口靠它筛选。</param>
 /// <param name="Status">按上下架过滤，0 不限。</param>
 /// <param name="AuditStatus">按审核状态过滤，0 不限。</param>
 public record QueryProductsCommand(

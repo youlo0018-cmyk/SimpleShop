@@ -39,6 +39,7 @@ public readonly record struct OrderLineRequest(
 /// <param name="InventoryPreDeducted">
 /// <b>库存是否已在别处预扣走。</b>秒杀单必须传 true。
 /// </param>
+/// <param name="CustomerNo">客户唯一编码，写进订单做快照。后台按它检索订单而不是按手机号，客户换号后历史订单仍能查到。</param>
 /// <remarks>
 /// 🔴 这是秒杀单唯一的关键开关：秒杀的货在**发布场次时**就从常规库存划走了，
 /// 再走一次「锁常规库存」等于锁走第二份，直接超卖。

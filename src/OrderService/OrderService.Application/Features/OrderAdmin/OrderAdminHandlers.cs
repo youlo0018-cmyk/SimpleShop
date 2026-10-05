@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using OrderService.Application.Features.Orders;
 using OrderService.Domain.Entities;
 using OrderService.Domain.Ports;
+using OrderService.Domain.Services;
 
 namespace OrderService.Application.Features.OrderAdmin;
 
@@ -100,7 +101,27 @@ public sealed class QueryAdminOrderDetailHandler
         }
 
         var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
-        return ApiResults.Ok(OrderDetailAssembler.Build(order, items));
+
+        // 后台要展示「每行还能退多少」，所以把行级已退余额一起算出来。
+        // C 端不需要这个，所以不塞进共用组装器 —— 否则 C 端每次查详情都多一条聚合查询。
+        var refunded = await _store
+            .AggregateRefundedItemsAsync(order.Id, ct).ConfigureAwait(false);
+
+        var itemDtos = items.Select(a =>
+        {
+            refunded.TryGetValue(a.Id, out var r);
+            return new OrderItemDto(
+                a.Id, a.SkuId, a.SpuId, a.ProductName, a.SkuSpecText,
+                a.Price, a.Quantity, a.OriginalAmount,
+                a.ActivityDiscount, a.CouponDiscount, a.PayableAmount, a.DeliveryType,
+                a.SourceType,
+                r.Quantity,
+                Math.Max(0m, decimal.Round(
+                    a.PayableAmount - r.Amount, 2, MidpointRounding.AwayFromZero)));
+        }).ToList();
+
+        return ApiResults.Ok(
+            OrderDetailAssembler.Build(order, items) with { Items = itemDtos });
     }
 }
 
@@ -142,19 +163,28 @@ public sealed class AdminCancelOrderHandler : MediatR.IRequestHandler<AdminCance
     }
 }
 
-/// <summary>发货处理器（实物快递，20 → 30）。</summary>
+/// <summary>发货处理器（实物快递，20 → 30），同时写入物流公司与运单号。</summary>
 /// <remarks>
-/// 用户要求 D3：<b>手动点发货，不用填物流信息</b>。
-/// 所以这里只有状态迁移，没有任何物流单号字段——后端刻意不提供那个字段，
-/// 以免将来有人「顺手」把它加进查询接口，白送一个用户可见的物流轨迹入口。
+/// 早期版本按用户要求「手动点发货、不填物流信息」，当时刻意没有任何物流字段。
+/// 现在改为<b>必须选择物流公司并录入运单号</b>：客服接到物流异常时，
+/// 没有单号的订单无从追责，「已发货」只是一个空口的状态而已。
+///
+/// <para>公司名<b>不采信前端传值</b>，而是由字典的归属方（商品服务）给出权威名称：
+/// 前端传的名字可以随便编，订单上就会留下一条查无此公司的物流记录。</para>
 /// </remarks>
 public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand, ApiResponse>
 {
     private readonly IOrderStore _store;
+    private readonly ILogisticsCompanyPort _logistics;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
-    public ShipOrderHandler(IOrderStore store) => _store = store;
+    /// <param name="logistics">物流公司查询端口。</param>
+    public ShipOrderHandler(IOrderStore store, ILogisticsCompanyPort logistics)
+    {
+        _store = store;
+        _logistics = logistics;
+    }
 
     /// <summary>执行发货。</summary>
     /// <param name="request">发货命令。</param>
@@ -183,17 +213,34 @@ public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand,
                 $"当前订单状态是「{OrderStatusMachine.NameOf(order.Status)}」，只有待发货的订单可以发货");
         }
 
-        var affected = await _store.TryTransitStatusAsync(
+        // 字典里查不到就把请求挡在这里，而不是发出去之后订单上挂一个空公司名。
+        var companyName = await _logistics
+            .ResolveNameAsync(request.LogisticsCompanyId, ct).ConfigureAwait(false);
+
+        if (companyName is null)
+        {
+            return ApiResponseFactory.Fail(
+                BaseApiResponseCode.NotFound,
+                "物流公司不存在，可能已被删除，请刷新后重新选择");
+        }
+
+        var trackingNo = request.TrackingNo.Trim();
+        var affected = await _store.TryShipAsync(
             order.Id,
             Domain.Entities.OrderStatuses.PendingShipment,
-            Domain.Entities.OrderStatuses.PendingReceipt, ct).ConfigureAwait(false);
+            Domain.Entities.OrderStatuses.PendingReceipt,
+            request.LogisticsCompanyId,
+            companyName,
+            trackingNo,
+            DateTime.UtcNow,
+            ct).ConfigureAwait(false);
 
         if (affected == 0)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
 
-        return ApiResponseFactory.Ok("已发货");
+        return ApiResponseFactory.Ok($"已发货 · {companyName} {trackingNo}");
     }
 }
 
@@ -492,13 +539,19 @@ public sealed class SimulatePaymentHandler
     }
 }
 
-/// <summary>退款处理器。</summary>
+/// <summary>退款处理器，支持多次部分退款。</summary>
 /// <remarks>
 /// 退款是全系统第二复杂的补偿链路，这里先落地订单状态侧与库存回补：
 /// 积分按比例回收、券退回属于 PaymentService 的职责（BUSINESS.md 10），
 /// 本轮不重复实现，避免同一笔账被两个服务各记一次。
+///
+/// <para><b>早期实现是一退就把订单打成 60 已退款</b>，于是第二次退款无处落脚：
+/// 「一件退掉了、另一件还想退」这种最常见的诉求完全做不了。
+/// 现在一笔订单可以有多条退款记录（<see cref="OrderRefund"/>），
+/// 退完剩余余额才把订单置为已退款。</para>
 /// </remarks>
-public sealed class RefundOrderHandler : MediatR.IRequestHandler<RefundOrderCommand, ApiResponse>
+public sealed class RefundOrderHandler
+    : MediatR.IRequestHandler<RefundOrderCommand, ApiResponse<RefundResultDto>>
 {
     private readonly IOrderStore _store;
     private readonly IInventoryPort _inventory;
@@ -519,33 +572,107 @@ public sealed class RefundOrderHandler : MediatR.IRequestHandler<RefundOrderComm
     /// <summary>执行退款。</summary>
     /// <param name="request">退款命令。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>成功返回空响应。</returns>
-    public async Task<ApiResponse> Handle(RefundOrderCommand request, CancellationToken ct)
+    /// <returns>退款结果，含本次金额、累计已退与剩余可退。</returns>
+    public async Task<ApiResponse<RefundResultDto>> Handle(
+        RefundOrderCommand request, CancellationToken ct)
     {
         var order = await _store.FindByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
-        if (order is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "订单不存在");
+        if (order is null)
+        {
+            return ApiResults.Fail<RefundResultDto>(BaseApiResponseCode.NotFound, "订单不存在");
+        }
 
         var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
 
         if (items.Any(a => a.DeliveryType == DeliveryTypes.Virtual))
         {
-            return ApiResponseFactory.Fail(
+            return ApiResults.Fail<RefundResultDto>(
                 BaseApiResponseCode.BusinessError, "虚拟商品订单不支持退款");
         }
 
         if (!OrderStatusMachine.CanRefund(order.Status, items.Select(a => a.DeliveryType)))
         {
-            return ApiResponseFactory.Fail(
+            return ApiResults.Fail<RefundResultDto>(
                 BaseApiResponseCode.OrderStateInvalid,
                 $"当前订单状态是「{OrderStatusMachine.NameOf(order.Status)}」，已完成或已退款的订单不能再退");
         }
 
-        var affected = await _store.TryTransitStatusAsync(
-            order.Id, order.Status, Domain.Entities.OrderStatuses.Refunded, ct).ConfigureAwait(false);
+        // 已退余额按行聚合，一次查完而不是每行查一次（一张单最多 50 行）
+        var refundedByLine = await _store
+            .AggregateRefundedItemsAsync(order.Id, ct).ConfigureAwait(false);
+
+        var refundable = items
+            .Select(a => refundedByLine.TryGetValue(a.Id, out var r)
+                ? new RefundableLine(a.Id, a.Quantity, r.Quantity, a.PayableAmount, r.Amount)
+                : new RefundableLine(a.Id, a.Quantity, 0, a.PayableAmount, 0m))
+            .ToList();
+
+        var requests = request.Lines?
+            .Select(a => new RefundLineRequest(a.OrderItemId, a.Quantity, a.Amount))
+            .ToList();
+
+        var resolution = OrderRefundRules.Resolve(
+            refundable, order.PayableAmount, order.RefundedAmount, requests);
+
+        if (!resolution.IsValid)
+        {
+            return ApiResults.Fail<RefundResultDto>(BaseApiResponseCode.BusinessError, resolution.Error);
+        }
+
+        var ctx = TenantContextHolder.Current;
+        var refundNo = BuildRefundNo();
+
+        var refund = new OrderRefund
+        {
+            RefundNo = refundNo,
+            OrderId = order.Id,
+            OrderNo = order.OrderNo,
+            PlatformId = order.PlatformId,
+            MerchantId = order.MerchantId,
+            CustomerId = order.CustomerId,
+            Amount = resolution.Total,
+            // 退完剩余余额才算整单退，否则是部分退
+            RefundType = resolution.FullyRefunded
+                ? OrderRefundTypes.Whole
+                : OrderRefundTypes.Partial,
+            FullyRefunded = resolution.FullyRefunded,
+            Reason = request.Remark.Trim(),
+            OperatorId = ctx.UserId,
+            OperatorName = ctx.UserName
+        };
+
+        var detail = resolution.Lines.Select(a =>
+        {
+            // OrderItemId = 0 是「运费与优惠分摊」伪行：它不对应任何商品，
+            // 所以只留金额，不参与库存回补。
+            var line = a.OrderItemId == 0 ? null : items.First(b => b.Id == a.OrderItemId);
+            return new OrderRefundItem
+            {
+                OrderItemId = a.OrderItemId,
+                SkuId = line?.SkuId ?? 0,
+                ProductName = line?.ProductName ?? "运费与优惠分摊",
+                SkuSpecText = line?.SkuSpecText ?? string.Empty,
+                Quantity = a.Quantity,
+                Amount = a.Amount
+            };
+        }).ToList();
+
+        var refundId = await _store.SaveRefundAsync(refund, detail, ct).ConfigureAwait(false);
+
+        // 🔴 余额判断在 SQL 的 WHERE 里（refunded_amount + 本次 <= payable_amount），
+        // 所以受影响行数为 0 就是「余额已被别人用掉」或「状态已变」。
+        var affected = await _store.TryApplyRefundAsync(
+            order.Id, order.Status, resolution.Total, resolution.FullyRefunded, ct)
+            .ConfigureAwait(false);
 
         if (affected == 0)
         {
-            return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
+            _logger.LogWarning(
+                "订单 {OrderNo} 退款 {RefundNo} 未生效（余额不足或状态已变）", order.OrderNo, refundNo);
+
+            return ApiResults.Fail<RefundResultDto>(
+                BaseApiResponseCode.OrderStateInvalid,
+                "订单可退余额不足或状态已变更，请刷新后重试");
         }
 
         // 回补库存：未发货（10 / 20）的货还锁着，要 release；已发货（30 / 40）的货已经扣减，要 replenish。
@@ -554,28 +681,53 @@ public sealed class RefundOrderHandler : MediatR.IRequestHandler<RefundOrderComm
         var lockedPhase = order.Status is Domain.Entities.OrderStatuses.PendingPayment
             or Domain.Entities.OrderStatuses.PendingShipment;
 
-        foreach (var item in items)
+        // 按**本次退的件数**回补，不是整行数量：部分退款退 1 件就只回补 1 件。
+        // 按整行回补的话，买了 3 件退 1 件会把 3 件全部放回库存，直接超卖。
+        foreach (var line in resolution.Lines.Where(a => a.OrderItemId != 0 && a.Quantity > 0))
         {
+            var item = items.First(a => a.Id == line.OrderItemId);
             try
             {
                 if (lockedPhase)
                 {
                     await _inventory.ReleaseAsync(
-                        item.SkuId, item.Quantity, $"{order.OrderNo}:{item.SkuId}", ct).ConfigureAwait(false);
+                        item.SkuId, line.Quantity, $"{order.OrderNo}:{item.SkuId}", ct).ConfigureAwait(false);
                 }
                 else
                 {
                     await _inventory.ReplenishAsync(
-                        item.SkuId, item.Quantity, $"{order.OrderNo}:{item.SkuId}", ct).ConfigureAwait(false);
+                        item.SkuId, line.Quantity, $"{order.OrderNo}:{item.SkuId}", ct).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "退款回补库存失败：订单 {OrderNo} SKU {SkuId}", order.OrderNo, item.SkuId);
+                _logger.LogError(ex,
+                    "退款回补库存失败：订单 {OrderNo} SKU {SkuId} 数量 {Quantity}",
+                    order.OrderNo, item.SkuId, line.Quantity);
             }
         }
 
-        _logger.LogInformation("订单 {OrderNo} 已退款：{Reason}", order.OrderNo, request.Remark);
-        return ApiResponseFactory.Ok("退款成功");
+        _logger.LogInformation(
+            "订单 {OrderNo} 退款 {RefundNo} 成功：本次 {Amount} 元，累计 {Total} 元（{Type}），原因 {Reason}",
+            order.OrderNo, refundNo, resolution.Total,
+            OrderRefundRules.Round2(order.RefundedAmount + resolution.Total),
+            OrderRefundTypes.NameOf(refund.RefundType), request.Remark);
+
+        var result = new RefundResultDto(
+            refundId, refundNo, resolution.Total,
+            OrderRefundRules.Round2(order.RefundedAmount + resolution.Total),
+            resolution.RemainingAfter, resolution.FullyRefunded,
+            refund.RefundType, OrderRefundTypes.NameOf(refund.RefundType));
+
+        return ApiResults.Ok(
+            result,
+            resolution.FullyRefunded
+                ? $"已整单退款 {resolution.Total:0.00} 元"
+                : $"已退款 {resolution.Total:0.00} 元，还剩 {resolution.RemainingAfter:0.00} 元可退");
     }
+
+    /// <summary>生成退款单号：时间戳 + 6 位随机数。</summary>
+    /// <returns>退款单号。</returns>
+    private static string BuildRefundNo()
+        => $"RFD{DateTime.UtcNow:yyyyMMddHHmmss}{Random.Shared.Next(100000, 1000000)}";
 }

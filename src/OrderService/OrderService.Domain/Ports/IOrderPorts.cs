@@ -250,6 +250,70 @@ public interface IOrderStore
         CancellationToken ct = default,
         DateTime? paidAt = null, DateTime? completedAt = null);
 
+    /// <summary>
+    /// 发货：条件更新状态并同时写入物流信息。
+    /// </summary>
+    /// <param name="orderId">订单 Id。</param>
+    /// <param name="fromStatus">期望的原状态，必须是待发货。</param>
+    /// <param name="toStatus">目标状态，待收货。</param>
+    /// <param name="logisticsCompanyId">物流公司 Id。</param>
+    /// <param name="logisticsCompanyName">物流公司名称快照。</param>
+    /// <param name="trackingNo">运单号。</param>
+    /// <param name="shippedAt">发货时间 UTC。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数；为 0 表示状态已被别人改过，本次不生效。</returns>
+    /// <remarks>
+    /// <b>单独一个方法而不是给 <see cref="TryTransitStatusAsync"/> 再加四个可选参数</b>：
+    /// 物流四列只在发货这一条路径上写，加进通用方法会让「确认收货」也能顺手改掉
+    /// 别人的运单号 —— 而这种错误在页面上完全看不出来。
+    /// 状态与物流信息必须在**同一条 UPDATE** 里写：拆开的话中间崩掉会留下一张
+    /// 「已发货但没有运单号」的订单，客服拿着空单号去查物流永远查不到。
+    /// </remarks>
+    Task<int> TryShipAsync(
+        long orderId, int fromStatus, int toStatus,
+        long logisticsCompanyId, string logisticsCompanyName, string trackingNo,
+        DateTime shippedAt, CancellationToken ct = default);
+
+    /// <summary>按订单行聚合已退数量与已退金额。</summary>
+    /// <param name="orderId">订单 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>orderItemId → (已退数量, 已退金额)。没有退过的行不在结果里。</returns>
+    /// <remarks>
+    /// 部分退款的行级余额校验靠它：行实付 − 行已退 = 还能退多少。
+    /// 一次查完而不是每行查一次 —— 一张单最多 50 行，逐行查就是 50 条 SQL。
+    /// </remarks>
+    Task<IReadOnlyDictionary<long, RefundedItemBalance>> AggregateRefundedItemsAsync(
+        long orderId, CancellationToken ct = default);
+
+    /// <summary>写入一条退款记录及其明细（同事务）。</summary>
+    /// <param name="refund">退款记录主表。</param>
+    /// <param name="items">退款明细。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>退款记录 Id。</returns>
+    /// <remarks>
+    /// 主表与明细必须在同一事务：只写主表的话，订单详情页会显示一条
+    /// 「退了 100 元」但没有任何商品的记录，客服根本不知道退的是哪几件。
+    /// </remarks>
+    Task<long> SaveRefundAsync(
+        OrderRefund refund, IReadOnlyCollection<OrderRefundItem> items, CancellationToken ct = default);
+
+    /// <summary>累加已退金额，并在退完时把订单打成已退款。</summary>
+    /// <param name="orderId">订单 Id。</param>
+    /// <param name="fromStatus">期望的原状态。</param>
+    /// <param name="amount">本次退款金额。</param>
+    /// <param name="fullyRefunded">退完后是否剩余可退余额为 0。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数；为 0 表示状态已变或已退金额超出余额。</returns>
+    /// <remarks>
+    /// <b>余额判断必须落在 SQL 的 WHERE 里</b>（<c>refunded_amount + amount &lt;= payable_amount</c>）：
+    /// 只在 C# 里判断的话，两个并发退款请求都会读到同一个旧的 refunded_amount，
+    /// 都认为「还有余额」，然后一起把订单退成超额 —— 这是实打实的资损。
+    /// 让数据库做这条判断，受影响行数为 0 就是「被别人抢先了」，调用方据此回错。
+    /// </remarks>
+    Task<int> TryApplyRefundAsync(
+        long orderId, int fromStatus, decimal amount, bool fullyRefunded,
+        CancellationToken ct = default);
+
     /// <summary>按区间聚合订单指标，供工作台报表使用。</summary>
     /// <param name="from">区间起（含）。</param>
     /// <param name="to">区间止（不含）。</param>
@@ -288,6 +352,9 @@ public interface IOrderStore
 /// <param name="ItemQuantity">总件数（各行数量之和）。</param>
 /// <param name="LineCount">商品行数（规格种类数）。</param>
 /// <param name="FirstProductName">第一个商品名，用于列表页缩略文字。</param>
+/// <param name="HasPhysical">是否含实物快递行，列表页据此显示「发货」按钮。</param>
+/// <param name="HasVirtual">是否含虚拟商品行，含虚拟行时整单不可退款。</param>
+/// <param name="HasSelfPickup">是否含自提行，列表页据此显示「核销」按钮。</param>
 public readonly record struct OrderItemAggregate(
     long OrderId,
     int ItemQuantity,
@@ -296,6 +363,12 @@ public readonly record struct OrderItemAggregate(
     bool HasPhysical,
     bool HasVirtual,
     bool HasSelfPickup);
+
+/// <summary>订单行已退余额。</summary>
+/// <param name="OrderItemId">订单行 Id。</param>
+/// <param name="Quantity">已退数量。</param>
+/// <param name="Amount">已退金额。</param>
+public readonly record struct RefundedItemBalance(long OrderItemId, int Quantity, decimal Amount);
 
 /// <summary>下单编排结果。</summary>
 /// <param name="Succeeded">是否成功。</param>
@@ -345,4 +418,19 @@ public interface ILowStockPort
     /// <returns>预警 SKU 数。库存服务不可用时返回 0。</returns>
     /// <remarks>同 <see cref="IRefundStatsPort"/>：附属指标不该拖垮主页面。</remarks>
     Task<int> CountLowStockAsync(long merchantId, long platformId, CancellationToken ct = default);
+}
+
+/// <summary>物流公司查询端口（发货时取公司名快照）。</summary>
+/// <remarks>
+/// 物流公司字典归商品服务管，而订单服务要往订单上写一份公司名快照，
+/// 所以这里走一次内网查询而不是让前端把名字传上来 ——
+/// 前端传的名字可以随便编，订单上就会留下一条查无此公司的物流记录。
+/// </remarks>
+public interface ILogisticsCompanyPort
+{
+    /// <summary>按 Id 取物流公司名称。</summary>
+    /// <param name="logisticsCompanyId">物流公司 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>公司名；查不到返回 null（调用方据此拒绝发货）。</returns>
+    Task<string?> ResolveNameAsync(long logisticsCompanyId, CancellationToken ct = default);
 }

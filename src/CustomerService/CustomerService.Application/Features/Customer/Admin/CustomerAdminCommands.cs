@@ -25,6 +25,7 @@ public record ChangeCustomerStatusCommand(long CustomerId, int Status)
 
 /// <summary>后台客户列表行 / 详情。</summary>
 /// <param name="CustomerId">客户 Id。</param>
+/// <param name="CustomerNo">客户唯一编码，后台按它检索比按手机号更稳（客户可能换号）。</param>
 /// <param name="CustomerName">登录名。</param>
 /// <param name="NickName">昵称。</param>
 /// <param name="Phone">手机号。</param>

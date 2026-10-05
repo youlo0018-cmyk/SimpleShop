@@ -63,6 +63,20 @@ public class Order : EntityBase
     [Column(Name = "coupon_discount")]
     public decimal CouponDiscount { get; set; }
 
+    /// <summary>已退金额合计，两位小数。</summary>
+    /// <remarks>
+    /// <b>冗余字段，但它必须存在</b>：多次部分退款要求每次申请时都能立刻算出
+    /// 「还能退多少」。如果每次都去 order_refund_item 上 SUM，
+    /// 两个并发退款请求就会同时读到同一个「已退合计」，
+    /// 各自都判断「还有余额」，然后一起把订单退成超额 —— 这是实打实的资损。
+    ///
+    /// <para>写成订单上的累加列之后，判断与累加可以在**同一条 UPDATE** 里做
+    /// （<c>WHERE refunded_amount &lt;= payable_amount - 本次金额</c>），
+    /// 数据库层面就把超退挡掉了。</para>
+    /// </remarks>
+    [Column(Name = "refunded_amount")]
+    public decimal RefundedAmount { get; set; }
+
     /// <summary>收货地址快照。下单那一刻的地址，之后改地址不影响已有订单。</summary>
     [Column(Name = "receiver_name", StringLength = 64)]
     public string ReceiverName { get; set; } = string.Empty;
@@ -96,6 +110,37 @@ public class Order : EntityBase
     /// <remarks>「完成订单数」按它统计，而不是按状态等于 50 反推。</remarks>
     [Column(Name = "completed_at")]
     public DateTime? CompletedAt { get; set; }
+
+    /// <summary>物流公司 Id，0 表示未发货或无需物流。</summary>
+    /// <remarks>
+    /// 只存 Id 是不够的：物流公司是可以被改名 / 删除的，
+    /// 半年后回头查这一单时，Id 可能已经指向另一家公司了。
+    /// 所以下面还要冗余一份名称快照。
+    /// </remarks>
+    [Column(Name = "logistics_company_id")]
+    public long LogisticsCompanyId { get; set; }
+
+    /// <summary>
+    /// 物流公司名称<b>快照</b>。
+    /// </summary>
+    /// <remarks>
+    /// 发货那一刻把公司名写死在订单上。之后在「物流公司」里改名或删除，
+    /// 历史订单显示的仍然是当时那家 —— 订单是对账凭据，显示的必须是当时的信息。
+    /// </remarks>
+    [Column(Name = "logistics_company_name", StringLength = 128)]
+    public string LogisticsCompanyName { get; set; } = string.Empty;
+
+    /// <summary>物流单号，未发货为空。</summary>
+    [Column(Name = "tracking_no", StringLength = 64)]
+    public string TrackingNo { get; set; } = string.Empty;
+
+    /// <summary>发货时间 UTC，未发货为 null。</summary>
+    /// <remarks>
+    /// 单独存一个发货时间而不是用 <c>created_at</c> 推算：
+    /// 订单可能当天买、次天才发，用下单时间算出来的时效会差一天。
+    /// </remarks>
+    [Column(Name = "shipped_at")]
+    public DateTime? ShippedAt { get; set; }
 }
 
 /// <summary>订单行。</summary>
@@ -201,4 +246,126 @@ public static class OrderStatuses
 
     /// <summary>已取消。仅可从 10 进入。</summary>
     public const int Cancelled = 91;
+}
+
+/// <summary>订单退款记录（后台代客退款）。</summary>
+/// <remarks>
+/// <b>一张订单可以对应多条退款记录</b>：多次部分退款是这个表的常态，
+/// 不是异常。早期实现是一退就把订单打成 60 已退款，于是第二次退款无处落脚，
+/// 「退了一件还想要退另一件」这种最常见的诉求直接做不了。
+///
+/// <para>本表只记「订单侧发生了什么」：退了哪几行、退了多少、库存是否回补。
+/// 资金流水在支付服务，两边以订单号对齐（详见 <see cref="OrderRefundTypes"/>）。</para>
+/// </remarks>
+[Table(Name = "order_refund")]
+public class OrderRefund : EntityBase
+{
+    /// <summary>退款单号，业务唯一。</summary>
+    [Column(Name = "refund_no", StringLength = 32)]
+    public string RefundNo { get; set; } = string.Empty;
+
+    /// <summary>订单 Id。</summary>
+    [Column(Name = "order_id")]
+    public long OrderId { get; set; }
+
+    /// <summary>订单号，冗余一份便于按单号直接排查。</summary>
+    [Column(Name = "order_no", StringLength = 64)]
+    public string OrderNo { get; set; } = string.Empty;
+
+    /// <summary>平台 Id。</summary>
+    [Column(Name = "platform_id")]
+    public long PlatformId { get; set; }
+
+    /// <summary>商户 Id。</summary>
+    [Column(Name = "merchant_id")]
+    public long MerchantId { get; set; }
+
+    /// <summary>客户 Id。</summary>
+    [Column(Name = "customer_id")]
+    public long CustomerId { get; set; }
+
+    /// <summary>本次退款金额合计，两位小数。</summary>
+    [Column(Name = "amount")]
+    public decimal Amount { get; set; }
+
+    /// <summary>退款类型，见 <see cref="OrderRefundTypes"/>。</summary>
+    [Column(Name = "refund_type")]
+    public int RefundType { get; set; } = OrderRefundTypes.Partial;
+
+    /// <summary>退款后订单是否已整单退完。</summary>
+    /// <remarks>
+    /// 冗余一个布尔而不是每次去算「已退合计 == 实付」：订单详情页要显示
+    /// 「已全额退款 / 还可再退多少」，每次现算就得再聚合一次明细表。
+    /// </remarks>
+    [Column(Name = "fully_refunded")]
+    public bool FullyRefunded { get; set; }
+
+    /// <summary>退款原因，2~512 个字符。</summary>
+    [Column(Name = "reason", StringLength = 512)]
+    public string Reason { get; set; } = string.Empty;
+
+    /// <summary>操作人 Id（后台账号）。</summary>
+    [Column(Name = "operator_id")]
+    public long OperatorId { get; set; }
+
+    /// <summary>操作人姓名快照。</summary>
+    [Column(Name = "operator_name", StringLength = 64)]
+    public string OperatorName { get; set; } = string.Empty;
+}
+
+/// <summary>退款单明细（按订单行退）。</summary>
+[Table(Name = "order_refund_item")]
+public class OrderRefundItem : EntityBase
+{
+    /// <summary>退款记录 Id。</summary>
+    [Column(Name = "refund_id")]
+    public long RefundId { get; set; }
+
+    /// <summary>订单 Id，便于按订单直接聚合明细。</summary>
+    [Column(Name = "order_id")]
+    public long OrderId { get; set; }
+
+    /// <summary>订单行 Id。</summary>
+    [Column(Name = "order_item_id")]
+    public long OrderItemId { get; set; }
+
+    /// <summary>SKU Id，回补库存用。</summary>
+    [Column(Name = "sku_id")]
+    public long SkuId { get; set; }
+
+    /// <summary>商品名快照：商品改名后历史退款记录要显示当时的名字。</summary>
+    [Column(Name = "product_name", StringLength = 128)]
+    public string ProductName { get; set; } = string.Empty;
+
+    /// <summary>规格快照。</summary>
+    [Column(Name = "sku_spec_text", StringLength = 256)]
+    public string SkuSpecText { get; set; } = string.Empty;
+
+    /// <summary>本次退款数量。</summary>
+    [Column(Name = "quantity")]
+    public int Quantity { get; set; }
+
+    /// <summary>该行本次退款金额，两位小数。</summary>
+    [Column(Name = "amount")]
+    public decimal Amount { get; set; }
+}
+
+/// <summary>订单退款类型。</summary>
+public static class OrderRefundTypes
+{
+    /// <summary>部分退款。只退选中的行 / 行内的一部分金额。</summary>
+    public const int Partial = 1;
+
+    /// <summary>整单退款。退了剩余的全部可退金额，订单转为 60 已退款。</summary>
+    public const int Whole = 2;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="refundType">退款类型。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    public static string NameOf(int refundType) => refundType switch
+    {
+        Partial => "部分退款",
+        Whole => "整单退款",
+        _ => "未知"
+    };
 }

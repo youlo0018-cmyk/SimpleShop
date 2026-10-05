@@ -164,6 +164,89 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
     }
 
     /// <inheritdoc />
+    public async Task<int> TryShipAsync(
+        long orderId, int fromStatus, int toStatus,
+        long logisticsCompanyId, string logisticsCompanyName, string trackingNo,
+        DateTime shippedAt, CancellationToken ct = default)
+        => await _db.Update<Order>()
+            // 条件带上原状态，并发发货时只有一个能生效（与 TryTransitStatusAsync 同理）
+            .Where(a => a.Id == orderId && a.Status == fromStatus)
+            .Set(a => a.Status == toStatus)
+            .Set(a => a.LogisticsCompanyId == logisticsCompanyId)
+            .Set(a => a.LogisticsCompanyName == logisticsCompanyName)
+            .Set(a => a.TrackingNo == trackingNo)
+            .Set(a => a.ShippedAt == shippedAt)
+            .Set(a => a.UpdatedAt == DateTime.UtcNow)
+            .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<long, RefundedItemBalance>> AggregateRefundedItemsAsync(
+        long orderId, CancellationToken ct = default)
+    {
+        // 先取原始行再在内存里聚合：FreeSql 的投影里没法写 a.Sum(...)，
+        // 而这里的范围只是**一张订单**的退款明细（最多几十行），内存聚合代价可忽略。
+        var rows = await _db.Select<OrderRefundItem>()
+            .Where(a => a.OrderId == orderId)
+            .ToListAsync(a => new { a.OrderItemId, a.Quantity, a.Amount }, ct)
+            .ConfigureAwait(false);
+
+        return rows
+            .GroupBy(a => a.OrderItemId)
+            .ToDictionary(
+                g => g.Key,
+                g => new RefundedItemBalance(g.Key, g.Sum(a => a.Quantity), g.Sum(a => a.Amount)));
+    }
+
+    /// <inheritdoc />
+    public async Task<long> SaveRefundAsync(
+        OrderRefund refund, IReadOnlyCollection<OrderRefundItem> items, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        refund.Id = SnowflakeId.NewId();
+        refund.CreatedAt = now;
+        refund.UpdatedAt = null;
+
+        foreach (var item in items)
+        {
+            item.Id = SnowflakeId.NewId();
+            item.RefundId = refund.Id;
+            item.OrderId = refund.OrderId;
+            item.CreatedAt = now;
+            item.UpdatedAt = null;
+        }
+
+        // 主表与明细同一事务：只写主表的话，订单详情页会显示一条
+        // 「退了 100 元」但没有任何商品的记录，客服不知道退的是哪几件
+        await Task.Run(() => _db.Transaction(() =>
+        {
+            _db.Insert(refund).ExecuteAffrows();
+            foreach (var item in items)
+            {
+                _db.Insert(item).ExecuteAffrows();
+            }
+        }), ct).ConfigureAwait(false);
+
+        return refund.Id;
+    }
+
+    /// <inheritdoc />
+    public async Task<int> TryApplyRefundAsync(
+        long orderId, int fromStatus, decimal amount, bool fullyRefunded,
+        CancellationToken ct = default)
+        => await _db.Update<Order>()
+            // 三个条件缺一不可：
+            // ① status = 期望原状态 —— 并发时只有一个能把状态改掉
+            // ② refunded_amount + amount <= payable_amount —— 超退在数据库层就挡掉
+            // ③ 金额按两位小数比较，避免浮点尾数把最后一次退款误判成超额
+            .Where(a => a.Id == orderId
+                        && a.Status == fromStatus
+                        && a.RefundedAmount + amount <= a.PayableAmount)
+            .Set(a => a.RefundedAmount == a.RefundedAmount + amount)
+            .Set(a => a.Status == (fullyRefunded ? OrderStatuses.Refunded : a.Status))
+            .Set(a => a.UpdatedAt == DateTime.UtcNow)
+            .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
     public async Task<OrderAggregateRow> AggregateAsync(
         DateTime from, DateTime to, long merchantId, long platformId,
         CancellationToken ct = default)

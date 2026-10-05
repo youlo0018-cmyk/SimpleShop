@@ -127,7 +127,40 @@ public sealed class InternalProductController : ControllerBase
 
         return Ok(ApiResults.Ok(list));
     }
+
+    /// <summary>按 Id 取物流公司（订单服务发货时用）。</summary>
+    /// <param name="logisticsId">物流公司 Id。</param>
+    /// <returns>物流公司 Id 与名称；查不到返回 404。</returns>
+    /// <remarks>
+    /// 订单服务发货时要往订单上写一份<b>公司名快照</b>，但物流公司字典在商品服务里。
+    /// 让订单服务自己建一张表副本，或者信任前端传上来的公司名，都不行：
+    /// 前端传的名字可以随便编，订单上就会留下一条查无此公司的物流记录。
+    /// 所以这里由字典的归属方给出权威名称。
+    ///
+    /// <para><b>停用的公司仍然返回</b>：字典停用只影响「新建发货单时能不能选它」，
+    /// 已经发出去的单必须还能查到公司名。</para>
+    /// </remarks>
+    [HttpGet("logistics-companies/{logisticsId:long}")]
+    public ActionResult<ApiResponse<InternalLogisticsCompany>> LogisticsCompany(long logisticsId)
+    {
+        var company = _db.Select<LogisticsCompany>()
+            .Where(a => a.Id == logisticsId)
+            .First(a => new InternalLogisticsCompany(a.Id, a.CompanyName, a.Status));
+
+        if (company is null)
+        {
+            return NotFound(new { error = "not_found", error_description = "物流公司不存在" });
+        }
+
+        return Ok(ApiResults.Ok(company));
+    }
 }
+
+/// <summary>物流公司内部快照。</summary>
+/// <param name="LogisticsId">物流公司 Id。</param>
+/// <param name="CompanyName">公司名称，订单服务把它写成快照。</param>
+/// <param name="Status">1 启用 / 2 停用。</param>
+public sealed record InternalLogisticsCompany(long LogisticsId, string CompanyName, int Status);
 
 /// <summary>SKU 快照信息。</summary>
 /// <param name="SkuId">SKU Id。</param>

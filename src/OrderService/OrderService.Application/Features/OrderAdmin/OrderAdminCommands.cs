@@ -13,6 +13,10 @@ namespace OrderService.Application.Features.OrderAdmin;
 /// <param name="PageSize">每页条数。</param>
 /// <param name="PlatformId">平台 Id，来自租户上下文；超管可传 0 表示不限。</param>
 /// <param name="MerchantId">商户 Id，来自租户上下文；超管可传 0 表示不限。</param>
+/// <param name="CustomerId">客户 Id，0 表示不限；后台「客户的订单」入口靠它筛选。</param>
+/// <param name="CustomerNo">客户唯一编码，空表示不限。客户可能换手机号，按编码筛更稳。</param>
+/// <param name="From">下单时间下界 UTC，null 表示不限。</param>
+/// <param name="To">下单时间上界 UTC，null 表示不限。</param>
 public record QueryAdminOrdersCommand(
     int Status = 0, string Keyword = "", int Page = 1, int PageSize = 20,
     long PlatformId = 0, long MerchantId = 0,
@@ -35,10 +39,21 @@ public record QueryAdminOrderDetailCommand(long OrderId)
 public record AdminCancelOrderCommand(string OrderNo, string Remark = "后台代客取消")
     : IRequest<ApiResponse>, IHasOrderNo;
 
-/// <summary>发货。<b>不填物流信息</b>（用户需求 D3），只把状态从 20 推到 30。</summary>
+/// <summary>快递发货（20 → 30）。<b>必填物流公司与运单号</b>。</summary>
+/// <remarks>
+/// 早期版本按用户要求「手动点发货、不填物流信息」，当时刻意不提供物流字段。
+/// 现在改为<b>必须选择物流公司并录入运单号</b>：客服接到物流异常时，
+/// 没有单号的订单无从追责，「已发货」只是一个空口的状态而已。
+/// </remarks>
 /// <param name="OrderNo">订单号。</param>
 /// <param name="Remark">发货备注。</param>
-public record ShipOrderCommand(string OrderNo, string Remark = "") : IRequest<ApiResponse>, IHasOrderNo;
+/// <param name="LogisticsCompanyId">物流公司 Id，必须大于 0。</param>
+/// <param name="TrackingNo">运单号，2~64 个字符。</param>
+public record ShipOrderCommand(
+    string OrderNo,
+    string Remark = "",
+    long LogisticsCompanyId = 0,
+    string TrackingNo = "") : IRequest<ApiResponse>, IHasOrderNo;
 
 /// <summary>虚拟商品发货。发货即完成，直接 20 → 50。</summary>
 /// <param name="OrderNo">订单号。</param>
@@ -68,10 +83,36 @@ public record VerifyPickupCodeCommand(string PickupCode, long PlatformId = 0, lo
 public record SimulatePaymentCommand(string OrderNo, bool Succeed, string Remark = "")
     : IRequest<ApiResponse<SimulatePaymentDto>>, IHasOrderNo;
 
-/// <summary>退款。仅实物订单可退，虚拟订单按用户要求不可退。</summary>
+/// <summary>退款的一行。</summary>
+/// <param name="OrderItemId">订单行 Id。</param>
+/// <param name="Quantity">本次退的数量，必须小于等于「该行数量 − 该行已退数量」。</param>
+/// <param name="Amount">该行本次退款金额，两位小数。</param>
+public sealed record RefundOrderLineInput(long OrderItemId, int Quantity, decimal Amount);
+
+/// <summary>
+/// 后台代客退款，支持多次部分退款。仅实物订单可退，虚拟订单按用户要求不可退。
+/// </summary>
 /// <param name="OrderNo">订单号。</param>
 /// <param name="Remark">退款原因。</param>
-public record RefundOrderCommand(string OrderNo, string Remark) : IRequest<ApiResponse>, IHasOrderNo;
+/// <param name="Lines">要退的行与金额；留空表示把剩余可退余额一次退完。</param>
+public record RefundOrderCommand(
+    string OrderNo,
+    string Remark,
+    IReadOnlyList<RefundOrderLineInput>? Lines = null)
+    : IRequest<ApiResponse<RefundResultDto>>, IHasOrderNo;
+
+/// <summary>退款结果。</summary>
+/// <param name="RefundId">退款记录 Id。</param>
+/// <param name="RefundNo">退款单号。</param>
+/// <param name="Amount">本次退款金额。</param>
+/// <param name="RefundedAmount">本次退款后的累计已退金额。</param>
+/// <param name="RemainingAmount">剩余可退金额。</param>
+/// <param name="FullyRefunded">退完后是否已无剩余可退余额。</param>
+/// <param name="RefundType">退款类型，1 部分 / 2 整单。</param>
+/// <param name="RefundTypeName">退款类型中文名。</param>
+public sealed record RefundResultDto(
+    long RefundId, string RefundNo, decimal Amount, decimal RefundedAmount, decimal RemainingAmount,
+    bool FullyRefunded, int RefundType, string RefundTypeName);
 
 /// <summary>后台订单列表项。</summary>
 /// <param name="OrderId">订单 Id。</param>
@@ -84,6 +125,11 @@ public record RefundOrderCommand(string OrderNo, string Remark) : IRequest<ApiRe
 /// <param name="ReceiverName">收货人。</param>
 /// <param name="ReceiverPhone">收货电话。</param>
 /// <param name="CreatedAt">下单时间。</param>
+/// <param name="HasPhysical">是否含实物快递行，列表页据此显示「发货」按钮。</param>
+/// <param name="HasVirtual">是否含虚拟商品行，含虚拟行时整单不可退款。</param>
+/// <param name="HasSelfPickup">是否含自提行，列表页据此显示「核销」按钮。</param>
+/// <param name="CustomerNo">客户唯一编码，列表页搜索框按它检索。</param>
+/// <param name="MerchantId">商户 Id，列表页的商户下拉靠它筛选。</param>
 public sealed record AdminOrderListItemDto(
     long OrderId, string OrderNo, long CustomerId, int Status, string StatusName,
     decimal PayableAmount, int ItemQuantity,
@@ -118,7 +164,7 @@ public static class OrderAdminValidators
     {
         services.AddScoped<IValidator<QueryAdminOrdersCommand>, QueryAdminOrdersValidator>();
         services.AddScoped<IValidator<AdminCancelOrderCommand>, OrderNoCommandValidator<AdminCancelOrderCommand>>();
-        services.AddScoped<IValidator<ShipOrderCommand>, OrderNoCommandValidator<ShipOrderCommand>>();
+        services.AddScoped<IValidator<ShipOrderCommand>, ShipOrderValidator>();
         services.AddScoped<IValidator<DeliverVirtualCommand>, OrderNoCommandValidator<DeliverVirtualCommand>>();
         services.AddScoped<IValidator<SelfPickupReadyCommand>, OrderNoCommandValidator<SelfPickupReadyCommand>>();
         services.AddScoped<IValidator<VerifyPickupCodeCommand>, VerifyPickupCodeValidator>();
@@ -182,6 +228,25 @@ public static class OrderAdminValidators
         }
     }
 
+    /// <summary>发货校验。在「订单号通用规则」之外追加物流必填。</summary>
+    /// <remarks>
+    /// 不能直接复用 <see cref="OrderNoCommandValidator{T}"/>：那个只管订单号与备注长度，
+    /// 物流两项是这一条命令独有的要求。
+    /// </remarks>
+    private sealed class ShipOrderValidator : AbstractValidator<ShipOrderCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public ShipOrderValidator()
+        {
+            RuleFor(x => x.OrderNo).NotEmpty().MaximumLength(64).WithMessage("订单号不正确");
+            RuleFor(x => x.Remark).MaximumLength(512).WithMessage("备注最多 512 个字符");
+            RuleFor(x => x.LogisticsCompanyId).GreaterThan(0).WithMessage("请选择物流公司");
+            // 单号下限给 2：长度为 1 的单号一定是输错/占位，留着会让客服拿着它去查永远查不到。
+            RuleFor(x => x.TrackingNo).NotEmpty().WithMessage("请填写运单号")
+                .MinimumLength(2).MaximumLength(64).WithMessage("运单号必须为 2-64 个字符");
+        }
+    }
+
     /// <summary>退款校验。</summary>
     private sealed class RefundOrderValidator : AbstractValidator<RefundOrderCommand>
     {
@@ -190,6 +255,16 @@ public static class OrderAdminValidators
         {
             RuleFor(x => x.OrderNo).NotEmpty().MaximumLength(64).WithMessage("订单号不正确");
             RuleFor(x => x.Remark).NotEmpty().MaximumLength(512).WithMessage("请填写退款原因");
+
+            // 传了行就必须每行都合法：OrderItemId 定位、Quantity 为正、Amount 为正两位小数。
+            // 金额上限与「行实付 − 行已退」的比较放在 Handler —— 那一项依赖库里的历史退款，
+            // 校验器阶段拿不到。
+            RuleForEach(x => x.Lines).ChildRules(line =>
+            {
+                line.RuleFor(a => a.OrderItemId).GreaterThan(0).WithMessage("退款行信息不正确");
+                line.RuleFor(a => a.Quantity).InclusiveBetween(1, 99).WithMessage("退款数量必须在 1-99 之间");
+                line.RuleFor(a => a.Amount).GreaterThan(0).WithMessage("退款金额必须大于 0");
+            });
         }
     }
 }

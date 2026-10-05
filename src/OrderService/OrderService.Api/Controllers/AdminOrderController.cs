@@ -97,11 +97,16 @@ public sealed class AdminOrderController : ControllerBase
         [FromBody] SimulatePaymentCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
-    /// <summary>退款。虚拟商品订单不支持退款。</summary>
+    /// <summary>退款，支持多次部分退款。虚拟商品订单不支持退款。</summary>
     /// <param name="command">退款命令。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>成功返回空响应。</returns>
+    /// <returns>退款结果，含本次金额、累计已退与剩余可退。</returns>
+    /// <remarks>
+    /// 命令里的 <c>Lines</c> 留空表示把剩余可退余额一次退完（整单退）；
+    /// 传了就只退指定的行与金额，订单状态保持不变，可以再退第二次。
+    /// </remarks>
     [HttpPost("Refund")]
-    public Task<ApiResponse> Refund([FromBody] RefundOrderCommand command, CancellationToken ct)
+    public Task<ApiResponse<RefundResultDto>> Refund(
+        [FromBody] RefundOrderCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 }

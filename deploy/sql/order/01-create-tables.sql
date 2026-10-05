@@ -45,6 +45,21 @@ ALTER TABLE "order" ADD COLUMN IF NOT EXISTS customer_no varchar(64) NOT NULL DE
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS paid_at timestamp NULL;
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS completed_at timestamp NULL;
 
+-- 物流信息。发货时必填物流公司 + 单号（用户 2026-10 需求：发货要选物流公司并填单号）。
+-- company_name 是**快照**：物流公司表里的名字之后可能被改或删，
+-- 只存 Id 的话半年后回查这张单会指向另一家公司，对账时对不上。
+-- 同样不能只靠 status>=30 反推发货时间：当天买次日发是常态，用下单时间算出来的时效会差一天。
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS logistics_company_id bigint NOT NULL DEFAULT 0;
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS logistics_company_name varchar(128) NOT NULL DEFAULT '';
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS tracking_no varchar(64) NOT NULL DEFAULT '';
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS shipped_at timestamp NULL;
+
+-- 已退金额合计（冗余列，见 Order.RefundedAmount 注释）。
+-- 它必须与订单状态在**同一条 UPDATE** 里累加，才能在并发退款下挡住超退；
+-- 每次去 order_refund_item 上 SUM 的话，两个并发请求会读到同一个旧值，
+-- 都判断「还有余额」，然后一起把订单退成超额。
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS refunded_amount numeric(18,2) NOT NULL DEFAULT 0;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uk_order_no ON "order" (order_no) WHERE is_deleted = false;
 
 -- 🔴 幂等键的唯一约束：同一个客户 + 同一个幂等键只允许一张单。
@@ -60,6 +75,59 @@ CREATE INDEX IF NOT EXISTS idx_order_status ON "order" (status, created_at);
 
 -- 报表按「支付时间 + 商户」过滤用。没有这个索引，近 30 天报表会全表扫。
 CREATE INDEX IF NOT EXISTS idx_order_paid_at ON "order" (paid_at, merchant_id);
+
+-- 按物流单号反查订单：客服收到用户的物流截图时，第一件事就是拿单号搜。
+-- 没有这个索引就是全表扫，而订单表是全系统增长最快的一张。
+CREATE INDEX IF NOT EXISTS idx_order_tracking_no ON "order" (tracking_no) WHERE is_deleted = false;
+
+-- 订单退款记录。一张订单可以有多条（多次部分退款），不是一条订单只能退一次。
+CREATE TABLE IF NOT EXISTS order_refund (
+    id              bigint        NOT NULL,
+    created_at      timestamp     NOT NULL,
+    updated_at      timestamp     NULL,
+    is_deleted      boolean       NOT NULL DEFAULT false,
+    deleted_at      timestamp     NULL,
+    refund_no       varchar(32)   NOT NULL,
+    order_id        bigint        NOT NULL,
+    order_no        varchar(64)   NOT NULL,
+    platform_id     bigint        NOT NULL DEFAULT 0,
+    merchant_id     bigint        NOT NULL DEFAULT 0,
+    customer_id     bigint        NOT NULL DEFAULT 0,
+    amount          numeric(18,2) NOT NULL DEFAULT 0,
+    -- 1 部分退款 / 2 整单退款
+    refund_type     int           NOT NULL DEFAULT 1,
+    fully_refunded  boolean       NOT NULL DEFAULT false,
+    reason          varchar(512)  NOT NULL DEFAULT '',
+    operator_id     bigint        NOT NULL DEFAULT 0,
+    operator_name   varchar(64)   NOT NULL DEFAULT '',
+    CONSTRAINT pk_order_refund PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_order_refund_no ON order_refund (refund_no) WHERE is_deleted = false;
+CREATE INDEX IF NOT EXISTS idx_order_refund_order ON order_refund (order_id, created_at);
+
+-- 退款明细（按订单行退）。部分退款按行定位，行级的可退余额从这里 SUM 出来。
+CREATE TABLE IF NOT EXISTS order_refund_item (
+    id              bigint        NOT NULL,
+    created_at      timestamp     NOT NULL,
+    updated_at      timestamp     NULL,
+    is_deleted      boolean       NOT NULL DEFAULT false,
+    deleted_at      timestamp     NULL,
+    refund_id       bigint        NOT NULL,
+    order_id        bigint        NOT NULL,
+    order_item_id   bigint        NOT NULL,
+    sku_id          bigint        NOT NULL,
+    product_name    varchar(128)  NOT NULL DEFAULT '',
+    sku_spec_text   varchar(256)  NOT NULL DEFAULT '',
+    quantity        int           NOT NULL DEFAULT 1,
+    amount          numeric(18,2) NOT NULL DEFAULT 0,
+    CONSTRAINT pk_order_refund_item PRIMARY KEY (id)
+);
+
+-- 行级余额校验每次都要按 order_item_id 聚合，没有这个索引就是全表扫，
+-- 而订单明细表是随订单量线性增长的。
+CREATE INDEX IF NOT EXISTS idx_order_refund_item_order_item
+    ON order_refund_item (order_item_id) WHERE is_deleted = false;
 
 -- 订单行。商品名 / 规格 / 单价都是**快照**：下单之后商品改名或改价不影响这张订单。
 -- 订单是对账凭据，显示的必须是当时买的是什么、多少钱。

@@ -97,6 +97,7 @@ public record UpdateCouponActivityCommand(
 /// <param name="PageSize">每页条数。</param>
 /// <param name="Status">券状态过滤，0 表示不限。</param>
 /// <param name="TemplateId">模板 Id，0 表示不限。</param>
+/// <param name="CustomerId">客户 Id，0 表示不限；后台「客户的券」入口靠它筛选。</param>
 /// <param name="OrderNo">订单号过滤，空表示不限。</param>
 /// <param name="Keyword">按券码模糊搜索。</param>
 public record QueryCouponRecordsCommand(

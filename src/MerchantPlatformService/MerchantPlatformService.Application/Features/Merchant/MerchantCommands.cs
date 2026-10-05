@@ -79,6 +79,19 @@ public record DeleteMerchantCommand(long MerchantId) : IRequest<ApiResponse>;
 /// <param name="MerchantId">商户 Id。</param>
 public record ResubmitMerchantCommand(long MerchantId) : IRequest<ApiResponse>;
 
+/// <summary>
+/// 启用 / 停用商户。
+/// </summary>
+/// <remarks>
+/// 独立命令而不是复用 <see cref="UpdateMerchantCommand"/>：
+/// 编辑要带一整套必填字段（名称 / 联系人 / 电话），而列表上的「停用」只有两个入参。
+/// 复用编辑的话，前端得先把整行读回来再原样提交，多一次往返，
+/// 而且中途别人改了名称就会互相覆盖 —— 启停这种高频轻动作必须自己只写一个字段。
+/// </remarks>
+/// <param name="MerchantId">商户 Id。</param>
+/// <param name="Status">1 启用 / 2 停用。</param>
+public record ChangeMerchantStatusCommand(long MerchantId, int Status) : IRequest<ApiResponse>;
+
 /// <summary>商户列表。</summary>
 /// <param name="PlatformId">平台 Id，0 表示不限。</param>
 /// <param name="Keyword">名称 / 编号模糊匹配。</param>

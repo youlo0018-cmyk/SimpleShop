@@ -76,6 +76,20 @@ public sealed class MerchantController : ControllerBase
         [FromBody] ResubmitMerchantCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>启用 / 停用商户。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// <b>审核通过时已经自动启用</b>，这里主要用于事后停业与恢复营业。
+    /// 启用时若商户尚未通过审核会被拒绝 —— 审核状态与启停状态是两个字段，
+    /// 但「小程序只展示审核通过的商户」意味着启用了没审过的商户会看起来生效、实际不可见。
+    /// </remarks>
+    [HttpPost("ChangeStatus")]
+    public Task<ApiResponse> ChangeStatus(
+        [FromBody] ChangeMerchantStatusCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>商户列表。</summary>
     /// <param name="command">命令。</param>
     /// <param name="ct">取消令牌。</param>

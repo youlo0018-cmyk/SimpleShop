@@ -119,14 +119,37 @@ public interface IMerchantRepository
     /// <param name="auditorId">审核人 Id。</param>
     /// <param name="auditorName">审核人姓名快照。</param>
     /// <param name="ct">取消令牌。</param>
+    /// <param name="newStatus">同时写入的启停状态；<b>null 表示不动启停状态</b>。</param>
     /// <returns>影响行数。返回 0 表示商户已被别人改过。</returns>
     /// <remarks>
     /// 带上「当前审核状态」作为条件：两个管理员同时点审核时，
     /// 只有一个能把状态从 10 改成 20，另一个拿到 0 就该直接返回，
     /// 而不是把审核人 / 审核时间覆盖掉。
+    ///
+    /// <para><b>审核通过要顺带启用商户</b>，而且必须在**同一条 UPDATE** 里写：
+    /// 拆成「先改审核状态、再改启停」的话，两步之间进程挂掉就会留下一张
+    /// 「已通过审核但仍停用」的商户 —— 它在小程序里完全不可见，
+    /// 而审核员看到的回执是「审核成功」，于是没人会再去看一眼。</para>
     /// </remarks>
     Task<int> TryUpdateAuditAsync(long merchantId, int expectedAuditStatus, int newAuditStatus,
-        string auditRemark, long auditorId, string auditorName, CancellationToken ct = default);
+        string auditRemark, long auditorId, string auditorName, CancellationToken ct = default,
+        int? newStatus = null);
+
+    /// <summary>
+    /// 按状态条件更新商户启停状态。
+    /// </summary>
+    /// <param name="merchantId">商户 Id。</param>
+    /// <param name="expectedStatus">当前启停状态必须等于它（乐观条件）。</param>
+    /// <param name="newStatus">写入的启停状态。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>影响行数。返回 0 表示商户状态已被别人改过。</returns>
+    /// <remarks>
+    /// 与 <see cref="TryUpdateAuditAsync"/> 一样带「期望的当前状态」作为条件：
+    /// 两个管理员同时点「停用」时只有一个能生效，另一个拿到 0 后应当回
+    /// 「状态已变化」而不是覆盖回去 —— 否则启停就退化成「谁后点谁赢」。
+    /// </remarks>
+    Task<int> TryUpdateStatusAsync(long merchantId, int expectedStatus, int newStatus,
+        CancellationToken ct = default);
 
     /// <summary>按商户 Id 集合回写店铺评分。</summary>
     /// <param name="ratings">商户 Id → 评分。</param>
