@@ -50,61 +50,123 @@
             <el-form-item label="商品主图" :error="errors.mainImage">
               <ImageUploader v-model="m.mainImage" hint="建议 1:1，支持 JPG / PNG / WebP" />
             </el-form-item>
-            <el-form-item label="轮播图">
-              <ImageUploader v-model="m.images" multiple hint="可上传多张，按上传顺序展示" />
+            <el-form-item label="轮播图" class="form__item--wide">
+              <!-- 最多 8 张、可拖动排序：轮播图的**顺序就是展示顺序**，
+                   不给出排序入口的话运营只能靠反复删了重传来调位置。 -->
+              <ImageUploader
+                v-model="m.images"
+                multiple
+                :max="8"
+                show-index
+                sortable
+                hint="最多 8 张，按住图块可拖动调整顺序，序号即展示顺序"
+              />
             </el-form-item>
           </div>
         </el-form>
 
-        <h3 class="sec">规格项</h3>
-        <p class="sec__hint">每个规格项至少填一个值，例如颜色：红、蓝；尺码：S、M。SKU 会按组合自动生成。</p>
-        <div v-for="(sp, si) in specs" :key="si" class="spec">
-          <div class="spec__head">
-            <el-input v-model="sp.specName" class="spec__name" placeholder="规格项名，如 颜色" />
-            <el-button text type="danger" @click="removeSpec(si)">删除</el-button>
-          </div>
-          <div class="spec__values">
-            <el-tag
-              v-for="(v, vi) in sp.specValues"
-              :key="vi"
-              closable
-              class="spec__tag"
-              @close="removeValue(si, vi)"
-            >
-              {{ v }}
-            </el-tag>
-            <el-input
-              v-if="sp.adding"
-              ref="valueInput"
-              v-model="sp.draft"
-              class="spec__add"
-              placeholder="回车添加"
-              @keyup.enter="addValue(si)"
-              @blur="addValue(si)"
-            />
-            <el-button v-else text type="primary" @click="startAdd(si)">+ 添加值</el-button>
-          </div>
-        </div>
-        <el-button v-if="specs.length < 5" text type="primary" @click="addSpec">+ 添加规格项</el-button>
-        <p v-if="errors.specs" class="err">{{ errors.specs }}</p>
+        <!--
+          规格区拆成「规格项」与「SKU」两段，而不是揉成一坨。
+          揉在一起时运营分不清「我改的是规格还是 SKU」——
+          改一个规格值会重算整张 SKU 表，看着像把已录的价格弄丢了。
+          两段分开的直接好处是：上面那段管「有哪些规格」，下面那段管「每个组合卖多少钱」。
+        -->
+        <section class="sec">
+          <header class="sec__head">
+            <h3 class="sec__title">规格项</h3>
+            <span class="sec__count">{{ activeSpecs.length }} 项 · {{ comboCount }} 个组合</span>
+          </header>
+          <p class="sec__hint">
+            每个规格项至少填一个值，例如「颜色：黑色、白色」「尺码：S、M」。
+            SKU 会按所有规格项的<strong>组合</strong>自动生成：2 个颜色 × 2 个尺码 = 4 个 SKU。
+          </p>
 
-        <h3 class="sec">
-          SKU（{{ skus.length }}）
-          <span class="sec__hint">由规格项自动组合生成，改规格会重算</span>
-        </h3>
-        <el-table :data="skus" class="table">
+          <div v-for="(sp, si) in specs" :key="si" class="spec" :class="{ 'spec--empty': !sp.specName.trim() }">
+            <div class="spec__row">
+              <span class="spec__label">规格名</span>
+              <el-input
+                v-model="sp.specName"
+                class="spec__name"
+                placeholder="如 颜色"
+                maxlength="16"
+              />
+              <span class="spec__label">可选值</span>
+              <!--
+                值输入框**常驻**，不再要点「+ 添加值」才出现。
+                之前那个隐藏的输入框是最容易被卡住的地方：
+                用户点了「添加值」但没看到输入框，以为按钮坏了。
+              -->
+              <el-input
+                v-model="sp.draft"
+                class="spec__draft"
+                placeholder="输入后按回车添加"
+                maxlength="32"
+                @keyup.enter="addValue(si)"
+              />
+              <el-button
+                v-if="specs.length > 1"
+                type="danger"
+                link
+                @click="removeSpec(si)"
+              >
+                删除
+              </el-button>
+            </div>
+
+            <div class="spec__values">
+              <el-tag
+                v-for="(v, vi) in sp.specValues"
+                :key="vi"
+                closable
+                class="spec__tag"
+                @close="removeValue(si, vi)"
+              >
+                {{ v }}
+              </el-tag>
+              <span v-if="!sp.specValues.length" class="spec__empty-hint">
+                还没有值 —— 留空表示这个商品没有该规格
+              </span>
+            </div>
+          </div>
+
+          <el-button v-if="specs.length < 5" text type="primary" @click="addSpec">
+            + 添加规格项
+          </el-button>
+          <p class="sec__note">最多 5 个规格项。没有多规格的商品可以删到只剩一个再清空它的值。</p>
+          <p v-if="errors.specs" class="err">{{ errors.specs }}</p>
+        </section>
+
+        <section class="sec">
+          <header class="sec__head">
+            <h3 class="sec__title">SKU 清单</h3>
+            <div class="sec__tools">
+              <el-button size="small" @click="bulkEditVisible = true">批量设置</el-button>
+            </div>
+          </header>
+          <p class="sec__hint">
+            共 <strong>{{ skus.length }}</strong> 个 SKU，由上面的规格组合自动生成。
+            修改规格值后组合会重算，<strong>已有组合的价格、库存、编码与图片会原样保留</strong>。
+          </p>
+
+          <el-table :data="skus" class="table">
           <el-table-column type="index" label="#" width="50" />
           <el-table-column v-for="(sp, si) in specs" :key="si" :label="sp.specName || '规格'" min-width="120">
             <template #default="{ row }">{{ row.specValues[si] }}</template>
           </el-table-column>
-          <el-table-column label="SKU 编码" width="180">
+          <el-table-column label="SKU 编码" width="190">
+            <template #header>
+              <span>SKU 编码 <em class="req">必填</em></span>
+            </template>
             <template #default="{ row }">
-              <el-input v-model="row.skuCode" size="small" placeholder="必填，唯一" />
+              <el-input v-model="row.skuCode" size="small" placeholder="唯一，如 K001" />
             </template>
           </el-table-column>
-          <el-table-column label="售价" width="130">
+          <el-table-column label="售价" width="140">
+            <template #header>
+              <span>售价 <em class="req">必填</em></span>
+            </template>
             <template #default="{ row }">
-              <el-input v-model.number="row.price" type="number" size="small" />
+              <el-input v-model.number="row.price" type="number" size="small" placeholder="0.00" />
             </template>
           </el-table-column>
           <el-table-column label="库存" width="110">
@@ -114,7 +176,8 @@
           </el-table-column>
           <el-table-column label="SKU 图片" width="150">
             <template #default="{ row }">
-              <ImageUploader v-model="row.image" hint="" />
+              <!-- compact：SKU 表格每行都有一张图，用默认尺寸会把价格挤到要横向滚动 -->
+              <ImageUploader v-model="row.image" size="compact" hint="" />
             </template>
           </el-table-column>
           <el-table-column label="启用" width="90">
@@ -122,8 +185,32 @@
               <el-switch v-model="row.enabled" />
             </template>
           </el-table-column>
-        </el-table>
-        <p v-if="errors.skus" class="err">{{ errors.skus }}</p>
+          </el-table>
+          <p v-if="errors.skus" class="err">{{ errors.skus }}</p>
+        </section>
+
+        <!--
+          批量设置：4 个规格组合出来的 16 个 SKU 一个个填价格，
+          是最容易被抱怨「录不进去」的场景。这里一次填好套用到全部 SKU，
+          需要区分价位的再单独改那几行。
+        -->
+        <el-dialog v-model="bulkEditVisible" title="批量设置 SKU" width="440" align-center>
+          <el-form label-position="top">
+            <el-form-item label="售价（留空则不改）">
+              <el-input v-model="bulk.price" type="number" placeholder="0.00" />
+            </el-form-item>
+            <el-form-item label="库存（留空则不改）">
+              <el-input v-model="bulk.stock" type="number" placeholder="0" />
+            </el-form-item>
+          </el-form>
+          <p class="bulk__note">
+            将套用到当前全部 {{ skus.length }} 个 SKU。已填好的值会被覆盖。
+          </p>
+          <template #footer>
+            <el-button @click="bulkEditVisible = false">取消</el-button>
+            <el-button type="primary" @click="applyBulk">应用</el-button>
+          </template>
+        </el-dialog>
 
         <h3 class="sec">商品描述</h3>
         <RichTextEditor v-model="m.description" placeholder="填写商品卖点、材质、使用说明等内容" />
@@ -172,8 +259,8 @@ const categoryPath = ref<any[]>([]);
 const categoryTree = ref<any[]>([]);
 const brands = ref<any[]>([]);
 
-type Spec = { specName: string; specValues: string[]; adding?: boolean; draft?: string };
-const specs = reactive<Spec[]>([{ specName: '颜色', specValues: [], adding: true, draft: '' }]);
+type Spec = { specName: string; specValues: string[]; draft?: string };
+const specs = reactive<Spec[]>([{ specName: '颜色', specValues: [], draft: '' }]);
 
 type SkuRow = {
   specValues: string[];
@@ -185,10 +272,47 @@ type SkuRow = {
 };
 const skus = ref<SkuRow[]>([]);
 
+// 批量设置的临时值。留空表示「这一项不改」，而不是「改成 0」——
+// 只想统一改库存时把售价填 0 是最常见的误操作。
+const bulkEditVisible = ref(false);
+const bulk = reactive({ price: '', stock: '' });
+
+function applyBulk() {
+  const price = Number(bulk.price);
+  const stock = Number(bulk.stock);
+  const hasPrice = bulk.price !== '' && Number.isFinite(price);
+  const hasStock = bulk.stock !== '' && Number.isFinite(stock);
+
+  if (!hasPrice && !hasStock) {
+    ElMessage.warning('至少填写售价或库存其中一项');
+    return;
+  }
+
+  for (const row of skus.value) {
+    if (hasPrice) row.price = price;
+    if (hasStock) row.stock = stock;
+  }
+  bulkEditVisible.value = false;
+  ElMessage.success(`已应用到 ${skus.value.length} 个 SKU`);
+}
+
+// 真正参与组合的规格项：有名有值才算。
+// 「填了名字但一个值都没填」的那一项**不参与**笛卡尔积，
+// 否则会生成一堆规格文本为空的 SKU，用户看到的是「黑色 / （空）」这种行。
+const activeSpecs = computed(() =>
+  specs.filter((s) => s.specName.trim() && s.specValues.length > 0),
+);
+
+// 组合数：显示在标题旁边，运营加规格值之前就能看到 SKU 会变成多少个。
+// 之前只有生成之后才知道结果，于是「不小心加了第 5 个值」已经来不及收回。
+const comboCount = computed(() =>
+  activeSpecs.value.reduce((count, sp) => count * sp.specValues.length, 1),
+);
+
 // 笛卡尔积：规格项组合出 SKU。规格是 0 项时给一行「无规格」，
 // 否则规格全空的商品会一个 SKU 都没有，后端会直接拒掉。
 function regenerate() {
-  const active = specs.filter((s) => s.specName.trim() && s.specValues.length > 0);
+  const active = activeSpecs.value;
   if (!active.length) {
     skus.value = [{ specValues: [], skuCode: '', price: 0, stock: 0, image: '', enabled: true }];
     return;
@@ -219,19 +343,9 @@ function regenerate() {
   });
 }
 
-function startAdd(si: number) {
-  for (const s of specs) {
-    s.adding = false;
-    s.draft = '';
-  }
-  specs[si].adding = true;
-  specs[si].draft = '';
-}
-
 function addValue(si: number) {
   const sp = specs[si];
   const v = (sp.draft || '').trim();
-  sp.adding = false;
   sp.draft = '';
   if (!v) return;
   if (sp.specValues.includes(v)) {
@@ -347,8 +461,9 @@ function validate() {
   if (!m.categoryId) errors.categoryId = '请选择商品分类';
   if (!m.mainImage || !m.mainImage.trim()) errors.mainImage = '请填写主图地址';
 
-  const active = specs.filter((s) => s.specName.trim() && s.specValues.length > 0);
-  if (!active.length) errors.specs = '至少要有一个规格项，且每个规格项至少有一个值';
+  // 复用 activeSpecs：这里再写一遍筛选条件的话，两处很容易改得不一致，
+  // 症状是「明明填了规格值却提示至少要有一个规格项」
+  if (!activeSpecs.value.length) errors.specs = '至少要有一个规格项，且每个规格项至少有一个值';
 
   if (!skus.value.length) errors.skus = '至少要有一个 SKU';
   for (const row of skus.value) {
@@ -385,9 +500,12 @@ async function submit() {
       status: 2,
       description: m.description || '',
       images: JSON.stringify(m.images || []),
-      specs: specs
-        .filter((s) => s.specName.trim() && s.specValues.length > 0)
-        .map((s) => ({ specName: s.specName.trim(), specValues: s.specValues })),
+      // 同样复用 activeSpecs：提交与校验必须用**同一套**筛选，
+      // 否则会出现「校验说有规格、提交却没带上规格」
+      specs: activeSpecs.value.map((s) => ({
+        specName: s.specName.trim(),
+        specValues: s.specValues,
+      })),
       skus: skus.value.map((row, i) => ({
         skuCode: row.skuCode.trim(),
         specValues: row.specValues,
@@ -449,20 +567,69 @@ onMounted(load);
 }
 
 .sec {
-  margin: var(--space-6) 0 var(--space-3);
-  font-size: var(--text-title-3);
-  font-weight: 600;
+  margin-top: var(--space-7);
+  padding-top: var(--space-5);
+  border-top: 0.5px solid var(--hairline);
 }
 
 .sec:first-of-type {
   margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* 段标题：标题 + 右侧的计数 / 操作，各占一端。
+   计数放右边是因为它回答的是「接下来会发生什么」，
+   紧跟在标题后面会被读成标题的一部分。 */
+.sec__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.sec__title {
+  margin: 0;
+  font-size: var(--text-title-3);
+  line-height: var(--lh-title-3);
+  font-weight: 600;
+}
+
+.sec__count {
+  font-size: var(--text-foot);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .sec__hint {
-  margin-left: var(--space-2);
+  margin: 0 0 var(--space-3);
   font-size: var(--text-foot);
-  font-weight: 400;
+  line-height: var(--lh-foot);
   color: var(--text-2);
+}
+
+.sec__hint strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.sec__note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-note);
+  color: var(--text-3);
+}
+
+/* 表头里的必填标记：小字红标，不抢标题的视觉重量 */
+.req {
+  margin-left: var(--space-1);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  font-size: var(--text-note);
+  font-style: normal;
+  font-weight: 400;
 }
 
 .grid {
@@ -477,23 +644,47 @@ onMounted(load);
   }
 }
 
+/* 轮播图占满整行：一行只放得下两块瓦片，挤在半栏里换行很别扭 */
+.form__item--wide {
+  grid-column: 1 / -1;
+}
+
 .control {
   width: 100%;
 }
 
 .spec {
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--hairline);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
 }
 
-.spec__head {
+/* 规格名还没填时给一层淡提示，提醒「这一项还没生效」 */
+.spec--empty {
+  border-style: dashed;
+  border-color: var(--divider-soft);
+}
+
+.spec__row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
+.spec__label {
+  flex-shrink: 0;
+  font-size: var(--text-foot);
+  color: var(--text-2);
+}
+
 .spec__name {
-  max-width: 260px;
+  width: 140px;
+}
+
+.spec__draft {
+  width: 200px;
 }
 
 .spec__values {
@@ -508,8 +699,9 @@ onMounted(load);
   margin: 0;
 }
 
-.spec__add {
-  width: 160px;
+.spec__empty-hint {
+  font-size: var(--text-note);
+  color: var(--text-3);
 }
 
 .table {
@@ -520,6 +712,12 @@ onMounted(load);
   margin: var(--space-2) 0 0;
   font-size: var(--text-foot);
   color: var(--danger-fg);
+}
+
+.bulk__note {
+  margin: 0;
+  font-size: var(--text-foot);
+  color: var(--text-2);
 }
 
 .actions {
