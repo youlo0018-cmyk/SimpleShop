@@ -148,6 +148,8 @@ public sealed class QueryOrderDetailHandler
 
         // 订单不存在与「不是你的订单」都回 404：返回 403 等于告诉别人这个订单号真实存在，
         // 能被拿去枚举别人的订单号（TEST_CASES 6.2）。
+        // 归属校验放在**调用方**而不是组装器里 —— 后台查订单不校验归属，
+        // 放进组装器会让后台永远查不到别人的单。
         if (order is null || (request.CustomerId > 0 && order.CustomerId != request.CustomerId))
         {
             return ApiResults.Fail<OrderDetailDto>(BaseApiResponseCode.NotFound, "订单不存在");
@@ -155,21 +157,7 @@ public sealed class QueryOrderDetailHandler
 
         var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
 
-        var dto = new OrderDetailDto(
-            order.Id, order.OrderNo, order.Status, OrderStatusMachine.NameOf(order.Status),
-            OrderStatusMachine.CanCancel(order.Status),
-            OrderStatusMachine.CanConfirmReceipt(order.Status),
-            order.GoodsTotal, order.Freight, order.PointsDeduction, order.PayableAmount,
-            order.PointsUsed, order.CouponId, order.CouponDiscount,
-            order.ReceiverName, order.ReceiverPhone, order.ReceiverAddress,
-            order.Remark, order.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
-            items.Select(a => new OrderItemDto(
-                a.Id, a.SkuId, a.SpuId, a.ProductName, a.SkuSpecText,
-                a.Price, a.Quantity, a.OriginalAmount,
-                a.ActivityDiscount, a.CouponDiscount, a.PayableAmount, a.DeliveryType,
-                a.SourceType)).ToList());
-
-        return ApiResults.Ok(dto);
+        return ApiResults.Ok(OrderDetailAssembler.Build(order, items));
     }
 }
 

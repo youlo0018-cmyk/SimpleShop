@@ -143,6 +143,16 @@ public interface IOrderStore
     /// <returns>订单或 null。</returns>
     Task<Order?> FindByOrderNoAsync(string orderNo, CancellationToken ct = default);
 
+    /// <summary>按 Id 取订单（后台详情用）。</summary>
+    /// <param name="orderId">订单 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>订单；不存在返回 null。</returns>
+    /// <remarks>
+    /// 后台列表页拿到的是 Id（列表接口不下发订单号给链接用），点进详情时按 Id 查。
+    /// 不复用 <see cref="FindByOrderNoAsync"/>：为了查一条单先扫一遍订单号索引不划算。
+    /// </remarks>
+    Task<Order?> GetByIdAsync(long orderId, CancellationToken ct = default);
+
     /// <summary>写入订单与订单行（同事务）。</summary>
     /// <param name="order">订单主表。</param>
     /// <param name="items">订单行。</param>

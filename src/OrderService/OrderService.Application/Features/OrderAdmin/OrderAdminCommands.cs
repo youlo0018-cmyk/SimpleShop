@@ -17,6 +17,16 @@ public record QueryAdminOrdersCommand(
     int Status = 0, string Keyword = "", int Page = 1, int PageSize = 20,
     long PlatformId = 0, long MerchantId = 0) : IRequest<ApiResponse<PagedResult<AdminOrderListItemDto>>>;
 
+/// <summary>后台订单详情。</summary>
+/// <param name="OrderId">订单 Id。</param>
+/// <remarks>
+/// <b>不校验客户归属</b>：后台按权限点就能看本平台 / 本商户的订单。
+/// 归属校验只属于 C 端（见 <c>QueryOrderDetailCommand</c>）——
+/// 把它也搬到后台来的话，后台永远查不到别人的单。
+/// </remarks>
+public record QueryAdminOrderDetailCommand(long OrderId)
+    : IRequest<ApiResponse<OrderDetailDto>>;
+
 /// <summary>发货。<b>不填物流信息</b>（用户需求 D3），只把状态从 20 推到 30。</summary>
 /// <param name="OrderNo">订单号。</param>
 /// <param name="Remark">发货备注。</param>
@@ -103,6 +113,18 @@ public static class OrderAdminValidators
         services.AddScoped<IValidator<VerifyPickupCodeCommand>, VerifyPickupCodeValidator>();
         services.AddScoped<IValidator<SimulatePaymentCommand>, OrderNoCommandValidator<SimulatePaymentCommand>>();
         services.AddScoped<IValidator<RefundOrderCommand>, RefundOrderValidator>();
+        services.AddScoped<IValidator<QueryAdminOrderDetailCommand>, QueryAdminOrderDetailValidator>();
+    }
+
+    /// <summary>后台订单详情校验。</summary>
+    private sealed class QueryAdminOrderDetailValidator
+        : AbstractValidator<QueryAdminOrderDetailCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public QueryAdminOrderDetailValidator()
+        {
+            RuleFor(x => x.OrderId).GreaterThan(0).WithMessage("订单信息不正确");
+        }
     }
 
     /// <summary>后台订单分页校验。</summary>

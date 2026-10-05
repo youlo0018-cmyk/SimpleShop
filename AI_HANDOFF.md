@@ -278,6 +278,52 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-05：后台前端对接 —— 接口全量盘点 + 补第一个缺口（后台订单详情）
+
+用户明确「接下来不再审核，自己搞定一切，把后端对应的接口功能都完成」。
+所以先做了**接口全量盘点**（173 个端点 / 15 个服务），把「页面需要但后端没有」的找出来。
+
+**本轮补完：后台订单详情**（`POST /admin/orders/Detail`）
+
+之前 `AdminOrderController` 只有 List / Ship / DeliverVirtual / SelfPickupReady /
+VerifyPickupCode / SimulatePayment / Refund，**没有详情**。
+C 端的 `orders/Detail` 是 `QueryOrderDetailCommand(CustomerId, OrderNo)`，
+按客户归属校验，后台拿 customerId 去查会被归属校验拦掉，**不能复用**。
+
+- 抽出 `OrderDetailAssembler`，C 端与后台**共用一份**组装逻辑。
+  两边字段相同，复制一份之后改一处忘一处，表现为「后台少显示优惠构成、C 端多一行」。
+- 后台详情**刻意不校验客户归属** —— 后台可见范围由网关租户上下文 + 权限点决定；
+  归属校验回答的是「这笔单是不是你的」，那是 C 端的事。
+- 归属校验留在**调用方**而不是组装器里，放进组装器会让后台永远查不到别人的单。
+- 仓储新增 `GetByIdAsync`：列表页拿到的是 Id，不为查一条单去扫订单号索引。
+
+新增 5 条回归（order-regression 50 → 55），含金额恒等式
+「实付 = 商品总额 + 运费 − 积分抵扣」。
+
+**又一次踩了 CODING_STANDARD 第 60 条**：新用例一开始编成 `API-ORD-110`，
+与既有的「超时未支付关单」那条**撞号**，汇总表里两条同名一过一假会掩盖失败。
+已改为 `API-ORD-113`，并写了脚本核对全部 e2e 用例 Id：463 条无重复。
+
+#### 后台侧接口缺口清单（按优先级，供后续逐条补）
+
+| 优先级 | 缺口 | 现状 | 影响页面 |
+|---|---|---|---|
+| P0 | 后台客户列表 / 详情 | CustomerService 只有注册登录两个端点，**没有任何后台查询** | 客户管理 |
+| P0 | 后台积分流水列表 | `points/Records` 是 C 端按 customerId 查的，后台查不了别人的 | 积分流水 |
+| P0 | 后台支付单列表 | `payments/` 只有 Create / Confirm / Query / Simulate，**没有后台分页** | 支付列表 |
+| P1 | 退款详情 | `refunds/` 有 List / Apply / Approve / Reject，**无 Detail** | 退款详情 |
+| P1 | 券模板列表 / 券活动列表 | `coupon-templates/` 与 `coupon-activities/` 只有 Create / Get，**无 List** | 券管理 |
+| P1 | 平台小程序配置读写 | `platforms/` 只有 List/Create/Update/Delete/Options，**无 AppConfig 读写** | 小程序配置 |
+| P1 | 角色详情 / 已绑权限点 | `roles/` 有 List/Create/Update/Delete/BindPermissions，**查不到单个角色已绑哪些权限点** | 角色编辑 |
+| P2 | 文件管理列表 | ToolService 只有 Upload / Content，**没有任何文件列表** | 文件管理 |
+| P2 | 商户详情 | `merchants/` 有 List/Create/Update/Audit，**无按 Id 查单条** | 商户编辑 |
+| P2 | 商品审核专用列表 | `products/List` 可按状态筛，可能够用，需实测确认 | 商品审核 |
+
+补法统一走本项目既有模式：Command + Validator + Handler + 仓储方法 + 控制器端点 + e2e 回归，
+可见范围一律用 `Narrow(requested, context)` 收窄（与后台订单列表一致）。
+
+**验证**：构建 0 warning 0 error；单元 321/321；order-regression 55/55。
+
 ### 2026-10-05：秒杀效果报表（四张报表收官）+ 开始后台前端
 
 `/gateway/reports/Seckill` 落地，至此 BUSINESS.md 17 的四张报表全部有实现

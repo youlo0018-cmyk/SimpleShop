@@ -585,6 +585,13 @@ public class OrderCreatorTests
             DateTime from, DateTime to, long merchantId, long platformId, CancellationToken ct = default)
             => Task.FromResult(new OrderAggregateRow(0, 0, 0, 0m));
 
+        /// <summary>按 Id 取订单：下单链路的用例不依赖它，返回 null 即可。</summary>
+        /// <param name="orderId">订单 Id。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>null。</returns>
+        public Task<Order?> GetByIdAsync(long orderId, CancellationToken ct = default)
+            => Task.FromResult<Order?>(null);
+
         /// <summary>成交额汇总：下单链路的用例不依赖它，返回 0 即可。</summary>
         /// <param name="orderNos">订单号集合。</param>
         /// <param name="ct">取消令牌。</param>

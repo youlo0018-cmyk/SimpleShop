@@ -65,6 +65,41 @@ public sealed class QueryAdminOrdersHandler
     }
 }
 
+/// <summary>后台订单详情处理器。</summary>
+public sealed class QueryAdminOrderDetailHandler
+    : MediatR.IRequestHandler<QueryAdminOrderDetailCommand, ApiResponse<OrderDetailDto>>
+{
+    private readonly IOrderStore _store;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="store">落单端口。</param>
+    public QueryAdminOrderDetailHandler(IOrderStore store) => _store = store;
+
+    /// <summary>执行详情查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>订单详情，含全部订单行。</returns>
+    /// <remarks>
+    /// 与 C 端详情**刻意不同**：这里不校验客户归属。
+    /// 后台的可见范围由网关的租户上下文 + 权限点决定；
+    /// 归属校验回答的是「这笔单是不是你的」，那是 C 端的事。
+    /// 搬到后台来的话，后台永远查不到别人的单，运营会以为数据丢了。
+    /// </remarks>
+    public async Task<ApiResponse<OrderDetailDto>> Handle(
+        QueryAdminOrderDetailCommand request, CancellationToken ct)
+    {
+        var order = await _store.GetByIdAsync(request.OrderId, ct).ConfigureAwait(false);
+
+        if (order is null)
+        {
+            return ApiResults.Fail<OrderDetailDto>(BaseApiResponseCode.NotFound, "订单不存在");
+        }
+
+        var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
+        return ApiResults.Ok(OrderDetailAssembler.Build(order, items));
+    }
+}
+
 /// <summary>发货处理器（实物快递，20 → 30）。</summary>
 /// <remarks>
 /// 用户要求 D3：<b>手动点发货，不用填物流信息</b>。

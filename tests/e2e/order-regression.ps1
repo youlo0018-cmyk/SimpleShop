@@ -674,6 +674,53 @@ Invoke-Case 'API-ORD-105' '同一 SKU 重复出现在订单里被拒（金额分
     return (-not $r.success) -and ($lineErrors -match '不能重复')
 }
 
+Write-Host "`n=== ORD 后台订单详情 ===" -ForegroundColor Cyan
+
+$script:adminDetailOrderId = 0
+
+Invoke-Case 'API-ORD-106' '🔴 P0 后台订单详情：含金额构成与订单行' {
+    # 先从后台列表拿一个真实 Id —— 后台详情按 Id 查（列表页拿到的就是 Id）
+    $list = AdminOrderPost 'List' @{ page = 1; pageSize = 1 }
+    if (-not $list.success -or $list.data.items.Count -eq 0) { return $false }
+    $script:adminDetailOrderId = [long]$list.data.items[0].orderId
+
+    $r = AdminOrderPost 'Detail' @{ orderId = $script:adminDetailOrderId }
+    if (-not $r.success) { return $false }
+
+    # 金额构成四项齐全：商品总额 + 运费 − 积分抵扣 = 实付
+    $d = $r.data
+    if ($null -eq $d.goodsTotal -or $null -eq $d.freight) { return $false }
+    if ($null -eq $d.pointsDeduction -or $null -eq $d.payableAmount) { return $false }
+    return $d.items.Count -gt 0 -and $d.orderNo -and $d.statusName
+}
+
+Invoke-Case 'API-ORD-107' '🔴 P0 后台详情金额恒等式：实付 = 商品总额 + 运费 − 积分抵扣' {
+    $r = AdminOrderPost 'Detail' @{ orderId = $script:adminDetailOrderId }
+    if (-not $r.success) { return $false }
+    $d = $r.data
+    # 用分为单位比，避免 decimal 浮点误差
+    $expect = [decimal]$d.goodsTotal + [decimal]$d.freight - [decimal]$d.pointsDeduction
+    return [math]::Abs([decimal]$d.payableAmount - $expect) -lt 0.01
+}
+
+Invoke-Case 'API-ORD-108' '🔴 后台详情**不校验客户归属**（与 C 端相反）' {
+    # 后台的可见范围由网关租户上下文决定；归属校验属于 C 端。
+    # 这里用「列表里随便一单」验证它能被查到 —— 如果错误地搬用了 C 端的归属校验，
+    # 这条会直接 404。
+    $r = AdminOrderPost 'Detail' @{ orderId = $script:adminDetailOrderId }
+    return $r.success -eq $true
+}
+
+Invoke-Case 'API-ORD-109' '不存在的订单回「订单不存在」而不是 500' {
+    $r = AdminOrderPost 'Detail' @{ orderId = 99999999999 }
+    return (-not $r.success) -and ($r.message -match '订单不存在')
+}
+
+Invoke-Case 'API-ORD-113' '🔴 orderId <= 0 被校验挡住（不查库直接拒）' {
+    $r = AdminOrderPost 'Detail' @{ orderId = 0 }
+    return (-not $r.success) -and ($r.errors.PSObject.Properties.Name -contains 'OrderId')
+}
+
 Write-Host "`n=== ORD 清理 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-ORD-120' '清理测试商品与分类' {

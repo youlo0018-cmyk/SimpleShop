@@ -26,6 +26,19 @@ public sealed class AdminOrderController : ControllerBase
         [FromBody] QueryAdminOrdersCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>订单详情。含全部订单行与金额构成（商品总额 / 运费 / 积分抵扣 / 实付）。</summary>
+    /// <param name="command">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>订单详情。</returns>
+    /// <remarks>
+    /// 与 C 端 <c>orders/Detail</c> 返回同一套结构（共用 <c>OrderDetailAssembler</c>），
+    /// 差别只在**不做客户归属校验** —— 后台的可见范围由网关租户上下文决定。
+    /// </remarks>
+    [HttpPost("Detail")]
+    public Task<ApiResponse<OrderDetailDto>> Detail(
+        [FromBody] QueryAdminOrderDetailCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>发货。<b>不填物流信息</b>（用户需求 D3）。</summary>
     /// <param name="command">发货命令。</param>
     /// <param name="ct">取消令牌。</param>
