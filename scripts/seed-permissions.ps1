@@ -81,7 +81,10 @@ $leaves = [ordered]@{
     '2110' = @(@('inventory:read', '库存查询', '/gateway/inventory/List'), @('inventory:update', '库存调整', '/gateway/inventory/Adjust'))
     # 后台订单一律走 /gateway/admin/orders/*，C 端订单走 /gateway/orders/*。
     # 分成两个前缀是刻意的：后台的「发货 / 退款 / 取货核销 / 模拟支付」权限点不能被小程序命中。
-    '2111' = @(@('order:read', '订单列表', '/gateway/admin/orders/List'), @('order:ship', '订单发货', '/gateway/admin/orders/Ship'),
+    # 🔴 Detail / Refunds 必须显式列出来。之前只绑了 List，而网关的判定是
+    # 「api_path 匹配不到 → requiredCode 为 null → **放行**」，所以订单详情
+    # 一直处于「谁登录都能看」的状态 —— 包括别的商户的订单。
+    '2111' = @(@('order:read', '订单列表与详情', '/gateway/admin/orders/List,/gateway/admin/orders/Detail,/gateway/admin/orders/Refunds'), @('order:ship', '订单发货', '/gateway/admin/orders/Ship'),
              @('order:virtual-deliver', '虚拟发货', '/gateway/admin/orders/DeliverVirtual'),
              @('order:pickup', '取货核销', '/gateway/admin/orders/VerifyPickupCode'),
              @('order:pickup-ready', '备货完成', '/gateway/admin/orders/SelfPickupReady'),

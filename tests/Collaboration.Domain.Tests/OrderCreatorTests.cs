@@ -621,6 +621,14 @@ public class OrderCreatorTests
             CancellationToken ct = default)
             => Task.FromResult(1);
 
+        /// <summary>退款记录查询：下单链路的用例不依赖它，返回空列表即可。</summary>
+        /// <param name="orderId">订单 Id。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>空列表。</returns>
+        public Task<IReadOnlyList<(OrderRefund Refund, IReadOnlyList<OrderRefundItem> Items)>>
+            ListRefundsAsync(long orderId, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<(OrderRefund, IReadOnlyList<OrderRefundItem>)>>([]);
+
         /// <summary>报表聚合：下单链路的用例不依赖它，返回空聚合即可。</summary>
         /// <param name="from">区间起。</param>
         /// <param name="to">区间止。</param>

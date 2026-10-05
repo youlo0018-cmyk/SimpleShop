@@ -39,6 +39,19 @@ public sealed class AdminOrderController : ControllerBase
         [FromBody] QueryAdminOrderDetailCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>订单的退款记录（后台代客退款，含多次部分退款）。</summary>
+    /// <param name="command">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>退款记录列表，按退款时间升序；没有退款时是空列表。</returns>
+    /// <remarks>
+    /// 只含**订单侧**的代客退款记录。支付服务的「客户申请 → 审批」退款单不在这里，
+    /// 那是两条不同的链路，订单详情要分区展示。
+    /// </remarks>
+    [HttpPost("Refunds")]
+    public Task<ApiResponse<IReadOnlyList<OrderRefundDto>>> Refunds(
+        [FromBody] QueryOrderRefundsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>后台代客取消待支付订单。</summary>
     /// <param name="command">取消命令。</param>
     /// <param name="ct">取消令牌。</param>

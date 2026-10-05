@@ -33,6 +33,41 @@ public record QueryAdminOrdersCommand(
 public record QueryAdminOrderDetailCommand(long OrderId)
     : IRequest<ApiResponse<OrderDetailDto>>;
 
+/// <summary>查某个订单的全部退款记录（后台订单详情用）。</summary>
+/// <param name="OrderId">订单 Id。</param>
+/// <remarks>
+/// 单独一个端点而不是把退款塞进订单详情：退款记录会越积越多（多次部分退款），
+/// 全部内联进详情会让详情接口随退款次数变慢，而大多数订单一条退款都没有。
+/// </remarks>
+public record QueryOrderRefundsCommand(long OrderId)
+    : IRequest<ApiResponse<IReadOnlyList<OrderRefundDto>>>;
+
+/// <summary>退款记录视图。</summary>
+/// <param name="RefundId">退款记录 Id。</param>
+/// <param name="RefundNo">退款单号。</param>
+/// <param name="Amount">本次退款金额。</param>
+/// <param name="RefundType">退款类型，1 部分 / 2 整单。</param>
+/// <param name="RefundTypeName">退款类型中文名。</param>
+/// <param name="FullyRefunded">退完后是否已整单退完。</param>
+/// <param name="Reason">退款原因。</param>
+/// <param name="OperatorName">操作人姓名。</param>
+/// <param name="CreatedAt">退款时间。</param>
+/// <param name="Items">退款明细。</param>
+public sealed record OrderRefundDto(
+    long RefundId, string RefundNo, decimal Amount,
+    int RefundType, string RefundTypeName, bool FullyRefunded,
+    string Reason, string OperatorName, string CreatedAt,
+    IReadOnlyList<OrderRefundItemDto> Items);
+
+/// <summary>退款明细视图。</summary>
+/// <param name="OrderItemId">订单行 Id。</param>
+/// <param name="ProductName">商品名快照。</param>
+/// <param name="SkuSpecText">规格快照。</param>
+/// <param name="Quantity">本次退款数量。</param>
+/// <param name="Amount">该行本次退款金额。</param>
+public sealed record OrderRefundItemDto(
+    long OrderItemId, string ProductName, string SkuSpecText, int Quantity, decimal Amount);
+
 /// <summary>后台代客取消订单。仅待支付（10）可取消，取消会释放库存、积分与券占用。</summary>
 /// <param name="OrderNo">订单号。</param>
 /// <param name="Remark">取消备注。</param>
@@ -171,6 +206,7 @@ public static class OrderAdminValidators
         services.AddScoped<IValidator<SimulatePaymentCommand>, OrderNoCommandValidator<SimulatePaymentCommand>>();
         services.AddScoped<IValidator<RefundOrderCommand>, RefundOrderValidator>();
         services.AddScoped<IValidator<QueryAdminOrderDetailCommand>, QueryAdminOrderDetailValidator>();
+        services.AddScoped<IValidator<QueryOrderRefundsCommand>, QueryOrderRefundsValidator>();
     }
 
     /// <summary>后台订单详情校验。</summary>
@@ -201,6 +237,14 @@ public static class OrderAdminValidators
             RuleFor(x => x.Status).Must(OrderStatusCodes.IsKnown)
                 .WithMessage("订单状态不正确");
         }
+    }
+
+    /// <summary>订单退款记录查询校验。</summary>
+    private sealed class QueryOrderRefundsValidator : AbstractValidator<QueryOrderRefundsCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public QueryOrderRefundsValidator()
+            => RuleFor(x => x.OrderId).GreaterThan(0).WithMessage("订单信息不正确");
     }
 
     /// <summary>只带订单号的命令通用校验。</summary>

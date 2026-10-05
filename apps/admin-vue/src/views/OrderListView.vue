@@ -255,96 +255,13 @@
       </div>
     </el-dialog>
 
-    <!--
-      部分退款。早期只有「整单退」，一次就把订单打成已退款，
-      于是「退了一件、另一件还想退」这种最常见的诉求完全做不了。
-      这里让运营逐行勾选、填金额与件数，订单退完剩余余额才变成已退款。
-    -->
-    <el-dialog v-model="refund.open" title="发起退款" width="680" align-center>
-      <p class="fulfill__subject">{{ refund.orderNo }}</p>
-
-      <div class="refund__scope">
-        <el-radio-group v-model="refund.mode" size="small">
-          <el-radio-button value="whole">退完剩余余额</el-radio-button>
-          <el-radio-button value="partial">只退指定商品</el-radio-button>
-        </el-radio-group>
-        <span class="refund__balance">
-          订单实付 {{ formatAmount(refund.payableAmount) }}
-          <template v-if="refund.refundedAmount > 0">
-            · 已退 {{ formatAmount(refund.refundedAmount) }}
-          </template>
-          · 还能退 {{ formatAmount(refund.remaining) }}
-        </span>
-      </div>
-
-      <el-table
-        v-if="refund.mode === 'partial'"
-        :data="refund.items"
-        class="refund__table"
-        height="260"
-      >
-        <el-table-column label="退款" width="60" align="center">
-          <template #default="{ row }">
-            <el-checkbox v-model="row.picked" />
-          </template>
-        </el-table-column>
-        <el-table-column label="商品" min-width="180">
-          <template #default="{ row }">
-            <div>{{ row.productName }}</div>
-            <div class="sub">{{ row.skuSpecText }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="件数" width="92" align="right">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.quantity"
-              size="small"
-              :min="1"
-              :max="row.remainingQuantity"
-              controls-position="right"
-              class="refund__number"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column label="退款金额" width="140" align="right">
-          <template #default="{ row }">
-            <el-input
-              v-model="row.amount"
-              size="small"
-              type="number"
-              :disabled="!row.picked"
-              :placeholder="formatAmount(row.refundableAmount)"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column label="本行可退" width="110" align="right">
-          <template #default="{ row }">
-            <span class="num sub">{{ formatAmount(row.refundableAmount) }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <p class="refund__total">
-        本次退款 <strong>{{ formatAmount(refundTotal) }}</strong> 元
-      </p>
-
-      <el-form label-position="top" class="fulfill__form">
-        <el-form-item label="退款原因" :error="refund.errors">
-          <el-input
-            v-model="refund.remark"
-            type="textarea"
-            :rows="2"
-            placeholder="至少 2 个字符，会记录到审计日志"
-            maxlength="512"
-          />
-        </el-form-item>
-      </el-form>
-
-      <template #footer>
-        <el-button @click="refund.open = false">取消</el-button>
-        <el-button type="danger" :loading="refund.saving" @click="submitRefund">确认退款</el-button>
-      </template>
-    </el-dialog>
+    <!-- 部分退款：规则集中在 RefundDialog，列表与详情共用一份。 -->
+    <RefundDialog
+      v-model="refund.open"
+      :order-no="refund.orderNo"
+      :detail="refund.detail"
+      @done="load"
+    />
   </div>
 </template>
 
@@ -353,6 +270,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/api/request';
+import RefundDialog from '@/components/RefundDialog.vue';
 import { statusColor } from '@/utils/dict';
 import { formatAmount, formatCount, formatDateTime, emptyText, maskPhone } from '@/utils/format';
 import { hasPermission } from '@/utils/session';
@@ -386,18 +304,11 @@ const fulfill = reactive({
   hasSelfPickup: false,
 });
 
-// 退款弹窗的状态。mode 决定是「退完剩余余额」还是「只退选中的行」。
+// 退款弹窗只存「打开哪一单」与它的详情；规则与表单都在 RefundDialog 里。
 const refund = reactive({
   open: false,
-  saving: false,
   orderNo: '',
-  mode: 'whole' as 'whole' | 'partial',
-  remark: '',
-  payableAmount: 0,
-  refundedAmount: 0,
-  remaining: 0,
-  items: [] as any[],
-  errors: '',
+  detail: {} as any,
 });
 
 const query = reactive({
@@ -559,101 +470,13 @@ async function openRefund(row: any) {
     body: { orderId: row.orderId },
     silent: true,
   });
-
-  const refunded = Number(detail.refundedAmount ?? 0);
-  const payable = Number(detail.payableAmount ?? 0);
-
   refund.open = true;
-  refund.saving = false;
   refund.orderNo = row.orderNo;
-  refund.mode = 'whole';
-  refund.remark = '';
-  refund.errors = '';
-  refund.payableAmount = payable;
-  refund.refundedAmount = refunded;
-  refund.remaining = Math.max(0, Number((payable - refunded).toFixed(2)));
-  refund.items = (detail.items || []).map((item: any) => ({
-    orderItemId: String(item.orderItemId),
-    productName: item.productName,
-    skuSpecText: item.skuSpecText,
-    remainingQuantity: Math.max(0, Number(item.quantity ?? 0) - Number(item.refundedQuantity ?? 0)),
-    refundableAmount: Number(item.refundableAmount ?? 0),
-    picked: false,
-    quantity: Math.max(1, Number(item.quantity ?? 1) - Number(item.refundedQuantity ?? 0)),
-    amount: '' as string | number,
-  }));
+  // 详情这里已经拉过一次，直接传进弹窗 —— 让弹窗再发一次请求的话，
+  // 点「退款」到看到表单之间会多一次往返
+  refund.detail = detail;
 }
 
-// 本次退款合计。整单退显示订单剩余可退，部分退只累加勾选的行。
-const refundTotal = computed(() => {
-  if (refund.mode === 'whole') return refund.remaining;
-  return refund.items
-    .filter((a) => a.picked)
-    .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
-});
-
-async function submitRefund() {
-  // 提交时统一校验，不做失焦校验（用户要求）
-  refund.errors = '';
-  if (!refund.remark.trim() || refund.remark.trim().length < 2) {
-    refund.errors = '退款原因至少 2 个字符';
-  }
-
-  if (refund.mode === 'partial') {
-    // 整单退传 null 让后端按「剩余可退余额一次退完」处理；
-    // 部分退才逐行组装。拆成两个分支而不是先算再判：lines 为 null 时
-    // TypeScript 收窄不过去，而且判两次也更容易漏掉某一个校验。
-    const lines = refund.items
-      .filter((a) => a.picked)
-      .map((a) => ({
-        orderItemId: a.orderItemId,
-        quantity: Number(a.quantity) || 0,
-        amount: Number(a.amount) || 0,
-      }));
-
-    if (!lines.length) refund.errors = refund.errors || '请至少勾选一个商品行';
-    // 前端也卡一道上限：后端会拒，但让它明确报错比提交后等一个 400 好排查
-    for (const line of lines) {
-      if (line.amount <= 0) refund.errors = '退款金额必须大于 0';
-    }
-    const total = lines.reduce((sum, a) => sum + a.amount, 0);
-    if (total > refund.remaining + 0.01) {
-      refund.errors = `本次退款 ${total.toFixed(2)} 元超过订单剩余可退 ${refund.remaining.toFixed(2)} 元`;
-    }
-
-    if (refund.errors) {
-      ElMessage.warning(refund.errors);
-      return;
-    }
-
-    await postRefund(lines);
-    return;
-  }
-
-  if (refund.errors) {
-    ElMessage.warning(refund.errors);
-    return;
-  }
-
-  await postRefund(null);
-}
-
-async function postRefund(lines: any[] | null) {
-  refund.saving = true;
-  try {
-    const response = await request('/gateway/admin/orders/Refund', {
-      body: { orderNo: refund.orderNo, remark: refund.remark.trim(), lines },
-      raw: true,
-    });
-    ElMessage.success(response?.message || '退款已处理');
-    refund.open = false;
-    await load();
-  } catch {
-    // request 已提示，保留弹窗让运营改一个数字就能重试
-  } finally {
-    refund.saving = false;
-  }
-}
 
 async function verifyPickup(row: any) {
   try {
@@ -796,42 +619,6 @@ onMounted(async () => {
 .filters__customer {
   height: 32px;
   font-size: var(--text-foot);
-}
-
-.refund__scope {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
-/* 余额说明用等宽数字：这是要跟退款金额反复对比的数字，字形对齐才读得准 */
-.refund__balance {
-  font-size: var(--text-foot);
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-
-.refund__table {
-  width: 100%;
-}
-
-.refund__number {
-  width: 100%;
-}
-
-.refund__total {
-  margin: var(--space-3) 0 0;
-  text-align: right;
-  font-size: var(--text-sub);
-  color: var(--text-2);
-}
-
-.refund__total strong {
-  color: var(--danger-fg);
-  font-variant-numeric: tabular-nums;
 }
 
 .empty {

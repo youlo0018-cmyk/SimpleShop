@@ -247,6 +247,36 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
             .ExecuteAffrowsAsync(ct);
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<(OrderRefund Refund, IReadOnlyList<OrderRefundItem> Items)>>
+        ListRefundsAsync(long orderId, CancellationToken ct = default)
+    {
+        // 升序：详情页要按时间顺序展示退款历史。
+        // 降序的话运营看到的「上一笔退了多少」会是最后退的那笔，不是上一笔。
+        var refunds = await _db.Select<OrderRefund>()
+            .Where(a => a.OrderId == orderId)
+            .OrderBy(a => a.CreatedAt)
+            .OrderBy(a => a.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        if (refunds.Count == 0) return [];
+
+        var items = await _db.Select<OrderRefundItem>()
+            .Where(a => a.OrderId == orderId)
+            .OrderBy(a => a.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var byRefund = items
+            .GroupBy(a => a.RefundId)
+            .ToDictionary(a => a.Key, a => (IReadOnlyList<OrderRefundItem>)a.ToList());
+
+        return refunds
+            .Select(a => (a, byRefund.TryGetValue(a.Id, out var list) ? list : []))
+            .ToList();
+    }
+
+    /// <inheritdoc />
     public async Task<OrderAggregateRow> AggregateAsync(
         DateTime from, DateTime to, long merchantId, long platformId,
         CancellationToken ct = default)

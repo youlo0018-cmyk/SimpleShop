@@ -314,6 +314,17 @@ public interface IOrderStore
         long orderId, int fromStatus, decimal amount, bool fullyRefunded,
         CancellationToken ct = default);
 
+    /// <summary>按订单 Id 取全部退款记录与明细（后台订单详情用）。</summary>
+    /// <param name="orderId">订单 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>退款记录，按发生时间升序；每条带上它的明细行。</returns>
+    /// <remarks>
+    /// 一张订单可以有多条（多次部分退款），所以这里返回列表而不是单条。
+    /// 详情页要按时间顺序展示，否则运营看到的「上次退了多少」是错的。
+    /// </remarks>
+    Task<IReadOnlyList<(OrderRefund Refund, IReadOnlyList<OrderRefundItem> Items)>> ListRefundsAsync(
+        long orderId, CancellationToken ct = default);
+
     /// <summary>按区间聚合订单指标，供工作台报表使用。</summary>
     /// <param name="from">区间起（含）。</param>
     /// <param name="to">区间止（不含）。</param>

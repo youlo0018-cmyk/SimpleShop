@@ -30,85 +30,216 @@
 
     <template v-else-if="loaded">
       <div class="grid">
-        <section class="panel">
-          <h3 class="card__title">金额构成</h3>
-          <div class="row">
-            <span class="row__label">商品总额</span>
-            <span class="row__value">{{ formatAmount(order.goodsTotal) }}</span>
+        <!--
+          金额段：实付金额放大做主视觉，其余拆解项退成小字行。
+          之前四个数字用同样大的字号平铺，看的人要在四行里找哪个是实付；
+          而「实付」恰恰是这一页唯一需要第一眼读到的数。
+        -->
+        <SectionPanel title="金额" :hint="refundSummary">
+          <div class="amount">
+            <span class="amount__label">实付金额</span>
+            <span class="amount__value">{{ formatAmount(order.payableAmount) }}</span>
           </div>
-          <div class="row">
-            <span class="row__label">运费</span>
-            <span class="row__value">{{ formatAmount(order.freight) }}</span>
+          <div class="lines">
+            <div class="lines__row">
+              <span>商品总额</span>
+              <span class="num">{{ formatAmount(order.goodsTotal) }}</span>
+            </div>
+            <div class="lines__row">
+              <span>运费</span>
+              <span class="num">{{ formatAmount(order.freight) }}</span>
+            </div>
+            <div class="lines__row">
+              <span>积分抵扣</span>
+              <span class="num">{{ formatAmount(order.pointsDeduction) }}</span>
+            </div>
+            <div v-if="Number(order.couponDiscount) > 0" class="lines__row">
+              <span>优惠券</span>
+              <span class="num">{{ formatAmount(order.couponDiscount) }}</span>
+            </div>
+            <div v-if="Number(order.refundedAmount) > 0" class="lines__row">
+              <span>已退款</span>
+              <span class="num lines__minus">{{ formatAmount(order.refundedAmount) }}</span>
+            </div>
+            <div class="lines__row">
+              <span>使用积分</span>
+              <span class="num">{{ formatCount(order.pointsUsed) }}</span>
+            </div>
           </div>
-          <div class="row">
-            <span class="row__label">积分抵扣</span>
-            <span class="row__value">{{ formatAmount(order.pointsDeduction) }}</span>
-          </div>
-          <div class="row">
-            <span class="row__label">实付金额</span>
-            <span class="row__value strong">{{ formatAmount(order.payableAmount) }}</span>
-          </div>
-        </section>
+        </SectionPanel>
 
-        <section class="panel">
-          <h3 class="card__title">收货信息</h3>
-          <div class="row">
-            <span class="row__label">收货人</span>
-            <span>{{ emptyText(order.receiverName) }}</span>
+        <SectionPanel title="收货与物流">
+          <div class="lines">
+            <div class="lines__row">
+              <span>收货人</span>
+              <span>{{ emptyText(order.receiverName) }}</span>
+            </div>
+            <div class="lines__row">
+              <span>联系电话</span>
+              <span class="mono">{{ maskPhone(order.receiverPhone) }}</span>
+            </div>
+            <div class="lines__row">
+              <span>收货地址</span>
+              <span class="addr">{{ emptyText(order.receiverAddress) }}</span>
+            </div>
+            <!-- 未发货时**不显示**这两行：显示「—」等于告诉运营「物流信息丢了」，
+                 而它只是还没填。发货之后才出现，含义才准确。 -->
+            <template v-if="order.trackingNo">
+              <div class="lines__row">
+                <span>物流公司</span>
+                <span>{{ emptyText(order.logisticsCompanyName) }}</span>
+              </div>
+              <div class="lines__row">
+                <span>运单号</span>
+                <span class="mono">{{ order.trackingNo }}</span>
+              </div>
+              <div v-if="order.shippedAt" class="lines__row">
+                <span>发货时间</span>
+                <span class="sub">{{ formatDateTime(order.shippedAt) }}</span>
+              </div>
+            </template>
+            <div class="lines__row">
+              <span>订单备注</span>
+              <span>{{ emptyText(order.remark) }}</span>
+            </div>
           </div>
-          <div class="row">
-            <span class="row__label">联系电话</span>
-            <span class="mono">{{ maskPhone(order.receiverPhone) }}</span>
-          </div>
-          <div class="row">
-            <span class="row__label">收货地址</span>
-            <span class="addr">{{ emptyText(order.receiverAddress) }}</span>
-          </div>
-          <div class="row">
-            <span class="row__label">积分使用</span>
-            <span class="num">{{ formatCount(order.pointsUsed) }}</span>
-          </div>
-          <div class="row">
-            <span class="row__label">订单备注</span>
-            <span>{{ emptyText(order.remark) }}</span>
-          </div>
-        </section>
+        </SectionPanel>
       </div>
 
-      <section class="panel payment-info">
-        <h3 class="card__title">支付信息</h3>
-        <div v-if="payments.length">
-          <div v-for="item in payments" :key="item.paymentNo" class="row">
-            <span class="row__label">{{ item.paymentNo }}</span>
-            <span>{{ item.statusName }} · ¥{{ formatAmount(item.amount) }}</span>
-          </div>
-        </div>
-        <div v-else class="empty-text">暂无支付单</div>
-      </section>
+      <!-- 支付记录用表格：单号、金额、状态、渠道、时间要横向对比，
+           竖着排成一行行「标签 + 值」会让这几列没法一眼扫完。 -->
+      <SectionPanel title="支付记录" flush>
+        <el-table v-if="payments.length" :data="payments" class="table">
+          <el-table-column label="支付单号" min-width="200">
+            <template #default="{ row }">
+              <span class="mono">{{ row.paymentNo }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="渠道" width="110">
+            <template #default="{ row }">
+              {{ statusText('paymentChannel', row.channel) || '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="金额" width="120" align="right">
+            <template #default="{ row }">
+              <span class="num strong">{{ formatAmount(row.amount) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="110" align="center">
+            <template #default="{ row }">
+              <span class="pill" :class="'pill--' + statusColor('payment', row.status)">
+                {{ row.statusName }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="失败原因" min-width="140">
+            <template #default="{ row }">{{ emptyText(row.failReason) }}</template>
+          </el-table-column>
+          <el-table-column label="支付时间" width="150">
+            <template #default="{ row }">
+              <span class="sub">{{ formatDateTime(row.paidAt) }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p v-else class="empty">暂无支付单</p>
+      </SectionPanel>
 
-      <section class="panel refund-info">
-        <div class="section-head">
-          <h3 class="card__title">退款记录</h3>
-          <el-button v-if="canRefund" type="danger" plain @click="refund">发起退款</el-button>
-        </div>
-        <div v-if="refunds.length">
-          <div v-for="item in refunds" :key="item.refundId" class="refund-row">
-            <div>
-              <strong>{{ item.refundNo }}</strong>
-              <p>{{ item.reason }}</p>
-              <span>{{ item.statusName }} · ¥{{ formatAmount(item.amount) }}</span>
-            </div>
-            <div v-if="Number(item.status) === 10" class="refund-row__actions">
-              <el-button type="primary" size="small" @click="approveRefund(item)">通过</el-button>
-              <el-button type="danger" size="small" @click="rejectRefund(item)">拒绝</el-button>
-            </div>
-          </div>
-        </div>
-        <div v-else class="empty-text">暂无退款单</div>
-      </section>
+      <!--
+        代客退款记录（订单侧，支持多次部分退款）。
+        与下面的「退款申请」是两条链路：这一段是后台直接退的，已经生效；
+        下一段是客户在小程序上申请、还在等审批的。
+        混成一张表的话，运营会以为「待审批」的那笔也已经退到客户账上了。
+      -->
+      <SectionPanel title="代客退款" :hint="`${refunds.length} 笔`">
+        <template #actions>
+          <el-button v-if="canRefund" type="danger" plain size="small" @click="refundOpen = true">
+            发起退款
+          </el-button>
+        </template>
+        <el-table v-if="refunds.length" :data="refunds" class="table">
+          <el-table-column label="退款单号" min-width="180">
+            <template #default="{ row }">
+              <span class="mono">{{ row.refundNo }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="110" align="center">
+            <template #default="{ row }">
+              <span class="pill" :class="row.fullyRefunded ? 'pill--info' : 'pill--neutral'">
+                {{ row.refundTypeName }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="金额" width="110" align="right">
+            <template #default="{ row }">
+              <span class="num strong">{{ formatAmount(row.amount) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="商品" min-width="200">
+            <template #default="{ row }">
+              <div v-for="item in row.items || []" :key="item.orderItemId" class="sub">
+                {{ item.productName }} × {{ item.quantity }} · {{ formatAmount(item.amount) }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="原因" min-width="160">
+            <template #default="{ row }">{{ emptyText(row.reason) }}</template>
+          </el-table-column>
+          <el-table-column label="操作人" width="110">
+            <template #default="{ row }">{{ emptyText(row.operatorName) }}</template>
+          </el-table-column>
+          <el-table-column label="退款时间" width="150">
+            <template #default="{ row }">
+              <span class="sub">{{ formatDateTime(row.createdAt) }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p v-else class="empty">暂无代客退款</p>
+      </SectionPanel>
 
-      <section class="panel">
-        <h3 class="card__title">商品明细</h3>
+      <!-- 客户在小程序发起的退款申请：先申请、再审批（规格 10.2） -->
+      <SectionPanel title="退款申请" :hint="`${refundRequests.length} 笔`">
+        <el-table v-if="refundRequests.length" :data="refundRequests" class="table">
+          <el-table-column label="退款单号" min-width="180">
+            <template #default="{ row }">
+              <span class="mono">{{ row.refundNo }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="110" align="center">
+            <template #default="{ row }">{{ row.refundTypeName }}</template>
+          </el-table-column>
+          <el-table-column label="金额" width="110" align="right">
+            <template #default="{ row }">
+              <span class="num strong">{{ formatAmount(row.amount) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="110" align="center">
+            <template #default="{ row }">
+              <span class="pill" :class="'pill--' + statusColor('refund', row.status)">
+                {{ row.statusName }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="原因" min-width="160">
+            <template #default="{ row }">{{ emptyText(row.reason) }}</template>
+          </el-table-column>
+          <el-table-column label="申请时间" width="150">
+            <template #default="{ row }">
+              <span class="sub">{{ formatDateTime(row.createdAt) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="hasPendingRefund" label="操作" width="140" align="center">
+            <template #default="{ row }">
+              <template v-if="Number(row.status) === 10">
+                <el-button type="primary" link @click="approveRefund(row)">通过</el-button>
+                <el-button type="danger" link @click="rejectRefund(row)">拒绝</el-button>
+              </template>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p v-else class="empty">暂无客户发起的退款申请</p>
+      </SectionPanel>
+
+      <SectionPanel title="商品明细" :hint="`${(order.items || []).length} 行`" flush>
         <el-table :data="order.items || []" class="table">
           <el-table-column label="商品" min-width="200">
             <template #default="{ row }">
@@ -151,21 +282,35 @@
             </template>
           </el-table-column>
         </el-table>
-      </section>
+      </SectionPanel>
     </template>
 
     <el-empty v-else-if="loaded" description="订单不存在或已被删除" />
+
+    <RefundDialog
+      v-model="refundOpen"
+      :order-no="order.orderNo"
+      :detail="order"
+      @done="load"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { computed } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/api/request';
+import RefundDialog from '@/components/RefundDialog.vue';
+import SectionPanel from '@/components/SectionPanel.vue';
 import { statusColor, statusText } from '@/utils/dict';
-import { formatAmount, formatCount, emptyText, maskPhone } from '@/utils/format';
+import {
+  formatAmount,
+  formatCount,
+  formatDateTime,
+  emptyText,
+  maskPhone,
+} from '@/utils/format';
 
 const route = useRoute();
 const router = useRouter();
@@ -177,7 +322,13 @@ const loaded = ref(false);
 
 const order = reactive<any>({});
 const payments = ref<any[]>([]);
+// 两条退款链路分开存：
+// refunds = 后台代客退款（订单侧，已生效，支持多次部分退款）
+// refundRequests = 客户在小程序发起的申请（支付服务，待审批）
+// 混在一个数组里的话，运营会把「待审批」当成「已经退到客户账上」。
 const refunds = ref<any[]>([]);
+const refundRequests = ref<any[]>([]);
+const refundOpen = ref(false);
 
 const hasDelivery = (type: number) =>
   (order.items || []).some((item: any) => Number(item.deliveryType) === type);
@@ -189,9 +340,24 @@ const isVirtualOnly = computed(() =>
   (order.items || []).length > 0 &&
   (order.items || []).every((item: any) => Number(item.deliveryType) === 2),
 );
+// 50 已完成（客户已确认收货）**不可退款** —— 用户明确要求。
+// 之前把 50 算成可退，按钮显示出来后端一律回错，运营只能理解为系统坏了。
 const canRefund = computed(() =>
-  !isVirtualOnly.value && [20, 30, 40, 50].includes(Number(order.status)),
+  !isVirtualOnly.value && [20, 30, 40].includes(Number(order.status)),
 );
+
+const hasPendingRefund = computed(() =>
+  refundRequests.value.some((a: any) => Number(a.status) === 10),
+);
+
+// 金额段的副标题：退过款时把「还能退多少」直接写在标题旁边，
+// 运营不必先点进退款弹窗才知道这一单还剩多少余额。
+const refundSummary = computed(() => {
+  const refunded = Number(order.refundedAmount ?? 0);
+  if (refunded <= 0) return '';
+  const remaining = Math.max(0, Number(order.payableAmount ?? 0) - refunded);
+  return `已退 ${formatAmount(refunded)} · 还能退 ${formatAmount(remaining)}`;
+});
 
 async function load() {
   loading.value = true;
@@ -201,11 +367,21 @@ async function load() {
       silent: true,
     });
     Object.assign(order, data || {});
-    [payments.value, refunds.value] = await Promise.all([
+
+    // 三个附属列表并行拉。**各自 catch 成空数组**：
+    // 「退款记录接口挂了」不该让整页变成空白 —— 金额与商品明细才是这页的主体，
+    // 把它们挂在同一条失败链上会让一次可恢复的小故障变成「订单详情打不开」。
+    [payments.value, refunds.value, refundRequests.value] = await Promise.all([
       request('/gateway/admin/payments/List', {
         body: { page: 1, pageSize: 20, keyword: order.orderNo },
         silent: true,
       }).then((result: any) => result?.items || []).catch(() => []),
+      // 后台代客退款（订单侧，含多次部分退款）
+      request('/gateway/admin/orders/Refunds', {
+        body: { orderId: route.params.id },
+        silent: true,
+      }).catch(() => []),
+      // 客户在小程序发起的退款申请（支付服务侧，待审批）
       request('/gateway/refunds/List', {
         body: { page: 1, pageSize: 20, keyword: order.orderNo },
         silent: true,
@@ -213,6 +389,9 @@ async function load() {
     ]);
   } catch {
     Object.keys(order).forEach((k) => delete order[k]);
+    payments.value = [];
+    refunds.value = [];
+    refundRequests.value = [];
   } finally {
     loading.value = false;
     loaded.value = true;
@@ -299,19 +478,10 @@ async function verifyPickup() {
   }
 }
 
-async function refund() {
-  try {
-    const result = await ElMessageBox.prompt('填写退款原因', '代客发起退款', {
-      inputType: 'textarea',
-      inputPlaceholder: '至少 2 个字符，会记录到审计日志',
-      inputValidator: (value) => (value?.trim().length >= 2 ? true : '退款原因至少 2 个字符'),
-      confirmButtonText: '确认退款',
-      cancelButtonText: '取消',
-    });
-    await act('Refund', { orderNo: order.orderNo, remark: result.value.trim() }, '退款已处理');
-  } catch {
-    // 用户取消不提示
-  }
+// 退款交给 RefundDialog：它要处理行级余额、件数上限与「只退部分」的分支，
+// 用一个只问原因的 prompt 框根本承载不了这些。
+function refund() {
+  refundOpen.value = true;
 }
 
 async function approveRefund(item: any) {
@@ -396,38 +566,67 @@ onMounted(load);
   margin-bottom: var(--space-4);
 }
 
-.payment-info,
-.refund-info {
+.grid > :deep(.section),
+:deep(.section) {
   margin-bottom: var(--space-4);
 }
 
-.section-head {
+/* 实付金额是这一页唯一需要第一眼读到的数：放大 + 等宽数字，
+   其余拆解项退成小字行，避免四个数字平铺让人找不到哪个是实付。 */
+.amount {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) 0 var(--space-5);
 }
 
-.refund-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-3) 0;
-  border-bottom: 0.5px solid var(--hairline);
-}
-
-.refund-row:last-child {
-  border-bottom: none;
-}
-
-.refund-row p {
-  margin: var(--space-1) 0;
+.amount__label {
+  font-size: var(--text-foot);
   color: var(--text-2);
 }
 
-.refund-row__actions {
+.amount__value {
+  font-size: var(--text-display);
+  line-height: var(--lh-display);
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 拆解项：标签与值分居两端，中间留白。靠发丝线分隔而不是再套一层盒子。 */
+.lines__row {
   display: flex;
-  gap: var(--space-2);
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  font-size: var(--text-sub);
+  color: var(--text-2);
+}
+
+.lines__row + .lines__row {
+  border-top: 0.5px solid var(--hairline);
+}
+
+.lines__minus {
+  color: var(--danger-fg);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-6);
+  text-align: center;
+  font-size: var(--text-foot);
+  color: var(--text-3);
+}
+
+.table {
+  width: 100%;
+}
+
+.sub {
+  font-size: var(--text-foot);
+  color: var(--text-2);
 }
 
 .strong {

@@ -125,6 +125,48 @@ public sealed class QueryAdminOrderDetailHandler
     }
 }
 
+/// <summary>订单退款记录查询处理器。</summary>
+/// <remarks>
+/// 返回的是**订单侧**的退款记录（后台代客退款，含部分退款）。
+/// 支付服务那边还有一套「客户申请 → 审批」的退款单，那是两条不同的链路，
+/// 前端订单详情要把两者分区展示，不要混成一张表。
+/// </remarks>
+public sealed class QueryOrderRefundsHandler
+    : MediatR.IRequestHandler<QueryOrderRefundsCommand, ApiResponse<IReadOnlyList<OrderRefundDto>>>
+{
+    private readonly IOrderStore _store;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="store">落单端口。</param>
+    public QueryOrderRefundsHandler(IOrderStore store) => _store = store;
+
+    /// <summary>查询退款记录。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>退款记录列表；没有退款时是空列表而不是 null。</returns>
+    public async Task<ApiResponse<IReadOnlyList<OrderRefundDto>>> Handle(
+        QueryOrderRefundsCommand request, CancellationToken ct)
+    {
+        var rows = await _store.ListRefundsAsync(request.OrderId, ct).ConfigureAwait(false);
+
+        var list = rows.Select(pair => new OrderRefundDto(
+            pair.Refund.Id,
+            pair.Refund.RefundNo,
+            pair.Refund.Amount,
+            pair.Refund.RefundType,
+            OrderRefundTypes.NameOf(pair.Refund.RefundType),
+            pair.Refund.FullyRefunded,
+            pair.Refund.Reason,
+            pair.Refund.OperatorName,
+            pair.Refund.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+            pair.Items.Select(a => new OrderRefundItemDto(
+                a.OrderItemId, a.ProductName, a.SkuSpecText, a.Quantity, a.Amount)).ToList()))
+            .ToList();
+
+        return ApiResults.Ok<IReadOnlyList<OrderRefundDto>>(list);
+    }
+}
+
 /// <summary>后台代客取消处理器。</summary>
 public sealed class AdminCancelOrderHandler : MediatR.IRequestHandler<AdminCancelOrderCommand, ApiResponse>
 {
