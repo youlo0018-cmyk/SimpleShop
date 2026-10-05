@@ -166,6 +166,27 @@ async function visit(page, item) {
       errors.push(`表格只渲染出 1 列「${tableCols[0]}」，数据列很可能被插槽顶替丢弃了`);
     }
 
+    // 规格 UI-RAW-003：界面不出现枚举数字。
+    // 具体形态：状态色标签（.pill）**旁边**又多出一段裸数字，
+    // 渲染成「已通过 20」。这是模板里 v-if 少了配套的 v-else 时才会出现的，
+    // 而且普通列看不出来（两处渲染的是同一段文字），只有状态列才暴露。
+    const rawEnum = await page.evaluate(() => {
+      const bad = [];
+      document.querySelectorAll('.el-table__row td .cell').forEach((cell) => {
+        const pill = cell.querySelector('.pill');
+        if (!pill) return;
+        // 去掉色标签自身，剩下的纯文本若含裸数字就是漏出来的枚举值
+        const rest = cell.cloneNode(true);
+        rest.querySelectorAll('.pill').forEach((p) => p.remove());
+        const text = (rest.textContent || '').trim();
+        if (/^\d+$/.test(text)) bad.push(text);
+      });
+      return bad.slice(0, 5);
+    });
+    if (rawEnum.length > 0) {
+      errors.push(`状态标签旁出现裸枚举数字：${rawEnum.join('、')}（应为纯中文状态）`);
+    }
+
     const name = `${slug(item.group)}-${slug(item.title)}`;
     await page.screenshot({
       path: path.join(SHOT_DIR, `adm-${name}-1440x900.png`),

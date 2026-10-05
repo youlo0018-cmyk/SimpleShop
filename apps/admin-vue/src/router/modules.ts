@@ -61,7 +61,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'users',
     meta: { title: '账号', icon: 'User', perm: 'user:read' },
     children: [
-      { path: '', name: 'user-list', ...ph('', '账号列表', 'user:read') },
+      listRoute('', 'user-list', '账号列表', 'user:read', 'users'),
       { path: 'create', name: 'user-create', ...ph('create', '新建账号', 'user:create') },
     ],
   },
@@ -77,7 +77,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'roles',
     meta: { title: '角色权限', icon: 'Lock', perm: 'role:read' },
     children: [
-      { path: '', name: 'role-list', ...ph('', '角色列表', 'role:read') },
+      listRoute('', 'role-list', '角色列表', 'role:read', 'roles'),
       { path: 'permissions', name: 'role-permissions', ...ph('permissions', '权限点管理', 'permission:manage') },
     ],
   },
@@ -87,7 +87,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'platforms',
     meta: { title: '平台', icon: 'OfficeBuilding', perm: 'platform:read' },
     children: [
-      { path: '', name: 'platform-list', ...ph('', '平台列表', 'platform:read') },
+      listRoute('', 'platform-list', '平台列表', 'platform:read', 'platforms'),
       { path: 'create', name: 'platform-create', ...ph('create', '新建平台', 'platform:create') },
       { path: 'edit/:id', name: 'platform-edit', ...ph('edit/:id', '编辑平台', 'platform:update') },
       { path: 'app-config/:id', name: 'platform-app-config', ...ph('app-config/:id', '小程序配置', 'platform:update') },
@@ -98,7 +98,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'merchants',
     meta: { title: '商户', icon: 'Shop', perm: 'merchant:read' },
     children: [
-      { path: '', name: 'merchant-list', ...ph('', '商户列表', 'merchant:read') },
+      listRoute('', 'merchant-list', '商户列表', 'merchant:read', 'merchants'),
       { path: 'create', name: 'merchant-create', ...ph('create', '新建商户', 'merchant:create') },
       { path: 'edit/:id', name: 'merchant-edit', ...ph('edit/:id', '编辑商户', 'merchant:update') },
       { path: 'audit', name: 'merchant-audit', ...ph('audit', '商户审核', 'merchant:audit') },
@@ -176,7 +176,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'promotions',
     meta: { title: '营销活动', icon: 'Present', perm: 'promotion:read' },
     children: [
-      { path: '', name: 'promotion-list', ...ph('', '活动列表', 'promotion:read') },
+      listRoute('', 'promotion-list', '活动列表', 'promotion:read', 'promotions'),
       { path: 'create', name: 'promotion-create', ...ph('create', '新建活动', 'promotion:create') },
       { path: 'edit/:id', name: 'promotion-edit', ...ph('edit/:id', '编辑活动', 'promotion:update') },
     ],
@@ -194,7 +194,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'seckill',
     meta: { title: '限时抢购', icon: 'Timer', perm: 'seckill:read' },
     children: [
-      { path: '', name: 'seckill-list', ...ph('', '场次列表', 'seckill:read') },
+      listRoute('', 'seckill-list', '场次列表', 'seckill:read', 'seckillSessions'),
       { path: 'create', name: 'seckill-create', ...ph('create', '新建场次', 'seckill:create') },
       { path: 'edit/:id', name: 'seckill-edit', ...ph('edit/:id', '编辑场次', 'seckill:update') },
       { path: 'items/:id', name: 'seckill-items', ...ph('items/:id', '场次商品', 'seckill:update') },

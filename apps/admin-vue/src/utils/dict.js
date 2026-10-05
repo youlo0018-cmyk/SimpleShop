@@ -142,6 +142,25 @@ const D = {
     true: { text: '已隐藏', color: 'danger' },
     false: { text: '展示中', color: 'success' },
   },
+
+  // 角色启用状态
+  roleStatus: {
+    1: { text: '启用', color: 'success' },
+    2: { text: '停用', color: 'neutral' },
+  },
+
+  // 是否内置角色。内置角色禁止编辑 / 删除（规格：平台超管、平台操作员等）。
+  builtin: {
+    true: { text: '内置', color: 'info' },
+    false: { text: '自定义', color: 'neutral' },
+  },
+
+  // 秒杀场次是否已划出库存。
+  // 这个标志决定结束场次时要不要回补，所以运营必须一眼看出「这件还没还库存」。
+  stockTransferred: {
+    true: { text: '已划出', color: 'warning' },
+    false: { text: '未划出', color: 'neutral' },
+  },
 };
 
 // 取状态对应的语义色档位。

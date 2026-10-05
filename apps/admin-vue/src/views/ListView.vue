@@ -37,7 +37,11 @@
             <span v-if="c.dict" class="pill" :class="'pill--' + statusColor(c.dict, row[c.field])">
               {{ row[c.field + 'Name'] || statusText(c.dict, row[c.field]) }}
             </span>
-            <span :class="c.num ? 'num' : c.mono ? 'mono' : ''">{{ render(c, row) }}</span>
+            <!-- 🔴 v-else 不能少。之前给它加 mono 选项时把 v-else 弄丢了，
+                 两个 span 就都渲染了：字典列会变成「色标签 + 裸枚举值」并排，
+                 比如「已通过 20」——直接违反「界面不出现枚举数字」这条硬约束。
+                 普通列看不出来（两行渲染的是同一段文字），只有状态列才暴露。 -->
+            <span v-else :class="c.num ? 'num' : c.mono ? 'mono' : ''">{{ render(c, row) }}</span>
           </template>
         </el-table-column>
 
