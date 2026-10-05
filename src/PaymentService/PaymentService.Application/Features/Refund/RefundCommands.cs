@@ -17,16 +17,19 @@ public record ApplyRefundCommand(long OrderId, string OrderNo, IReadOnlyList<Ref
 
 /// <summary>审批通过退款。</summary>
 /// <param name="RefundId">退款单 Id。</param>
-/// <param name="ApproverId">审批人 Id。</param>
-/// <param name="ApproverName">审批人姓名。</param>
-public record ApproveRefundCommand(long RefundId, long ApproverId, string ApproverName) : IRequest<ApiResponse>;
+/// <remarks>
+/// <b>刻意不接受审批人字段</b>：审批人由 Handler 从令牌租户上下文取。
+/// 之前这里有 ApproverId / ApproverName 且直接采信请求体 ——
+/// 调用方可以自称任意审批人，而「退款单审批人」是财务审计凭据。
+/// 把它留在契约里，等于把审计记录的完整性交给前端自觉。
+/// </remarks>
+public record ApproveRefundCommand(long RefundId) : IRequest<ApiResponse>;
 
 /// <summary>审批拒绝退款。</summary>
 /// <param name="RefundId">退款单 Id。</param>
 /// <param name="RejectReason">拒绝原因，2~200 字符。</param>
-/// <param name="ApproverId">审批人 Id。</param>
-/// <param name="ApproverName">审批人姓名。</param>
-public record RejectRefundCommand(long RefundId, string RejectReason, long ApproverId, string ApproverName) : IRequest<ApiResponse>;
+/// <remarks>审批人同样由 Handler 从令牌租户上下文取，不接受请求体传入（理由同 <see cref="ApproveRefundCommand"/>）。</remarks>
+public record RejectRefundCommand(long RefundId, string RejectReason) : IRequest<ApiResponse>;
 
 /// <summary>查退款单。</summary>
 /// <param name="Status">状态过滤，0 表示不限。</param>

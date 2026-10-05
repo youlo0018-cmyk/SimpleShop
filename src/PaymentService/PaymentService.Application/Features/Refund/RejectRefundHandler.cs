@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MediatR;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.IRepository;
@@ -21,6 +22,15 @@ public sealed class RejectRefundHandler : IRequestHandler<RejectRefundCommand, A
     /// <remarks><b>拒绝无任何副作用</b>：订单、库存、积分都不动（规格 10.2）。</remarks>
     public async Task<ApiResponse> Handle(RejectRefundCommand request, CancellationToken ct)
     {
+        // 🔴 审批人从**令牌租户上下文**取，不从请求体取 —— 理由同 ApproveRefundHandler：
+        // 拒绝原因同样会写进财务审计记录，审批人可伪造就等于审计记录可伪造。
+        var ctx = TenantContextHolder.Current;
+
+        if (ctx.UserId <= 0)
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.Unauthorized, "登录状态已失效，请重新登录");
+        }
+
         var refund = await _refunds.GetByIdAsync(request.RefundId, ct).ConfigureAwait(false);
         if (refund is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "退款单不存在");
 
@@ -32,7 +42,7 @@ public sealed class RejectRefundHandler : IRequestHandler<RejectRefundCommand, A
 
         var changed = await _refunds.TryApproveAsync(
             refund.Id, RefundStatuses.PendingApproval, RefundStatuses.Rejected,
-            request.ApproverId, request.ApproverName, request.RejectReason.Trim(), ct).ConfigureAwait(false);
+            ctx.UserId, ctx.UserName, request.RejectReason.Trim(), ct).ConfigureAwait(false);
 
         return changed > 0
             ? ApiResponseFactory.Ok("已拒绝该退款申请")

@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MediatR;
 using PaymentService.Application.Services;
 using PaymentService.Domain.Entities;
@@ -36,6 +37,16 @@ public sealed class ApproveRefundHandler : IRequestHandler<ApproveRefundCommand,
     /// </remarks>
     public async Task<ApiResponse> Handle(ApproveRefundCommand request, CancellationToken ct)
     {
+        // 🔴 审批人从**令牌租户上下文**取，不从请求体取。
+        // 之前是 request.ApproverId / request.ApproverName —— 等于调用方自称谁是审批人，
+        // 而「退款单审批人」是财务审计凭据，伪造它等于伪造审计记录。
+        var ctx = TenantContextHolder.Current;
+
+        if (ctx.UserId <= 0)
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.Unauthorized, "登录状态已失效，请重新登录");
+        }
+
         var refund = await _refunds.GetByIdAsync(request.RefundId, ct).ConfigureAwait(false);
         if (refund is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "退款单不存在");
 
@@ -63,7 +74,7 @@ public sealed class ApproveRefundHandler : IRequestHandler<ApproveRefundCommand,
 
         var changed = await _refunds.TryApproveAsync(
             refund.Id, RefundStatuses.PendingApproval, RefundStatuses.Refunded,
-            request.ApproverId, request.ApproverName, string.Empty, ct).ConfigureAwait(false);
+            ctx.UserId, ctx.UserName, string.Empty, ct).ConfigureAwait(false);
 
         if (changed == 0)
         {

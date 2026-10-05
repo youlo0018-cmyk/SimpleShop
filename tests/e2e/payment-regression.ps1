@@ -84,6 +84,30 @@ function PayPost([string]$Op, $Body) {
     }
 }
 
+function PayAdminPost([string]$Op, $Body) {
+    # 退款审批必须**走网关**。
+    # 审批人现在由 Handler 从令牌租户上下文（TenantContextHolder）取，
+    # 而那个上下文是网关验签后通过 X-Claim-* 头注入的 ——
+    # 直连 $Payment 就没有租户上下文，审批会被「登录状态已失效」挡掉。
+    # 这不是测试在迁就实现，而是后台的真实调用路径就是走网关：
+    # 运营点「通过退款」时请求必然经过网关，审批人才是对的。
+    # $Op 形如 '/refunds/Approve'，已经带了 refunds 前缀，
+    # 所以这里只能拼 '$Gateway/gateway' + $Op。
+    # 之前写成 "$Gateway/gateway/refunds/$($Op -replace '^/','')" 拼出了
+    # /gateway/refunds/refunds/Approve —— 少一层路由，全部 404。
+    $path = "$Gateway/gateway$Op"
+    try {
+        return Invoke-RestMethod $path -Method Post -Headers $script:adminHeaders `
+            -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
+    } catch {
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{ success = $false; code = -1; message = $_.Exception.Message; data = $null }
+        }
+        try { return $raw | ConvertFrom-Json -AsHashtable } catch { return [pscustomobject]@{ success = $false; code = -1; message = $raw; data = $null } }
+    }
+}
+
 function OrderPost([string]$Op, $Body) {
     return Invoke-RestMethod "$Order$Op" -Method Post -Headers $script:adminHeaders `
         -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60
@@ -250,18 +274,31 @@ Invoke-Case 'API-PAY-034' '🔴 重复申请同一订单的整单退款被拒（
 }
 
 Invoke-Case 'API-PAY-035' '🔴 P0 审批通过：订单转 60 已退款' {
-    $r = PayPost '/refunds/Approve' @{
-        refundId = $script:refundB; approverId = 1; approverName = '财务'
-    }
+    # 审批人由服务端从令牌上下文取，请求体里**不再传** approverId / approverName
+    $r = PayAdminPost '/refunds/Approve' @{ refundId = $script:refundB }
     if (-not $r.success) { return $false }
     return (Get-OrderStatus $script:orderB) -eq 60
 }
 
 Invoke-Case 'API-PAY-036' '🔴 重复审批被拒（幂等：不能退两次）' {
-    $r = PayPost '/refunds/Approve' @{
-        refundId = $script:refundB; approverId = 2; approverName = '另一个人'
-    }
+    $r = PayAdminPost '/refunds/Approve' @{ refundId = $script:refundB }
     return (-not $r.success) -and $r.message -match '已处理'
+}
+
+Invoke-Case 'API-PAY-037' '🔴🔴 审批人取自令牌，伪造请求体里的 approverName 无效' {
+    # 这是本轮修掉的审计缺陷：ApproveRefundCommand 的审批人曾直接取自请求体，
+    # 调用方可以自称任意审批人，而「退款单审批人」是财务审计凭据。
+    # 现在审批人由 Handler 从 TenantContextHolder（网关注入的 X-Claim-*）取，
+    # 请求体里就算塞 approverName 也不再生效。
+    $list = PayPost '/refunds/List' @{ page = 1; pageSize = 50 }
+    if (-not $list.success) { return $false }
+
+    $row = @($list.data.items | Where-Object { $_.refundId -eq $script:refundB })[0]
+    if ($null -eq $row) { return $false }
+
+    # 旧用例传的是 approverName = '财务'。修复后审批人来自令牌，绝不能还是它。
+    Write-Host ("        实际审批人 = {0}" -f $row.approverName) -ForegroundColor DarkGray
+    return (-not [string]::IsNullOrWhiteSpace($row.approverName)) -and $row.approverName -ne '财务'
 }
 
 Write-Host "`n=== PAY 虚拟订单退款窗口（本轮修正的缺陷）===" -ForegroundColor Cyan
@@ -283,9 +320,8 @@ Invoke-Case 'API-PAY-041' '🔴 P0 虚拟订单 20 待发货**可退**（原实�
 }
 
 Invoke-Case 'API-PAY-042' '虚拟退款单被拒绝后**无副作用**：订单仍是 20' {
-    $r = PayPost '/refunds/Reject' @{
+    $r = PayAdminPost '/refunds/Reject' @{
         refundId = $script:refundV; rejectReason = '需要先联系商户'
-        approverId = 1; approverName = '财务'
     }
     # 规格 10.2：拒绝无任何副作用，订单 / 库存 / 积分都不动
     return $r.success -and (Get-OrderStatus $script:orderV) -eq 20

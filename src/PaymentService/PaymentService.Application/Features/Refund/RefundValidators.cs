@@ -41,7 +41,8 @@ public static class RefundValidators
         public ApproveRefundValidator()
         {
             RuleFor(x => x.RefundId).GreaterThan(0).WithMessage("退款单信息不正确");
-            RuleFor(x => x.ApproverId).GreaterThan(0).WithMessage("请先登录");
+            // 不再校验 ApproverId：审批人由 Handler 从令牌租户上下文取，
+            // 未登录时由 Handler 统一返回「登录状态已失效」，不在这里重复校验一个不存在的字段。
         }
     }
 
@@ -52,7 +53,6 @@ public static class RefundValidators
         public RejectRefundValidator()
         {
             RuleFor(x => x.RefundId).GreaterThan(0).WithMessage("退款单信息不正确");
-            RuleFor(x => x.ApproverId).GreaterThan(0).WithMessage("请先登录");
             RuleFor(x => x.RejectReason).NotEmpty().WithMessage("请填写拒绝原因")
                 .Must(r => r.Trim().Length is >= 2 and <= 200).WithMessage("拒绝原因需为 2 ~ 200 个字符");
         }
