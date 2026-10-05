@@ -76,6 +76,10 @@ public static class PointRuleValidators
             RuleFor(x => x.EarnPointsPerYuan).InclusiveBetween(0, 1_000_000).WithMessage("获取汇率不合法");
 
             RuleFor(x => x.SignInRewards)
+                // CascadeMode.Stop：默认级联是 Continue，NotNull 失败后 Must 照样执行。
+                // 这里两个 Must 都自带 null 判断，所以不会抛异常，但加了级联之后
+                // 「没填」就只回一条「请填写签到连续奖励」，而不是同时回三条错误。
+                .Cascade(CascadeMode.Stop)
                 .NotNull().WithMessage("请填写签到连续奖励")
                 .Must(r => r is not null && r.Count is > 0 and <= 31)
                 .WithMessage("签到奖励档位数量必须在 1 ~ 31 之间")

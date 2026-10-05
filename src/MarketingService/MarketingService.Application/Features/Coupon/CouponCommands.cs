@@ -105,7 +105,11 @@ public static class CouponValidators
             RuleFor(x => x.CustomerId).GreaterThan(0).WithMessage("客户 Id 必须为正数");
             RuleFor(x => x.OrderNo).NotEmpty().MaximumLength(64).WithMessage("订单号必填且不超过 64 个字符");
             RuleFor(x => x.CouponId).GreaterThanOrEqualTo(0).WithMessage("券 Id 不能为负数（0 表示自动选最优）");
-            RuleFor(x => x.Lines).NotNull().Must(l => l!.Count > 0).WithMessage("订单行不能为空");
+            // CascadeMode.Stop：默认级联是 Continue，NotNull 失败后 Must 照样执行，
+            // 而 l!.Count 只是编译期断言，运行时 null 会直接抛 NullReferenceException
+            // ——接口回 500 而不是 400。详见 CODING_STANDARD 第 68 条。
+            RuleFor(x => x.Lines).Cascade(CascadeMode.Stop)
+                .NotNull().Must(l => l!.Count > 0).WithMessage("订单行不能为空");
         }
     }
 
@@ -138,9 +142,14 @@ public static class CouponValidators
         public SettleCouponsValidator()
         {
             RuleFor(x => x.CustomerId).GreaterThanOrEqualTo(0).WithMessage("客户 Id 不能为负数（0 表示游客）");
-            RuleFor(x => x.Lines).NotNull().Must(l => l!.Count > 0).WithMessage("订单行不能为空");
-            // 列表页整页商品合并成一次批量试算，≤50 行一批
-            RuleFor(x => x.Lines.Count).LessThanOrEqualTo(50).WithMessage("单次试算最多 50 个订单行");
+            RuleFor(x => x.Lines).Cascade(CascadeMode.Stop)
+                .NotNull().WithMessage("订单行不能为空")
+                .Must(l => l!.Count > 0).WithMessage("订单行不能为空")
+                // 列表页整页商品合并成一次批量试算，≤50 行一批。
+                // 必须挂在同一条链上（而不是单独 RuleFor(x => x.Lines.Count)）：
+                // 后者是**另一个** Rule，级联模式管不到它，Cascade(CascadeMode.Stop)
+                // 也救不了——Lines 为 null 时它照样会在取值那一步就抛 NullReferenceException。
+                .Must(l => l!.Count <= 50).WithMessage("单次试算最多 50 个订单行");
         }
     }
 }

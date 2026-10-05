@@ -41,13 +41,23 @@ public static class SyncProductRatingsValidators
         /// <summary>构造校验器。</summary>
         public SyncProductRatingsValidator()
         {
-            RuleFor(x => x.Items).NotEmpty().WithMessage("没有需要回写的评分");
-            RuleFor(x => x.Items.Count).LessThanOrEqualTo(5000).WithMessage("单次回写条目过多");
-            RuleForEach(x => x.Items).ChildRules(item =>
+            // 三条规则必须全部挂在同一条链上并加 Cascade(CascadeMode.Stop)：
+            // 分成三个 RuleFor 时，Items 为 null 会在后面两条**取值那一步**就抛
+            // NullReferenceException（接口回 500 而不是 400）。
+            // Items 虽然声明成非空，但 JSON 里传 "items": null 或整个字段缺失都能让它变成 null。
+            RuleFor(x => x.Items).Cascade(CascadeMode.Stop)
+                .NotEmpty().WithMessage("没有需要回写的评分")
+                .Must(i => i!.Count <= 5000).WithMessage("单次回写条目过多");
+
+            // RuleForEach 也得防一手：它在 Items 为 null 时同样会炸。
+            RuleFor(x => x.Items).ChildRules(list =>
             {
-                item.RuleFor(a => a.SpuId).GreaterThan(0).WithMessage("SPU Id 必须为正数");
-                item.RuleFor(a => a.Score).InclusiveBetween(0m, 5m).WithMessage("评分必须在 0 ~ 5 之间");
-                item.RuleFor(a => a.Count).GreaterThanOrEqualTo(0).WithMessage("评价条数不能为负数");
+                list.RuleForEach(a => a).ChildRules(item =>
+                {
+                    item.RuleFor(a => a.SpuId).GreaterThan(0).WithMessage("SPU Id 必须为正数");
+                    item.RuleFor(a => a.Score).InclusiveBetween(0m, 5m).WithMessage("评分必须在 0 ~ 5 之间");
+                    item.RuleFor(a => a.Count).GreaterThanOrEqualTo(0).WithMessage("评价条数不能为负数");
+                });
             });
         }
     }

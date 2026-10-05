@@ -49,11 +49,21 @@ public abstract class ProductSaveValidatorBase<T> : AbstractValidator<T> where T
             .WithMessage("划线原价最多两位小数");
 
         RuleFor(x => x.Specs)
+            // ⚠️ CascadeMode.Stop 是**必须的**：FluentValidation 默认的级联是 Continue，
+            // 也就是 NotNull() 失败之后，同一条链上的 Must(...) **照样会执行**。
+            // 于是 `s!.Count > 0` 在 s 为 null 时照样跑——那个 `!` 只是编译期断言，
+            // 运行时不做任何检查，结果是 NullReferenceException。
+            //
+            // 症状极难定位：接口回 500「服务器内部错误」而不是 400「请填写规格」，
+            // 日志里只有一句 NullReferenceException，看不出是哪条规则炸的。
+            // 真实踩过：products/Save 与 products/Create 传空规格时**都**是 500。
+            .Cascade(CascadeMode.Stop)
             .NotNull().WithMessage("必须提供规格定义")
             .Must(s => s!.Count > 0).WithMessage("至少要有一个规格项")
             .Must(s => s!.Count <= 5).WithMessage("规格项最多 5 个");
 
         RuleFor(x => x.Skus)
+            .Cascade(CascadeMode.Stop)
             .NotNull().WithMessage("必须提供 SKU 列表")
             .Must(s => s!.Count > 0).WithMessage("至少要有一个 SKU")
             .Must(s => s!.Count <= 100).WithMessage("SKU 最多 100 个");
