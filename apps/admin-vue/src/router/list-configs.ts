@@ -170,6 +170,9 @@ export const LISTS = {
   customers: {
     title: '客户列表',
     desc: '按登录名 / 昵称 / 手机号搜索，可停用',
+    // 客户详情是独立页面（从列表点行进去），不是弹窗：详情要放订单、
+    // 地址、积分这些一屏放不下的东西，弹窗里没法读。
+    rowRoute: (r: any) => `/customers/detail/${r.customerId ?? r.id}`,
     endpoint: '/gateway/admin/customers/List',
     method: 'POST',
     byStatus: true,
@@ -510,13 +513,46 @@ export const LISTS = {
       { field: 'status', label: '状态', width: 100, dict: 'refund' },
       { field: 'createdAt', label: '申请时间', width: 155, format: 'time' },
     ],
-    // 🔴 刻意**只读**，不做「通过 / 拒绝」按钮。
-    // ApproveRefundCommand / RejectRefundCommand 的审批人（ApproverId / ApproverName）
-    // 是从**请求体**取的 —— 也就是说调用方可以自称任意审批人，
-    // 而退款单的「审批人」是财务审计凭据。
-    // 在后端改成从令牌租户上下文取之前，前端不接这个动作：
-    // 接了等于把「可伪造的审批人」固化进界面。
-    // 详见 AI_HANDOFF 记录的后端缺陷清单。
+    // 退款详情是独立页面而不是弹窗：明细行（退到哪个商品、退了多少）
+    // 才是部分退款争议的全部，弹窗里放不下也读不完。
+    rowRoute: (r: any) => `/refunds/detail/${r.refundId ?? r.id}`,
+    actions: [
+      {
+        label: '通过',
+        endpoint: '/gateway/refunds/Approve',
+        okText: '已通过',
+        danger: false,
+        build: (r: any) => ({ refundId: r.refundId }),
+        // 只在待审批的行上出现：已审批的单再点一下只会拿到
+        // 「该退款单已处理」这类报错，给一个必然失败的按钮没有意义。
+        showWhen: (r: any) => r.status === 10,
+        confirm: {
+          title: '通过退款',
+          message: '通过后钱会真的退给客户，且不可撤销。',
+          subject: (r: any) => `${r.refundNo}（${r.orderNo}）`,
+          okText: '确认退款',
+        },
+      },
+      {
+        label: '拒绝',
+        endpoint: '/gateway/refunds/Reject',
+        danger: true,
+        okText: '已拒绝',
+        build: (r: any, reason: string) => ({ refundId: r.refundId, rejectReason: reason }),
+        showWhen: (r: any) => r.status === 10,
+        confirm: {
+          title: '拒绝退款',
+          message: '客户会看到拒绝原因，请写清楚。',
+          subject: (r: any) => `${r.refundNo}（${r.orderNo}）`,
+          okText: '拒绝',
+          danger: true,
+          withReason: true,
+          reasonLabel: '拒绝原因',
+          reasonPlaceholder: '客户要知道为什么被拒，否则只能反复申请',
+        },
+      },
+    ],
+    actionsWidth: 130,
   },
 
   // 支付单。后台此前完全没有入口（只有 C 端的 payments/Query 按订单号查单条），

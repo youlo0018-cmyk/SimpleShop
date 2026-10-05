@@ -107,6 +107,18 @@ const FLOWS = [
       { desc: '停在编辑页而不是弹窗', expect: '.form__grid, .form', shot: 'flow-edit-3-page' },
     ],
   },
+  {
+    // 退款审批是对外不可逆的钱操作，确认框里必须显示具体单号，
+    // 拒绝还必须填原因。最后取消：UI 回归不该真的退钱。
+    name: '退款列表 -> 点「拒绝」-> 确认框与必填原因',
+    start: '#/refunds',
+    steps: [
+      { desc: '进入退款列表', goto: '#/refunds', shot: 'flow-refund-1-list' },
+      { desc: '点「拒绝」弹出确认框', clickText: '拒绝', clickScope: '.el-table', shot: 'flow-refund-2-dialog' },
+      { desc: '确认框里有「拒绝原因」输入框', expect: '.el-dialog textarea', shot: 'flow-refund-3-reason' },
+      { desc: '取消以免真的退款', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-refund-4-cancelled' },
+    ],
+  },
 ];
 
 const slug = (s) =>
