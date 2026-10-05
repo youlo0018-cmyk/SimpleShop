@@ -1,0 +1,19 @@
+{
+  "name": "simpleshop-new",
+  "version": "1.0.0",
+  "description": "> 多平台（多租户）微服务电商系统 > Multi-tenant microservices e-commerce platform",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

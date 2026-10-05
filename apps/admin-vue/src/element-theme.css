@@ -1,0 +1,289 @@
+/* ============================================================
+   Element Plus 苹果风换肤（DESIGN_SPEC 4.3）
+   方式：CSS 变量覆盖 + 关键组件样式重写，**不重新编译 Element Plus SCSS**。
+   好处：升级 Element Plus 时不会被主题改动拖累，改动集中在本文件。
+   ============================================================ */
+
+:root {
+  --el-color-primary: var(--brand);
+  --el-color-primary-light-3: var(--brand-hover);
+  --el-color-primary-light-5: var(--brand-hover);
+  --el-color-primary-light-7: var(--brand-hover);
+  --el-color-primary-light-8: var(--brand-hover);
+  --el-color-primary-light-9: rgba(0, 113, 227, 0.08);
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+  --el-color-error: var(--danger);
+  --el-color-info: var(--info);
+  --el-border-radius-base: var(--radius-sm);
+  --el-font-family: var(--font-sans);
+  --el-text-color-primary: var(--text-1);
+  --el-text-color-regular: var(--text-1);
+  --el-border-color: var(--divider-soft);
+  --el-border-color-light: var(--divider-soft);
+  --el-fill-color-blank: var(--bg-card);
+}
+
+/* ---------- 按钮：主按钮品牌色 + radius-pill；去掉按下位移动画 ---------- */
+.el-button {
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+  height: 40px;
+  padding: 0 var(--space-5);
+  font-size: var(--text-sub);
+  transition: background-color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+
+.el-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.el-button--text,
+.el-button.is-link {
+  color: var(--brand);
+  background: transparent;
+  border-color: transparent;
+}
+
+.el-button--danger {
+  --el-button-bg-color: var(--danger);
+  --el-button-border-color: var(--danger);
+  --el-button-hover-bg-color: #e0352b;
+  --el-button-hover-border-color: #e0352b;
+}
+
+/* ---------- 输入框：radius-sm；聚焦用边框 + 阴影，不用外发光 ---------- */
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper,
+.el-date-editor.el-input__wrapper {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--divider-soft) inset;
+  transition: box-shadow var(--duration-fast) var(--ease);
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--divider) inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--brand) inset, var(--shadow-card);
+}
+
+.el-textarea__inner {
+  padding: var(--space-3);
+  font-family: var(--font-sans);
+}
+
+/* ---------- 表格：去斑马纹；表头次文字 13px；行高 48 ---------- */
+.el-table {
+  --el-table-border-color: var(--divider-soft);
+  --el-table-header-text-color: var(--text-2);
+  font-size: var(--text-sub);
+  background: var(--bg-card);
+}
+
+.el-table th.el-table__cell {
+  background: transparent;
+  font-weight: 500;
+  font-size: var(--text-foot);
+  color: var(--text-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.el-table td.el-table__cell {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--divider-soft);
+}
+
+.el-table .cell {
+  line-height: var(--lh-body);
+  padding: 0;
+}
+
+/* ---------- 分页：去边框方框；选中态品牌色浅底 ---------- */
+.el-pagination {
+  --el-pagination-button-bg-color: transparent;
+  --el-pagination-hover-color: var(--brand);
+  font-size: var(--text-sub);
+  padding: var(--space-4) 0;
+}
+
+.el-pagination .btn-prev,
+.el-pagination .btn-next,
+.el-pagination .el-pager li {
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.el-pagination .el-pager li.is-active {
+  color: var(--brand);
+  background: rgba(0, 113, 227, 0.1);
+  font-weight: 500;
+}
+
+/* ---------- 对话框：radius-lg + shadow-overlay；标题 22px ---------- */
+.el-dialog {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  padding: var(--space-6);
+}
+
+.el-dialog__title {
+  font-size: var(--text-title-2);
+  line-height: var(--lh-title-2);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.el-dialog__headerbtn {
+  top: var(--space-4);
+  right: var(--space-4);
+  width: var(--hit-min);
+  height: var(--hit-min);
+}
+
+/* ---------- 抽屉：右侧滑出，宽度 480 ---------- */
+.el-drawer {
+  box-shadow: var(--shadow-overlay);
+}
+
+.el-drawer__header {
+  margin-bottom: 0;
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--divider-soft);
+  color: var(--text-1);
+  font-size: var(--text-title-2);
+  font-weight: 600;
+}
+
+.el-drawer__body {
+  padding: var(--space-6);
+}
+
+/* ---------- 标签页：文字 + 下方 2px 指示线，不用胶囊背景 ---------- */
+.el-tabs__header {
+  margin: 0 0 var(--space-4);
+}
+
+.el-tabs__nav-wrap::after {
+  background-color: var(--divider-soft);
+  height: 1px;
+}
+
+.el-tabs__item {
+  font-size: var(--text-sub);
+  color: var(--text-2);
+  padding: 0 var(--space-3);
+  margin-right: var(--space-2);
+}
+
+.el-tabs__item.is-active {
+  color: var(--brand);
+  font-weight: 500;
+}
+
+.el-tabs__active-bar {
+  background-color: var(--brand);
+  height: 2px;
+  border-radius: var(--radius-pill);
+}
+
+/* ---------- 开关 / 勾选 / 单选：开启态品牌色 ---------- */
+.el-switch.is-checked .el-switch__core {
+  background-color: var(--brand);
+  border-color: var(--brand);
+}
+
+.el-checkbox__input.is-checked .el-checkbox__inner,
+.el-radio__input.is-checked .el-radio__inner {
+  background-color: var(--brand);
+  border-color: var(--brand);
+}
+
+.el-checkbox__input.is-checked + .el-checkbox__label,
+.el-radio__input.is-checked + .el-radio__label {
+  color: var(--text-1);
+}
+
+/* ---------- 标签 tag：radius-pill，语义色浅底深字 ---------- */
+.el-tag {
+  border-radius: var(--radius-pill);
+  border: none;
+  font-weight: 500;
+  height: 24px;
+  padding: 0 var(--space-3);
+  line-height: 24px;
+}
+
+/* ---------- 下拉菜单：radius-md + shadow-raised ---------- */
+.el-popper.is-light,
+.el-dropdown__popper,
+.el-select__popper {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+  border: none;
+  padding: var(--space-1);
+}
+
+.el-dropdown-menu__item {
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.el-dropdown-menu__item:not(.is-disabled):hover {
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--brand);
+}
+
+/* ---------- 气泡确认框 / 空状态 / 消息提示 ---------- */
+.el-popconfirm {
+  border-radius: var(--radius-md);
+}
+
+.el-empty__description p {
+  color: var(--text-2);
+  font-size: var(--text-sub);
+}
+
+.el-message {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+  font-size: var(--text-sub);
+}
+
+.el-message--success {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.el-message--error {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ---------- 上传 / 步骤条 ---------- */
+.el-upload-dragger {
+  border-radius: var(--radius-lg);
+  border-color: var(--divider-soft);
+  background: var(--bg-card);
+}
+
+.el-upload-dragger:hover {
+  border-color: var(--brand);
+}
+
+.el-step__title.is-process {
+  color: var(--brand);
+  font-weight: 500;
+}
+
+.el-step__head.is-process {
+  color: var(--brand);
+}
