@@ -101,12 +101,19 @@ const hovered = ref('');
 function leaves(group: any) {
   const base = ('/' + group.path).replace(/\/+/g, '/');
   return (group.children || [])
-    // 带参数（:id）的页面**不进菜单**：它们要一个真实 Id 才能打开，
+    // 「入口页」**不进菜单**：带参数（:id）的要一个真实 Id 才能打开，
     // 而菜单里只有一个字面量 ':id'，点进去必然 404 / 查不到数据。
     // 正确的入口是从列表页点某一行进去——运营要看的也是「某一单」，
-    // 不是「随便某一单」。用规则判断而不是逐个打 hidden 标记，
-    // 是为了将来新增带参路由时不会漏标。
-    .filter((c: any) => c.meta?.title && !String(c.path).includes(':'))
+    // 不是「随便某一单」。
+    //
+    // 而「新建 X」这类**无参**入口页同样不该在菜单里：
+    // 侧边栏是「有哪些业务」的地图，不是「所有能点的地方」的清单。
+    // 把「新建账号」和「账号列表」并排放着，用户会以为这是两个并列的业务，
+    // 也会让菜单长度凭空多出一截。它应该在列表页右上角是一个按钮 ——
+    // 点了**开新页**（不是弹窗），因为它是个有十几个字段的表单。
+    // 用 hiddenInMenu 标记而不是「凡是叫 create 就排除」那种字符串规则，
+    // 是为了将来有别的无参入口页时不用改这里。
+    .filter((c: any) => c.meta?.title && !String(c.path).includes(':') && !c.meta?.hiddenInMenu)
     .map((c: any) => {
       const full = (base + '/' + c.path).replace(/\/+/g, '/').replace(/\/$/, '');
       return { ...c, path: full, fullPath: full };

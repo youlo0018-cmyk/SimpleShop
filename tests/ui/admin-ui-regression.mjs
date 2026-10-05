@@ -78,6 +78,24 @@ const FLOWS = [
       { desc: '取消以免改动业务数据', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-audit-5-cancelled' },
     ],
   },
+  {
+    // 「新建」必须是列表页右上角的按钮，点开**新页**：
+    // 不能是侧边栏里的一个条目（那是业务地图，不是所有能点的地方），
+    // 也不能是弹窗（账号表单十几个字段塞不进弹窗）。
+    // 这条流程就是守住这个交互约定的。
+    name: '账号列表 -> 点「新建账号」-> 开新页',
+    start: '#/users',
+    steps: [
+      {
+        desc: '侧边栏里没有「新建账号」条目',
+        goto: '#/users',
+        notExpectText: { sel: '.nav', text: '新建账号' },
+        shot: 'flow-create-1-list',
+      },
+      { desc: '点右上角「新建账号」', clickText: '新建账号', clickScope: '.head__tools', shot: 'flow-create-2-form' },
+      { desc: '停在新建页而不是弹窗', expect: '.form__grid, .form', shot: 'flow-create-3-page' },
+    ],
+  },
 ];
 
 const slug = (s) =>
@@ -399,6 +417,31 @@ async function runFlow(page, flow) {
         if (!ok) currentErrors.push(`流程步骤「${step.desc}」期望出现 ${step.expect}`);
       }
 
+      if (step.notExpect) {
+        // 反向断言：用来守住「某样东西**不该**出现」。
+        // 比如新建页不能以侧边栏条目的形式存在 —— 只靠截图去看，
+        // 哪天有人把它挪回菜单，这一步会悄悄「通过」。
+        const shown = (await page.locator(step.notExpect).count()) > 0;
+        if (shown) currentErrors.push(`流程步骤「${step.desc}」不该出现 ${step.notExpect}`);
+      }
+
+      if (step.notExpectText) {
+        // 「某个选择器下不该有某段文字」：CSS 选不出文字，只能在页面里数一遍。
+        // 用来守「侧边栏里不能出现「新建账号」这类入口页条目」——
+        // 只靠截图看，哪天它被挪回菜单，这一步会悄悄通过。
+        const { sel, text } = step.notExpectText;
+        const found = await page.evaluate(
+          ([s, t]) =>
+            [...document.querySelectorAll(s)].some((el) =>
+              (el.textContent || '').trim().includes(t),
+            ),
+          [sel, text],
+        );
+        if (found) {
+          currentErrors.push(`流程步骤「${step.desc}」${sel} 里不该出现「${text}」`);
+        }
+      }
+
       await page.waitForTimeout(400);
       await page.screenshot({
         path: path.join(SHOT_DIR, `adm-${slug(flow.name)}-${step.shot}-1440x900.png`),
@@ -535,7 +578,11 @@ async function main() {
       const ids = await collectIds(token);
 
       for (const spec of PAGES) {
-        const id = idOf(ids[spec.key]);
+        // 路由里没有 {id} 的（新建页）不需要真实 Id，直接访问。
+        // 之前对所有条目都去 ids 里查，key 为 null 时取到 undefined → 一律 SKIP，
+        // 于是新建页刚被移出菜单就同时丢了测试覆盖。
+        const needsId = spec.route.includes('{id}');
+        const id = needsId ? idOf(ids[spec.key]) : 'new';
         if (!id) {
           nonMenu.push({ group: spec.name, title: spec.title, skipped: true, ok: true, errors: [], failed: [] });
           console.log(`  \x1b[33mSKIP\x1b[0m ${spec.name} / ${spec.title}  [列表里没有数据，取不到真实 Id]`);

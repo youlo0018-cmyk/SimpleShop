@@ -83,6 +83,9 @@ export const LISTS = {
   products: {
     title: '商品列表',
     desc: 'SPU 与价格区间，审核与上下架状态',
+    createRoute: '/products/create',
+    createLabel: '新建商品',
+    rowRoute: (r: any) => `/products/edit/${r.id}`,
     endpoint: '/gateway/products/List',
     method: 'GET',
     tabs: [
@@ -302,6 +305,10 @@ export const LISTS = {
   users: {
     title: '账号列表',
     desc: '后台账号，密码只存哈希',
+    // 「新建」按钮开新页；点整行进编辑页。两者都不在侧边栏里。
+    createRoute: '/users/create',
+    createLabel: '新建账号',
+    rowRoute: (r: any) => `/users/edit/${r.id}`,
     endpoint: '/gateway/users/List',
     method: 'GET',
     search: true,
@@ -337,6 +344,9 @@ export const LISTS = {
   platforms: {
     title: '平台列表',
     desc: '小程序主体，每个平台一套配置',
+    createRoute: '/platforms/create',
+    createLabel: '新建平台',
+    rowRoute: (r: any) => `/platforms/edit/${r.id}`,
     endpoint: '/gateway/platforms/List',
     method: 'POST',
     search: true,
@@ -356,6 +366,9 @@ export const LISTS = {
   merchants: {
     title: '商户列表',
     desc: '审核通过后小程序才可见',
+    createRoute: '/merchants/create',
+    createLabel: '新建商户',
+    rowRoute: (r: any) => `/merchants/edit/${r.id}`,
     endpoint: '/gateway/merchants/List',
     method: 'POST',
     tabs: [
@@ -421,6 +434,9 @@ export const LISTS = {
   promotions: {
     title: '营销活动',
     desc: '满减 / 满折 / 满赠，按时间窗生效',
+    createRoute: '/promotions/create',
+    createLabel: '新建活动',
+    rowRoute: (r: any) => `/promotions/edit/${r.activityId ?? r.id}`,
     endpoint: '/gateway/marketing/activities/List',
     method: 'POST',
     search: true,
@@ -439,6 +455,11 @@ export const LISTS = {
   seckillSessions: {
     title: '秒杀场次',
     desc: '发布时从常规池划出库存',
+    createRoute: '/seckill/create',
+    createLabel: '新建场次',
+    // 点行进「场次商品」而不是编辑：运营从场次列表进来时，
+    // 十有八九是要往里加商品，而那才是场次真正要反复做的事。
+    rowRoute: (r: any) => `/seckill/items/${r.sessionId ?? r.id}`,
     endpoint: '/gateway/marketing/seckill/sessions/List',
     method: 'POST',
     tabs: [

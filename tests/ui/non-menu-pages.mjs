@@ -55,6 +55,16 @@ async function call(token, path, method, payload) {
 }
 
 export const PAGES = [
+  // 新建页：它们是「列表页右上角按钮点开的入口页」，**不在侧边栏里**
+  // （侧边栏是业务地图，不是所有能点的地方的清单），所以要在这里显式覆盖，
+  // 否则把它们从菜单移走的同一刻，测试覆盖也跟着没了。
+  { key: null, route: '#/users/create', name: '账号', title: '新建账号' },
+  { key: null, route: '#/platforms/create', name: '平台', title: '新建平台' },
+  { key: null, route: '#/merchants/create', name: '商户', title: '新建商户' },
+  { key: null, route: '#/products/create', name: '商品', title: '新建商品' },
+  { key: null, route: '#/promotions/create', name: '营销活动', title: '新建活动' },
+  { key: null, route: '#/seckill/create', name: '限时抢购', title: '新建场次' },
+
   { key: 'user', name: '账号', title: '编辑账号', route: '#/users/edit/{id}' },
   { key: 'platform', name: '平台', title: '编辑平台', route: '#/platforms/edit/{id}' },
   { key: 'platform', name: '平台', title: '小程序配置', route: '#/platforms/app-config/{id}' },

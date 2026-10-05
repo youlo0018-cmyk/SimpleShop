@@ -76,13 +76,19 @@ function configRoute(path: string, name: string, title: string, perm: string, co
 
 // 新建 / 编辑表单同构：一个 FormView + 各自的字段声明。
 // 编辑与新建共用一套字段，靠 route.params.id 是否存在区分。
+//
+// hiddenInMenu：这两个都是**入口页**，不该出现在侧边栏。
+// 侧边栏是「有哪些业务」的地图，不是「所有能点的地方」的清单 ——
+// 把「新建账号」和「账号列表」并排放着，用户会以为那是两个并列的业务。
+// 入口应该是列表页右上角的「新建」按钮，点开**新页**（不是弹窗）：
+// 账号表单有十几个字段，弹窗里塞不下也填不完。
 function formRoute(path: string, name: string, title: string, perm: string, configKey: keyof typeof FORMS) {
   return {
     path,
     name,
     component: () => import('@/views/FormView.vue'),
     props: { config: FORMS[configKey] },
-    meta: { title, perm },
+    meta: { title, perm, hiddenInMenu: true },
   };
 }
 
@@ -92,7 +98,10 @@ function detailRoute(path: string, name: string, title: string, perm: string, co
     name,
     component: () => import('@/views/DetailView.vue'),
     props: { config: DETAILS[configKey] },
-    meta: { title, perm },
+    // 详情页同理：入口是列表页点行进详情，不是侧边栏。
+    // 它的路径带 :id，本来就会被菜单过滤掉；标上 hiddenInMenu 是为了让
+    // 「为什么它不在菜单里」这件事在路由表上就是写明的，而不是靠一条隐式规则。
+    meta: { title, perm, hiddenInMenu: true },
   };
 }
 

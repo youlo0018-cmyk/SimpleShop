@@ -5,15 +5,32 @@
         <h2 class="head__title">{{ config.title }}</h2>
         <p class="head__desc">{{ config.desc }}</p>
       </div>
-      <el-input
-        v-if="config.search"
-        v-model="keyword"
-        class="head__search"
-        :placeholder="config.searchPlaceholder || '搜索'"
-        clearable
-        @keyup.enter="reload"
-        @clear="reload"
-      />
+      <div class="head__tools">
+        <el-input
+          v-if="config.search"
+          v-model="keyword"
+          class="head__search"
+          :placeholder="config.searchPlaceholder || '搜索'"
+          clearable
+          @keyup.enter="reload"
+          @clear="reload"
+        />
+        <!--
+          「新建」是**开新页**而不是弹窗，也不是侧边栏里的一个条目。
+          理由：账号 / 商品 / 活动这类表单有十几到几十个字段，弹窗塞不下，
+          而侧边栏是「有哪些业务」的地图，把「新建账号」和「账号列表」并排放着
+          会让人以为那是两个并列的业务。所以入口放在列表页右上角，
+          点开是一个完整的页面，可以正常提交前校验、返回、刷新。
+        -->
+        <el-button
+          v-if="config.createRoute"
+          type="primary"
+          :icon="Plus"
+          @click="router.push(config.createRoute)"
+        >
+          {{ config.createLabel || '新建' }}
+        </el-button>
+      </div>
     </div>
 
     <el-tabs v-if="tabs.length" v-model="status" class="tabs" @tab-change="reload">
@@ -144,6 +161,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
+import { Plus } from '@element-plus/icons-vue';
 import request from '@/api/request';
 import { statusColor, statusText } from '@/utils/dict';
 import {
@@ -268,6 +286,10 @@ function reload() {
 
 function onRow(row: any) {
   if (config.value.rowClick) config.value.rowClick(row, router);
+  // rowRoute：点整行进详情 / 编辑页。比在操作列加一列「编辑」更好 ——
+  // 运营看列表时想改的是「这一行」，点它就该进它，而不是先去瞄准那一列的小字。
+  // 有 rowClick 时以 rowClick 为准（两者同时存在没有意义）。
+  else if (config.value.rowRoute) router.push(config.value.rowRoute(row));
 }
 
 async function runAction(action: any, row: any) {
@@ -359,6 +381,15 @@ onMounted(load);
 
 .head__search {
   width: 280px;
+}
+
+/* 搜索框与「新建」按钮并排。按钮在右，搜索在左 ——
+   「新建」是这一屏的主要动作，放在视线终点。 */
+.head__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .tabs {
