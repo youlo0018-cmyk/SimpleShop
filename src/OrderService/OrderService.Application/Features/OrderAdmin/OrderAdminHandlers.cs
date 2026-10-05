@@ -100,6 +100,44 @@ public sealed class QueryAdminOrderDetailHandler
     }
 }
 
+/// <summary>后台代客取消处理器。</summary>
+public sealed class AdminCancelOrderHandler : MediatR.IRequestHandler<AdminCancelOrderCommand, ApiResponse>
+{
+    private readonly IOrderStore _store;
+    private readonly OrderCancellationService _cancellation;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="store">落单端口。</param>
+    /// <param name="cancellation">取消服务。</param>
+    public AdminCancelOrderHandler(IOrderStore store, OrderCancellationService cancellation)
+    {
+        _store = store;
+        _cancellation = cancellation;
+    }
+
+    /// <summary>执行取消。</summary>
+    /// <param name="request">取消命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>取消结果。</returns>
+    public async Task<ApiResponse> Handle(AdminCancelOrderCommand request, CancellationToken ct)
+    {
+        var order = await _store.FindByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
+        if (order is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "订单不存在");
+
+        if (!OrderStatusMachine.CanCancel(order.Status))
+        {
+            return ApiResponseFactory.Fail(
+                BaseApiResponseCode.OrderStateInvalid,
+                $"当前订单状态是「{OrderStatusMachine.NameOf(order.Status)}」，只有待支付的订单可以取消");
+        }
+
+        var result = await _cancellation.CancelAsync(order, request.Remark, ct).ConfigureAwait(false);
+        return result.Changed
+            ? ApiResponseFactory.Ok("订单已取消")
+            : ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
+    }
+}
+
 /// <summary>发货处理器（实物快递，20 → 30）。</summary>
 /// <remarks>
 /// 用户要求 D3：<b>手动点发货，不用填物流信息</b>。

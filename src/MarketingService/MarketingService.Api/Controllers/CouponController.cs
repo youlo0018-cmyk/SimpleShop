@@ -24,6 +24,22 @@ public sealed class CouponController : ControllerBase
     public Task<ApiResponse<ClaimCouponResult>> Claim([FromBody] ClaimCouponCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>查询当前可领取的券活动。</summary>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>可领取活动列表。</returns>
+    [HttpPost("Available")]
+    public Task<ApiResponse<List<CouponActivityItem>>> Available(CancellationToken ct)
+        => _mediator.Send(new QueryAvailableCouponsCommand(), ct);
+
+    /// <summary>查询当前客户自己的券包。</summary>
+    /// <param name="command">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>券包分页。</returns>
+    [HttpPost("My")]
+    public Task<ApiResponse<PagedResult<CouponRecordItem>>> My(
+        [FromBody] QueryMyCouponsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>结算试算：列出所有可用券及各自优惠额，并标出最优。</summary>
     /// <param name="command">试算命令，CustomerId 传 0 表示游客（游客不计券）。</param>
     /// <param name="ct">取消令牌。</param>

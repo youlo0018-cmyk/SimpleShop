@@ -39,6 +39,14 @@ public sealed class AdminOrderController : ControllerBase
         [FromBody] QueryAdminOrderDetailCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>后台代客取消待支付订单。</summary>
+    /// <param name="command">取消命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>取消结果。</returns>
+    [HttpPost("Cancel")]
+    public Task<ApiResponse> Cancel([FromBody] AdminCancelOrderCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>发货。<b>不填物流信息</b>（用户需求 D3）。</summary>
     /// <param name="command">发货命令。</param>
     /// <param name="ct">取消令牌。</param>

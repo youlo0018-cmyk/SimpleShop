@@ -107,6 +107,17 @@ public record QueryCouponRecordsCommand(
     string OrderNo = "",
     string Keyword = "") : IRequest<ApiResponse<PagedResult<CouponRecordItem>>>;
 
+/// <summary>查询当前客户自己的券包。</summary>
+/// <param name="CustomerId">客户 Id；网关客户令牌存在时服务端会强制使用令牌里的客户 Id。</param>
+/// <param name="Status">券状态过滤，0 表示全部。</param>
+/// <param name="Page">页码。</param>
+/// <param name="PageSize">每页条数。</param>
+public record QueryMyCouponsCommand(
+    long CustomerId = 0,
+    int Status = 0,
+    int Page = 1,
+    int PageSize = 20) : IRequest<ApiResponse<PagedResult<CouponRecordItem>>>;
+
 /// <summary>券模板列表行。</summary>
 /// <param name="TemplateId">模板 Id。</param>
 /// <param name="TemplateName">模板名。</param>
@@ -193,6 +204,7 @@ public static class AdminCouponValidators
         services.AddScoped<IValidator<QueryCouponActivitiesCommand>, QueryCouponActivitiesValidator>();
         services.AddScoped<IValidator<UpdateCouponActivityCommand>, UpdateCouponActivityValidator>();
         services.AddScoped<IValidator<QueryCouponRecordsCommand>, QueryCouponRecordsValidator>();
+        services.AddScoped<IValidator<QueryMyCouponsCommand>, QueryMyCouponsValidator>();
     }
 
     /// <summary>券模板分页校验。</summary>
@@ -314,6 +326,17 @@ public static class AdminCouponValidators
             RuleFor(x => x.TemplateId).GreaterThanOrEqualTo(0).WithMessage("券模板信息不正确");
             RuleFor(x => x.OrderNo).MaximumLength(64).WithMessage("订单号过长");
             RuleFor(x => x.Keyword).MaximumLength(32).WithMessage("券码关键词过长");
+        }
+    }
+
+    private sealed class QueryMyCouponsValidator : AbstractValidator<QueryMyCouponsCommand>
+    {
+        public QueryMyCouponsValidator()
+        {
+            RuleFor(x => x.CustomerId).GreaterThanOrEqualTo(0).WithMessage("客户信息不正确");
+            RuleFor(x => x.Status).InclusiveBetween(0, 4).WithMessage("券状态不正确");
+            RuleFor(x => x.Page).GreaterThanOrEqualTo(1).WithMessage("页码必须为正数");
+            RuleFor(x => x.PageSize).InclusiveBetween(1, MaxPageSize).WithMessage("每页条数不正确");
         }
     }
 }

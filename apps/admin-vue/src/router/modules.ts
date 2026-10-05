@@ -136,6 +136,14 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '角色权限', icon: 'Lock', perm: 'permission:read' },
     children: [
       listRoute('', 'role-list', '角色列表', 'permission:read', 'roles'),
+      formRoute('create', 'role-create', '新建角色', 'permission:create', 'role'),
+      formRoute('edit/:id', 'role-edit', '编辑角色', 'permission:update', 'role'),
+      {
+        path: 'permissions/:id',
+        name: 'role-permission-bind',
+        component: () => import('@/views/RolePermissionsView.vue'),
+        meta: { title: '分配权限', perm: 'permission:manage', hiddenInMenu: true },
+      },
       treeRoute('permissions', 'role-permissions', '权限点管理', 'permission:manage', 'permissions'),
     ],
   },
@@ -277,7 +285,11 @@ export const adminRoutes: RouteRecordRaw[] = [
     meta: { title: '券', icon: 'Ticket', perm: 'coupon-template:read' },
     children: [
       listRoute('templates', 'coupon-template-list', '券模板', 'coupon-template:read', 'couponTemplates'),
+      formRoute('templates/create', 'coupon-template-create', '新建券模板', 'coupon-template:create', 'couponTemplate'),
+      formRoute('templates/edit/:id', 'coupon-template-edit', '编辑券模板', 'coupon-template:update', 'couponTemplate'),
       listRoute('activities', 'coupon-activity-list', '券活动', 'coupon-activity:read', 'couponActivities'),
+      formRoute('activities/create', 'coupon-activity-create', '新建券活动', 'coupon-activity:create', 'couponActivity'),
+      formRoute('activities/edit/:id', 'coupon-activity-edit', '编辑券活动', 'coupon-activity:update', 'couponActivity'),
       configRoute('config', 'coupon-config', '优惠优先级配置', 'marketing-config:update', 'promotionPriority'),
     ],
   },

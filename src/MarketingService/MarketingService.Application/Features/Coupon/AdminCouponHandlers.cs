@@ -265,7 +265,7 @@ public sealed class QueryCouponRecordsHandler
     {
         var page = await _coupons.PageUserCouponsAsync(
             request.Page, request.PageSize, request.Status,
-            request.TemplateId, request.OrderNo, request.Keyword, ct).ConfigureAwait(false);
+            request.TemplateId, request.OrderNo, request.Keyword, 0, ct).ConfigureAwait(false);
 
         var templateIds = page.Items
             .Where(a => a.TemplateId > 0)
@@ -290,5 +290,62 @@ public sealed class QueryCouponRecordsHandler
             a.ConsumeAt?.ToString("yyyy-MM-dd HH:mm:ss"))).ToList();
 
         return ApiResults.Ok(new PagedResult<CouponRecordItem>(items, page.Total, request.Page, request.PageSize));
+    }
+}
+
+/// <summary>查询当前客户自己的券包。</summary>
+public sealed class QueryMyCouponsHandler
+    : IRequestHandler<QueryMyCouponsCommand, ApiResponse<PagedResult<CouponRecordItem>>>
+{
+    private readonly ICouponRepository _coupons;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="coupons">券仓储。</param>
+    public QueryMyCouponsHandler(ICouponRepository coupons) => _coupons = coupons;
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>当前客户自己的券包分页。</returns>
+    public async Task<ApiResponse<PagedResult<CouponRecordItem>>> Handle(
+        QueryMyCouponsCommand request, CancellationToken ct)
+    {
+        var ctx = Collaboration.Domain.Context.TenantContextHolder.Current;
+        var customerId = ctx.IsCustomer ? ctx.UserId : request.CustomerId;
+        if (customerId <= 0)
+        {
+            return ApiResults.Fail<PagedResult<CouponRecordItem>>(
+                BaseApiResponseCode.Unauthorized,
+                "请先登录后再查看券包");
+        }
+
+        var page = await _coupons.PageUserCouponsAsync(
+            request.Page, request.PageSize, request.Status,
+            0, string.Empty, string.Empty, customerId, ct).ConfigureAwait(false);
+
+        var templateIds = page.Items
+            .Where(a => a.TemplateId > 0)
+            .Select(a => a.TemplateId)
+            .Distinct()
+            .ToArray();
+
+        var names = templateIds.Length == 0
+            ? new Dictionary<long, string>()
+            : (await _coupons.ListTemplatesByIdsAsync(templateIds, ct).ConfigureAwait(false))
+                .ToDictionary(a => a.Id, a => a.TemplateName);
+
+        var items = page.Items.Select(a => new CouponRecordItem(
+            a.Id, a.CouponCode, a.CustomerId, a.TemplateId,
+            names.TryGetValue(a.TemplateId, out var name) ? name : "（模板已删除）",
+            a.CouponType, CouponTypes.NameOf(a.CouponType),
+            a.ThresholdAmount, a.DiscountAmount, a.DiscountRate,
+            a.OrderNo ?? string.Empty,
+            a.Status, CouponStatuses.NameOf(a.Status),
+            a.ReceiveAt.ToString("yyyy-MM-dd HH:mm:ss"),
+            a.ExpireAt.ToString("yyyy-MM-dd HH:mm:ss"),
+            a.ConsumeAt?.ToString("yyyy-MM-dd HH:mm:ss"))).ToList();
+
+        return ApiResults.Ok(new PagedResult<CouponRecordItem>(
+            items, page.Total, request.Page, request.PageSize));
     }
 }

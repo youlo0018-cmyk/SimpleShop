@@ -31,7 +31,16 @@ public sealed class GatewayOptions
     [
         "/gateway/customers/Register",
         "/gateway/customers/Login",
-        "/gateway/auth/Token"
+        "/gateway/auth/Token",
+        "/gateway/shop/products/List",
+        "/gateway/shop/products/Detail",
+        "/gateway/shop/catalog/CategoryTree",
+        "/gateway/shop/catalog/Brands",
+        "/gateway/design/Store",
+        "/gateway/design/PlatformStore",
+        "/gateway/evaluates/List",
+        "/gateway/marketing/seckill/sessions/Public",
+        "/gateway/coupons/Available"
     ];
 
     /// <summary>无需登录、但需要 RBAC 校验的路径前缀（登录后才能访问、只看公共数据）。</summary>

@@ -177,3 +177,39 @@ public sealed class QueryRolesHandler : IRequestHandler<QueryRolesCommand, ApiRe
         return ApiResults.Ok(result);
     }
 }
+
+/// <summary>查询角色详情与已绑定权限点。</summary>
+public sealed class QueryRoleDetailHandler : IRequestHandler<QueryRoleDetailCommand, ApiResponse<RoleDetailDto>>
+{
+    private readonly IRoleRepository _roles;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="roles">角色仓储。</param>
+    public QueryRoleDetailHandler(IRoleRepository roles) => _roles = roles;
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>角色详情；不存在返回 404。</returns>
+    public async Task<ApiResponse<RoleDetailDto>> Handle(
+        QueryRoleDetailCommand request, CancellationToken ct)
+    {
+        var role = await _roles.GetByIdAsync(request.RoleId, ct);
+        if (role is null)
+        {
+            return ApiResults.Fail<RoleDetailDto>(BaseApiResponseCode.NotFound, "角色不存在");
+        }
+
+        var permissionIds = await _roles.GetPermissionIdsAsync(request.RoleId, ct);
+        return ApiResults.Ok(new RoleDetailDto(
+            role.Id.ToString(),
+            role.RoleName,
+            role.Code,
+            role.AllowedScopes,
+            role.DataScope,
+            role.Status,
+            role.IsBuiltin,
+            role.Remark,
+            permissionIds.Select(id => id.ToString()).ToList()));
+    }
+}

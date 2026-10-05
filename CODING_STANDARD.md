@@ -463,6 +463,9 @@ public int OrderStatus { get; set; }
 | 74 | **对话框关闭时 `el-dialog` 仍在 DOM 里，按钮文字可能与表格里的同名** | 确认框的确定按钮与列表操作按钮同名时（例如都叫拒绝），不限定 scope 会点到隐藏的那个。页面上看不出问题：对话框没开，但你点了另一个按钮 |
 | 75 | **侧边栏是「有哪些业务」的地图，不是「所有能点的地方」的清单** | 「新建账号 / 新建平台 / 新建商户…」这类**无参**入口页一旦做成侧边栏条目，就会和「账号列表」并排出现，让人以为那是两个并列的业务，菜单长度也凭空多一截。正确做法：入口页标 `meta.hiddenInMenu` 从菜单里过滤掉，入口放在**列表页右上角的按钮**，点开是**新页**而不是弹窗（账号表单十几个字段，弹窗塞不下也填不完）。踩过：用户明确纠正过这一点。注意过滤要写成「按 meta 标记」而不是「凡是路径叫 create 就排除」那种字符串规则，将来有别的无参入口页时不用回来改。配套：把入口页显式加进 UI 回归的**非菜单页清单**，否则把它们移出菜单的同一刻，测试覆盖也跟着没了 |
 | 76 | **依赖租户上下文的「全局过滤器」不能在 Singleton 里注册** | `FilterRegistrar.Register` 读 `TenantContextHolder.Current` 构造「PlatformId = 我的平台」条件。它若发生在 `AddSingleton<IFreeSql>` 的工厂里，就**只执行一次**：条件被永久锁定成第一个请求的租户；第一个请求若是匿名（探活、登录），结果就是**永远不注册租户过滤**。实测：一个平台账号看到全部 50 个平台、也能改别人的平台 —— 静默的跨全部 16 个服务的多租户失效。修法是把 IFreeSql 改成 **Scoped**（它只是对象图，连接由 Npgsql 池复用，不是「每请求开连接」）。判据：任何「按当前请求的上下文构造查询条件」的注册动作，都不能挂在 Singleton 生命周期上 |
+| 77 | **C 端接口的 `customerId` 必须由令牌解析，不能直接采信请求体 / 查询串** | 只把 `customerId` 当普通参数，客户 A 改一个数字就能读 B 的购物车、积分、订单、评价与券包。统一走 `CustomerScope.Require(request.CustomerId)`：有客户令牌时强制用令牌 `sub`，请求值不一致直接 403；没有客户上下文时才允许内部任务 / 直连测试显式指定。 |
+| 78 | **客户令牌的 issuer 必须与网关 `CustomerToken:Issuer` 完全一致** | 本机配置曾把 CustomerService 签发的 issuer 写成 `simpleshop`，而网关只接受 `simpleshop-customer`。现象是所有 C 端登录接口返回成功、拿到令牌，但之后访问积分 / 订单 / 券包一律 401。JWT 的 issuer / audience / key 是三个独立校验点，改配置时必须成对核对签发方和校验方。 |
+| 79 | **新增后台详情 / 动作接口后，必须同步补权限点 `api_path`** | 网关 RBAC 的规则是「路径没有映射 → 放行」。本轮新增 `roles/Detail`、`permissions/Update`、`admin/orders/Cancel`、`products/SubmitAudit` 等端点，如果只加 Controller 不补 `seed-permissions.ps1`，接口会变成登录即可调用的裸端点。一个权限点可绑定多条路径，用逗号分隔；新增后必须跑 `scripts/check-permission-paths.ps1`。 |
 
 ---
 

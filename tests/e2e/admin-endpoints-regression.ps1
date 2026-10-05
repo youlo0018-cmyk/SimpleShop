@@ -556,6 +556,29 @@ else {
     Write-Host '  跳过新建平台越权用例：未能建出平台维度的测试账号' -ForegroundColor Yellow
 }
 
+Invoke-Case 'API-ADM-083' 'roles/Detail 返回角色与已绑定权限点' {
+    $r = Invoke-RestMethod -Uri "$Gateway/gateway/roles/Detail?roleId=9001" `
+        -Headers $auth -TimeoutSec 20
+    $r.success -and $r.data.roleName -and @($r.data.permissionIds).Count -gt 0
+}
+
+Invoke-Case 'API-ADM-084' 'permissions/Update 禁止编辑内置权限点' {
+    $r = Post-Ep '/gateway/permissions/Update' @{
+        permissionId = 3001
+        name = '被篡改的权限名'
+        code = 'user:read'
+        apiPath = '/gateway/users/List'
+        sortOrder = 1
+        description = '不应生效'
+    }
+    (-not $r.Success) -and $r.Message -match '内置'
+}
+
+Invoke-Case 'API-ADM-085' 'admin/orders/Cancel 不存在的订单返回 404' {
+    $r = Post-Ep '/gateway/admin/orders/Cancel' @{ orderNo = 'NO_SUCH_ORDER_FOR_REGRESSION' }
+    (-not $r.Success) -and $r.Code -eq 404
+}
+
 # 收尾：把临时账号停用。
 # 不清理的话每跑一次就在库里多一个启用状态的账号——跑几十次之后
 # 账号列表被测试数据淹没，看起来像真的出了问题。

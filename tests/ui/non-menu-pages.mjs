@@ -59,6 +59,9 @@ export const PAGES = [
   // （侧边栏是业务地图，不是所有能点的地方的清单），所以要在这里显式覆盖，
   // 否则把它们从菜单移走的同一刻，测试覆盖也跟着没了。
   { key: null, route: '#/users/create', name: '账号', title: '新建账号' },
+  { key: null, route: '#/roles/create', name: '角色权限', title: '新建角色' },
+  { key: null, route: '#/coupons/templates/create', name: '券', title: '新建券模板' },
+  { key: null, route: '#/coupons/activities/create', name: '券', title: '新建券活动' },
   { key: null, route: '#/platforms/create', name: '平台', title: '新建平台' },
   { key: null, route: '#/merchants/create', name: '商户', title: '新建商户' },
   { key: null, route: '#/products/create', name: '商品', title: '新建商品' },
@@ -68,6 +71,10 @@ export const PAGES = [
   { key: null, route: '#/orders/logistics-companies/create', name: '订单', title: '新建物流公司' },
 
   { key: 'user', name: '账号', title: '编辑账号', route: '#/users/edit/{id}' },
+  { key: 'role', name: '角色权限', title: '编辑角色', route: '#/roles/edit/{id}' },
+  { key: 'role', name: '角色权限', title: '分配权限', route: '#/roles/permissions/{id}' },
+  { key: 'couponTemplate', name: '券', title: '编辑券模板', route: '#/coupons/templates/edit/{id}' },
+  { key: 'couponActivity', name: '券', title: '编辑券活动', route: '#/coupons/activities/edit/{id}' },
   { key: 'platform', name: '平台', title: '编辑平台', route: '#/platforms/edit/{id}' },
   { key: 'platform', name: '平台', title: '小程序配置', route: '#/platforms/app-config/{id}' },
   { key: 'customer', name: '客户', title: '客户详情', route: '#/customers/detail/{id}' },
@@ -82,17 +89,20 @@ export const PAGES = [
 ];
 
 export async function collectIds(token) {
-  const [users, platforms, customers, merchants, products, promotions, sessions, refunds, brands, logistics] =
+  const [users, roles, platforms, customers, merchants, products, promotions, couponTemplates, couponActivities, sessions, refunds, brands, logistics] =
     await Promise.all([
       // users/List 是 [HttpGet]。这里原本写成 POST，于是 405 → 取不到数据 →
       // 「编辑账号」被标成 SKIP，报告全绿而这一页**根本没被测过**。
       // 教训：取 id 的接口用错动词不会让测试失败，只会让它悄悄少测一页。
       call(token, '/gateway/users/List?page=1&pageSize=1', 'GET'),
+      call(token, '/gateway/roles/List?page=1&pageSize=1', 'GET'),
       call(token, '/gateway/platforms/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/admin/customers/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/merchants/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/products/List?page=1&pageSize=1', 'GET'),
       call(token, '/gateway/marketing/activities/List', 'POST', { page: 1, pageSize: 1 }),
+      call(token, '/gateway/marketing/coupon-templates/List', 'POST', { page: 1, pageSize: 1 }),
+      call(token, '/gateway/marketing/coupon-activities/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/marketing/seckill/sessions/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/refunds/List', 'POST', { page: 1, pageSize: 1 }),
       call(token, '/gateway/brands/List?page=1&pageSize=1', 'GET'),
@@ -107,11 +117,14 @@ export async function collectIds(token) {
 
   return {
     user: first(users),
+    role: first(roles),
     platform: first(platforms),
     customer: first(customers),
     merchant: first(merchants),
     product: first(products),
     promotion: first(promotions),
+    couponTemplate: first(couponTemplates),
+    couponActivity: first(couponActivities),
     session: first(sessions),
     refund: first(refunds),
     brand: first(brands),
@@ -124,14 +137,16 @@ export function idOf(row) {
   return (
     row.id ??
     row.userId ??
-    row.platformId ??
+    row.roleId ??
     row.customerId ??
     row.merchantId ??
     row.productId ??
+    row.templateId ??
     row.activityId ??
     row.sessionId ??
     row.refundId ??
     row.logisticsId ??
+    row.platformId ??
     null
   );
 }

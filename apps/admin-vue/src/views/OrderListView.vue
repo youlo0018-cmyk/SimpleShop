@@ -64,6 +64,35 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="操作" width="260" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" @click.stop="goDetail(row)">详情</el-button>
+            <el-button
+              v-if="Number(row.status) === 10 && hasPermission('order:simulate')"
+              link
+              @click.stop="simulate(row, true)"
+            >
+              模拟成功
+            </el-button>
+            <el-button
+              v-if="Number(row.status) === 10 && hasPermission('order:simulate')"
+              link
+              type="danger"
+              @click.stop="simulate(row, false)"
+            >
+              模拟失败
+            </el-button>
+            <el-button
+              v-if="Number(row.status) === 20"
+              link
+              type="primary"
+              @click.stop="goDetail(row)"
+            >
+              处理发货
+            </el-button>
+          </template>
+        </el-table-column>
+
         <template #empty>
           <div class="empty">
             <div class="empty__title">没有符合条件的订单</div>
@@ -91,9 +120,11 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/api/request';
 import { statusColor } from '@/utils/dict';
 import { formatAmount, formatCount, formatDateTime, emptyText, maskPhone } from '@/utils/format';
+import { hasPermission } from '@/utils/session';
 
 const STATUS_TABS = [
   { label: '待支付', value: 10 },
@@ -138,6 +169,28 @@ function reload() {
 
 function goDetail(row: any) {
   router.push('/orders/detail/' + row.orderId);
+}
+
+async function simulate(row: any, succeed: boolean) {
+  try {
+    await ElMessageBox.confirm(
+      `${succeed ? '成功' : '失败'}模拟会直接推进支付链路，订单号 ${row.orderNo}。`,
+      '模拟支付',
+      { confirmButtonText: '确认', cancelButtonText: '取消', type: succeed ? 'success' : 'warning' },
+    );
+  } catch {
+    return;
+  }
+
+  try {
+    const result = await request('/gateway/admin/orders/SimulatePayment', {
+      body: { orderNo: row.orderNo, succeed },
+    });
+    ElMessage.success(result?.message || (succeed ? '已模拟支付成功' : '已模拟支付失败'));
+    await load();
+  } catch {
+    // request 已弹提示
+  }
 }
 
 onMounted(load);

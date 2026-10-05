@@ -27,6 +27,12 @@ public record QueryAdminOrdersCommand(
 public record QueryAdminOrderDetailCommand(long OrderId)
     : IRequest<ApiResponse<OrderDetailDto>>;
 
+/// <summary>后台代客取消订单。仅待支付（10）可取消，取消会释放库存、积分与券占用。</summary>
+/// <param name="OrderNo">订单号。</param>
+/// <param name="Remark">取消备注。</param>
+public record AdminCancelOrderCommand(string OrderNo, string Remark = "后台代客取消")
+    : IRequest<ApiResponse>, IHasOrderNo;
+
 /// <summary>发货。<b>不填物流信息</b>（用户需求 D3），只把状态从 20 推到 30。</summary>
 /// <param name="OrderNo">订单号。</param>
 /// <param name="Remark">发货备注。</param>
@@ -107,6 +113,7 @@ public static class OrderAdminValidators
     public static void AddOrderAdminValidators(IServiceCollection services)
     {
         services.AddScoped<IValidator<QueryAdminOrdersCommand>, QueryAdminOrdersValidator>();
+        services.AddScoped<IValidator<AdminCancelOrderCommand>, OrderNoCommandValidator<AdminCancelOrderCommand>>();
         services.AddScoped<IValidator<ShipOrderCommand>, OrderNoCommandValidator<ShipOrderCommand>>();
         services.AddScoped<IValidator<DeliverVirtualCommand>, OrderNoCommandValidator<DeliverVirtualCommand>>();
         services.AddScoped<IValidator<SelfPickupReadyCommand>, OrderNoCommandValidator<SelfPickupReadyCommand>>();

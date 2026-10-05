@@ -31,6 +31,21 @@ internal static class DesignResultFactory
         return new DesignResult(json, version, hasDraft, []);
     }
 
+    /// <summary>小程序只读已发布配置，不暴露草稿。</summary>
+    /// <param name="publishedJson">已发布 JSON。</param>
+    /// <param name="version">已发布版本号。</param>
+    /// <returns>装修配置；从未发布时返回结构完整的空店铺配置。</returns>
+    public static DesignResult FromPublished(string? publishedJson, int version)
+    {
+        if (string.IsNullOrWhiteSpace(publishedJson))
+        {
+            var empty = EmptyMerchant();
+            return empty with { Version = version };
+        }
+
+        return new DesignResult(publishedJson, version, false, []);
+    }
+
     /// <summary>构造一份结构完整的空配置。</summary>
     /// <param name="pages">要建的页面。</param>
     /// <returns>配置 JSON。</returns>

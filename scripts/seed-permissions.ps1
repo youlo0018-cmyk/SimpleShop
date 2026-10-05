@@ -41,7 +41,7 @@ $modules = [ordered]@{
 # ---- 第 3 层：权限点（79 个），Key 为模块 Id ----
 $leaves = [ordered]@{
     '2101' = @(@('user:read', '账号列表', '/gateway/users/List'), @('user:create', '新建账号', '/gateway/users/Create'),
-             @('user:update', '编辑账号', '/gateway/users/Update'), @('user:status', '启停账号', '/gateway/users/UpdateStatus'))
+             @('user:update', '编辑账号与重置密码', '/gateway/users/Update,/gateway/users/ResetPassword'), @('user:status', '启停账号', '/gateway/users/UpdateStatus'))
     # 一个权限点**只能映射一条路径**（permission.code 上有唯一约束）。
     # 同一个权限点要覆盖多个接口时用 /* 通配，而不是把 code 写两遍——
     # 写成两遍会撞 uk_permission_code，整个播种直接失败。
@@ -52,18 +52,18 @@ $leaves = [ordered]@{
     # 之前四个角色权限点全绑成了 /gateway/permissions/Roles*，
     # 那里根本没有 Roles 子路径 —— 网关查不到映射就**放行**，
     # 等于「角色增删改」四个接口完全不鉴权（scripts/check-permission-paths.ps1 抓出来的）。
-    '2103' = @(@('permission:read', '角色列表', '/gateway/roles/List'), @('permission:create', '新建角色', '/gateway/roles/Create'),
+    '2103' = @(@('permission:read', '角色列表', '/gateway/roles/List,/gateway/roles/Detail'), @('permission:create', '新建角色', '/gateway/roles/Create'),
              @('permission:update', '编辑角色', '/gateway/roles/Update'), @('permission:delete', '删除角色', '/gateway/roles/Delete'),
-             @('permission:manage', '权限点管理', '/gateway/permissions/*'))
+             @('permission:manage', '权限点管理与角色授权', '/gateway/permissions/*,/gateway/roles/BindPermissions'))
     # platform:audit 之前绑 /gateway/platforms/Audit，而该端点**根本不存在**
     # （平台只有 List/Create/Update/Delete/Options）。
     # 商户审核是真实流程（merchants/Audit），平台审核在规格里没有对应流程，
     # 所以这个叶子节点本就不该存在——按 BUSINESS.md 5.2 的清单删除它，
     # 权限点总数随之从 78 变为 77（见 BUSINESS.md 同步说明）。
     '2104' = @(@('platform:read', '平台列表', '/gateway/platforms/List'), @('platform:create', '新建平台', '/gateway/platforms/Create'),
-             @('platform:update', '编辑平台', '/gateway/platforms/Update'))
+             @('platform:update', '编辑与删除平台', '/gateway/platforms/Update,/gateway/platforms/Delete'))
     '2105' = @(@('merchant:read', '商户列表', '/gateway/merchants/List'), @('merchant:create', '新建商户', '/gateway/merchants/Create'),
-             @('merchant:update', '编辑商户', '/gateway/merchants/Update'), @('merchant:audit', '商户审核', '/gateway/merchants/Audit'))
+             @('merchant:update', '编辑 / 删除 / 重新提交商户', '/gateway/merchants/Update,/gateway/merchants/Delete,/gateway/merchants/Resubmit'), @('merchant:audit', '商户审核', '/gateway/merchants/Audit'))
     # 地区在 MerchantPlatformService 的独立控制器上，路由是 regions/，
     # **不存在** platform-configs 这个前缀。
     '2106' = @(@('region:read', '地区地址查看', '/gateway/regions/Get'), @('region:update', '地区地址维护', '/gateway/regions/Save'))
@@ -76,7 +76,7 @@ $leaves = [ordered]@{
     # /gateway/products/Create 查不到映射，**新建商品接口等于不鉴权**。
     # 拆成两个端点还有一个好处：「能改价」与「能建档」变成两种可分别授予的能力。
     '2109' = @(@('product:read', '商品列表', '/gateway/products/List'), @('product:create', '新建商品', '/gateway/products/Create'),
-             @('product:update', '编辑商品', '/gateway/products/Save'), @('product:audit', '商品审核', '/gateway/products/Audit'),
+             @('product:update', '编辑 / 提交审核 / 上下架', '/gateway/products/Save,/gateway/products/SubmitAudit,/gateway/products/ChangeListing'), @('product:audit', '商品审核', '/gateway/products/Audit'),
              @('product:delete', '删除商品', '/gateway/products/Delete'))
     '2110' = @(@('inventory:read', '库存查询', '/gateway/inventory/List'), @('inventory:update', '库存调整', '/gateway/inventory/Adjust'))
     # 后台订单一律走 /gateway/admin/orders/*，C 端订单走 /gateway/orders/*。
@@ -86,7 +86,7 @@ $leaves = [ordered]@{
              @('order:pickup', '取货核销', '/gateway/admin/orders/VerifyPickupCode'),
              @('order:pickup-ready', '备货完成', '/gateway/admin/orders/SelfPickupReady'),
              @('order:simulate', '模拟支付', '/gateway/admin/orders/SimulatePayment'),
-             @('order:refund', '订单退款', '/gateway/admin/orders/Refund'),
+             @('order:refund', '订单退款与取消', '/gateway/admin/orders/Refund,/gateway/admin/orders/Cancel'),
              # 物流公司字典（DATA_SPEC 5.23）落在 ProductService：它是发货表单的下拉数据源。
              # 之前绑的是不存在的 /gateway/logistics/*，同样等于不鉴权。
              @('logistics:manage', '物流公司维护', '/gateway/logistics-companies/*'))
@@ -98,7 +98,7 @@ $leaves = [ordered]@{
     '2113' = @(@('refund:read', '退款单列表与详情', '/gateway/refunds/List'), @('refund:apply', '发起退款', '/gateway/refunds/Apply'),
              @('refund:approve', '审批退款', '/gateway/refunds/Approve'), @('refund:reject', '拒绝退款', '/gateway/refunds/Reject'))
     '2114' = @(@('marketing:read', '活动列表', '/gateway/marketing/activities/List'), @('marketing:create', '新建活动', '/gateway/marketing/activities/Create'),
-             @('marketing:update', '编辑活动', '/gateway/marketing/activities/Update'), @('marketing:delete', '删除活动', '/gateway/marketing/activities/Delete'))
+             @('marketing:update', '编辑 / 启停活动', '/gateway/marketing/activities/Update,/gateway/marketing/activities/SetStatus'), @('marketing:delete', '删除活动', '/gateway/marketing/activities/Delete'))
     # 券模板 / 券活动之前只绑了 List 与 Create，但真实端点当时只有 Get 与 Create，
     # 于是 List / Update / Delete 全都查不到映射 —— 不鉴权。端点已补齐，路径对齐。
     '2115' = @(@('coupon-template:read', '券模板列表', '/gateway/marketing/coupon-templates/List'), @('coupon-template:create', '新建券模板', '/gateway/marketing/coupon-templates/Create'),
@@ -110,7 +110,7 @@ $leaves = [ordered]@{
     # 秒杀场次是 **seckill/sessions/**（两段），不是 seckill-sessions（一段）。
     # 结束动作的真名是 Finish，不是 End。
     '2117' = @(@('seckill:read', '秒杀场次列表', '/gateway/marketing/seckill/sessions/List'), @('seckill:create', '新建场次', '/gateway/marketing/seckill/sessions/Create'),
-             @('seckill:update', '编辑场次', '/gateway/marketing/seckill/sessions/Update'), @('seckill:end', '结束中止场次', '/gateway/marketing/seckill/sessions/Finish'))
+             @('seckill:update', '编辑 / 发布 / 场次商品', '/gateway/marketing/seckill/sessions/Update,/gateway/marketing/seckill/sessions/Publish,/gateway/marketing/seckill/sessions/Items/*'), @('seckill:end', '结束中止场次', '/gateway/marketing/seckill/sessions/Finish'))
     # 后台积分流水走 points/RecordsAll（跨客户），C 端的 points/Records 是「只看自己的」，
     # 刻意不绑权限点：它是客户令牌访问的，带上后台权限点会把小程序自己的积分页挡掉。
     # 积分报表在 reports/Point 上（report:view 的通配已覆盖），规则维护在 points/Rules。

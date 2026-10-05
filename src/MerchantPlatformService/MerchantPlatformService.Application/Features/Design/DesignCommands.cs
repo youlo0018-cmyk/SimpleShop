@@ -12,6 +12,14 @@ public record QueryPlatformDesignCommand(long PlatformId) : IRequest<ApiResponse
 /// <param name="MerchantId">商户 Id。</param>
 public record QueryMerchantDesignCommand(long MerchantId) : IRequest<ApiResponse<DesignResult>>;
 
+/// <summary>小程序读商户已发布店铺装修。只返回 published_json，不返回草稿。</summary>
+/// <param name="MerchantId">商户 Id。</param>
+public record QueryPublicMerchantDesignCommand(long MerchantId) : IRequest<ApiResponse<DesignResult>>;
+
+/// <summary>小程序按平台编码读已发布平台装修。只返回 published_json。</summary>
+/// <param name="PlatformCode">平台编码。</param>
+public record QueryPublicPlatformDesignCommand(string PlatformCode) : IRequest<ApiResponse<DesignResult>>;
+
 /// <summary>保存平台装修草稿（不影响线上）。</summary>
 /// <param name="PlatformId">平台 Id。</param>
 /// <param name="ConfigJson">配置 JSON（BUSINESS.md 16.5 的结构）。</param>

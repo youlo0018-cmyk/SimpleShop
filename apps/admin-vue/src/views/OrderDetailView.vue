@@ -13,9 +13,14 @@
       </div>
       <div class="head__actions">
         <!-- 动作只在状态允许时出现：按钮常驻再报错，等于让运营每次都先踩一次坑 -->
-        <el-button v-if="order.status === 20" type="primary" @click="ship">发货</el-button>
-        <el-button v-if="order.status === 10" @click="simulate(true)">模拟支付成功</el-button>
-        <el-button v-if="order.status === 10" @click="simulate(false)">模拟支付失败</el-button>
+        <el-button v-if="Number(order.status) === 10" @click="simulate(true)">模拟支付成功</el-button>
+        <el-button v-if="Number(order.status) === 10" @click="simulate(false)">模拟支付失败</el-button>
+        <el-button v-if="Number(order.status) === 10" danger @click="cancelOrder">取消订单</el-button>
+        <el-button v-if="canShip" type="primary" @click="ship">快递发货</el-button>
+        <el-button v-if="canVirtualDeliver" type="primary" @click="deliverVirtual">虚拟发货</el-button>
+        <el-button v-if="canPickupReady" type="primary" @click="pickupReady">备货完成</el-button>
+        <el-button v-if="Number(order.status) === 40" type="primary" @click="verifyPickup">核销取货码</el-button>
+        <el-button v-if="canRefund" danger @click="refund">代客退款</el-button>
       </div>
     </div>
 
@@ -124,7 +129,8 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { computed } from 'vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/api/request';
 import { statusColor, statusText } from '@/utils/dict';
 import { formatAmount, formatCount, emptyText, maskPhone } from '@/utils/format';
@@ -138,6 +144,20 @@ const loading = ref(true);
 const loaded = ref(false);
 
 const order = reactive<any>({});
+
+const hasDelivery = (type: number) =>
+  (order.items || []).some((item: any) => Number(item.deliveryType) === type);
+
+const canShip = computed(() => Number(order.status) === 20 && hasDelivery(1));
+const canVirtualDeliver = computed(() => Number(order.status) === 20 && hasDelivery(2));
+const canPickupReady = computed(() => Number(order.status) === 20 && hasDelivery(3));
+const isVirtualOnly = computed(() =>
+  (order.items || []).length > 0 &&
+  (order.items || []).every((item: any) => Number(item.deliveryType) === 2),
+);
+const canRefund = computed(() =>
+  !isVirtualOnly.value && [20, 30, 40, 50].includes(Number(order.status)),
+);
 
 async function load() {
   loading.value = true;
@@ -172,12 +192,82 @@ function ship() {
   act('Ship', { orderNo: order.orderNo }, '发货成功');
 }
 
+async function cancelOrder() {
+  try {
+    await ElMessageBox.confirm(
+      `取消订单 ${order.orderNo} 会释放库存、解冻积分并回退券占用。`,
+      '取消订单',
+      { confirmButtonText: '确认取消', cancelButtonText: '返回', type: 'warning' },
+    );
+  } catch {
+    return;
+  }
+  await act('Cancel', { orderNo: order.orderNo, remark: '后台代客取消' }, '订单已取消');
+}
+
 function simulate(succeed: boolean) {
   act(
     'SimulatePayment',
     { orderNo: order.orderNo, succeed },
     succeed ? '已模拟支付成功' : '已模拟支付失败',
   );
+}
+
+async function deliverVirtual() {
+  try {
+    const result = await ElMessageBox.prompt('填写卡号 / 激活码 / 发货备注', '虚拟发货', {
+      inputPlaceholder: '会展示给客户，请确认内容无误',
+      inputValidator: (value) => (value?.trim() ? true : '请填写发货内容'),
+      confirmButtonText: '确认发货',
+      cancelButtonText: '取消',
+    });
+    await act('DeliverVirtual', { orderNo: order.orderNo, remark: result.value.trim() }, '虚拟商品已发货并完成');
+  } catch {
+    // 用户取消不提示
+  }
+}
+
+async function pickupReady() {
+  try {
+    const result = await request('/gateway/admin/orders/SelfPickupReady', {
+      body: { orderNo: order.orderNo },
+    });
+    await load();
+    await ElMessageBox.alert(result?.pickupCode || '未返回取货码', '备货完成，请把取货码交给顾客', {
+      confirmButtonText: '知道了',
+    });
+  } catch {
+    // request 已提示
+  }
+}
+
+async function verifyPickup() {
+  try {
+    const result = await ElMessageBox.prompt('输入或扫描顾客出示的取货码', '核销取货码', {
+      inputPlaceholder: '扫码枪可直接扫描后回车',
+      inputValidator: (value) => (value?.trim() ? true : '请填写取货码'),
+      confirmButtonText: '确认核销',
+      cancelButtonText: '取消',
+    });
+    await act('VerifyPickupCode', { pickupCode: result.value.trim() }, '取货码已核销');
+  } catch {
+    // 用户取消不提示
+  }
+}
+
+async function refund() {
+  try {
+    const result = await ElMessageBox.prompt('填写退款原因', '代客发起退款', {
+      inputType: 'textarea',
+      inputPlaceholder: '至少 2 个字符，会记录到审计日志',
+      inputValidator: (value) => (value?.trim().length >= 2 ? true : '退款原因至少 2 个字符'),
+      confirmButtonText: '确认退款',
+      cancelButtonText: '取消',
+    });
+    await act('Refund', { orderNo: order.orderNo, remark: result.value.trim() }, '退款已处理');
+  } catch {
+    // 用户取消不提示
+  }
 }
 
 onMounted(load);

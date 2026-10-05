@@ -64,6 +64,7 @@
       <header class="topbar">
         <h1 class="topbar__title">{{ currentTitle }}</h1>
         <div class="topbar__right">
+          <span v-if="sessionName" class="topbar__user">{{ sessionName }}</span>
           <el-button text @click="onLogout">退出登录</el-button>
         </div>
       </header>
@@ -84,6 +85,7 @@ import { computed, ref } from 'vue';
 import { useRoute, useRouter, RouterLink, RouterView } from 'vue-router';
 import { adminRoutes } from '@/router/modules';
 import { logout } from '@/api/auth';
+import { getSession, hasPermission } from '@/utils/session';
 
 // 布局常量与 styles.css 的 --sidebar-w / --sidebar-w-collapsed 保持一致。
 // 这里不用 CSS 变量取值是因为绑定到 style 时需要具体字符串。
@@ -113,7 +115,11 @@ function leaves(group: any) {
     // 点了**开新页**（不是弹窗），因为它是个有十几个字段的表单。
     // 用 hiddenInMenu 标记而不是「凡是叫 create 就排除」那种字符串规则，
     // 是为了将来有别的无参入口页时不用改这里。
-    .filter((c: any) => c.meta?.title && !String(c.path).includes(':') && !c.meta?.hiddenInMenu)
+    .filter((c: any) =>
+      c.meta?.title &&
+      !String(c.path).includes(':') &&
+      !c.meta?.hiddenInMenu &&
+      hasPermission(c.meta?.perm))
     .map((c: any) => {
       const full = (base + '/' + c.path).replace(/\/+/g, '/').replace(/\/$/, '');
       return { ...c, path: full, fullPath: full };
@@ -132,7 +138,13 @@ function isActive(group: any) {
 }
 
 // 菜单顺序：工作台在前，其余按路由声明顺序（modules.ts 里已按业务分组排好）
-const menus = adminRoutes.filter((r: any) => !r.meta?.hidden);
+const menus = computed(() =>
+  adminRoutes.filter((r: any) => {
+    if (r.meta?.hidden) return false;
+    if (r.children?.length) return leaves(r).length > 0;
+    return hasPermission(r.meta?.perm);
+  }),
+);
 
 // 侧边栏按**业务域**分组，而不是 23 项平铺一条。
 // 平铺的副作用不只是长：它没有任何结构暗示，运营只能逐条扫，
@@ -149,14 +161,17 @@ const SECTION_ORDER = [
   { title: '系统', paths: ['files'] },
 ];
 
-const sections = SECTION_ORDER.map((s) => ({
-  title: s.title,
-  items: menus.filter((m: any) => s.paths.indexOf(m.path) >= 0),
-}))
-  // 丢掉空分组：把 path 改名后这里会自动少一组，不会留下一个光秃秃的标题
-  .filter((s: any) => s.items.length > 0);
+const sections = computed(() =>
+  SECTION_ORDER.map((s) => ({
+    title: s.title,
+    items: menus.value.filter((m: any) => s.paths.indexOf(m.path) >= 0),
+  }))
+    // 丢掉空分组：把 path 改名后这里会自动少一组，不会留下一个光秃秃的标题
+    .filter((s: any) => s.items.length > 0),
+);
 
 const currentTitle = computed(() => (route.meta?.title as string) || '工作台');
+const sessionName = computed(() => getSession()?.nickName || getSession()?.userName || '');
 
 function onLogout() {
   logout();
@@ -355,6 +370,17 @@ function onLogout() {
   font-size: var(--text-title-3);
   line-height: var(--lh-title-3);
   font-weight: 600;
+}
+
+.topbar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar__user {
+  font-size: var(--text-foot);
+  color: var(--text-2);
 }
 
 .shell__body {

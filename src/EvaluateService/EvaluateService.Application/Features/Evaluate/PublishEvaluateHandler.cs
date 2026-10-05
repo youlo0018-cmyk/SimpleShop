@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using EvaluateService.Domain.Entities;
 using EvaluateService.Domain.Exceptions;
 using EvaluateService.Domain.IRepository;
@@ -43,11 +44,12 @@ public sealed class PublishEvaluateHandler
     public async Task<ApiResponse<PublishEvaluateResult>> Handle(
         PublishEvaluateCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var order = await _orders.GetForEvaluateAsync(request.OrderNo, ct).ConfigureAwait(false);
 
         // 订单不存在与「不是你的订单」都回「订单不存在」：
         // 回「无权评价」等于确认这个订单号真实存在，可被拿去枚举别人的订单号
-        if (order is null || order.CustomerId != request.CustomerId)
+        if (order is null || order.CustomerId != customerId)
         {
             return ApiResults.Fail<PublishEvaluateResult>(BaseApiResponseCode.NotFound, "订单不存在");
         }
@@ -78,7 +80,7 @@ public sealed class PublishEvaluateHandler
                 // 上下文只有走网关带令牌时才有值，服务被直接调用时是 0，
                 // 那会把评价记到「客户 0」名下——「我的评价」查不到、追评被拒，
                 // 而所有接口都返回成功。
-                CustomerId = request.CustomerId,
+                CustomerId = customerId,
                 PlatformId = order.PlatformId,
                 MerchantId = order.MerchantId,
                 SpuId = request.SpuId,

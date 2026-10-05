@@ -176,6 +176,7 @@ public interface ICouponRepository
     /// <param name="templateId">模板 Id，0 表示不限。</param>
     /// <param name="orderNo">订单号过滤，空表示不限。</param>
     /// <param name="keyword">券码关键字。</param>
+    /// <param name="customerId">客户 Id，0 表示不限（仅后台内部使用）。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>用户券列表与总数。幂等只读。</returns>
     /// <remarks>
@@ -185,6 +186,7 @@ public interface ICouponRepository
     /// </remarks>
     Task<(List<UserCoupon> Items, long Total)> PageUserCouponsAsync(
         int page, int pageSize, int status, long templateId, string orderNo, string keyword,
+        long customerId = 0,
         CancellationToken ct = default);
 
     /// <summary>按 Id 集合批量取券模板（给列表补 name 用）。</summary>

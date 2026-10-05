@@ -1,0 +1,80 @@
+@use './tokens.scss' as *;
+
+view,
+text,
+image,
+scroll-view,
+button,
+input,
+textarea {
+  box-sizing: border-box;
+}
+
+page {
+  min-height: 100%;
+  background: $bg-page;
+  color: $text-1;
+  font-size: $font-body;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 0 $space-3 calc(env(safe-area-inset-bottom) + 40rpx);
+}
+
+.panel {
+  background: $bg-card;
+  border-radius: $radius-lg;
+  box-shadow: $shadow-card;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: $space-5 0 $space-3;
+  font-size: $font-heading;
+  font-weight: 600;
+}
+
+.muted {
+  color: $text-2;
+}
+
+.amount {
+  color: $brand;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.button-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 88rpx;
+  border-radius: 44rpx;
+  background: $brand;
+  color: #fff;
+  font-size: $font-body;
+  font-weight: 500;
+}
+
+.button-primary::after {
+  border: none;
+}
+
+.button-primary[disabled] {
+  opacity: 0.45;
+}
+
+.empty {
+  padding: 120rpx 0;
+  text-align: center;
+  color: $text-2;
+}
+
+.loading {
+  padding: 80rpx 0;
+  text-align: center;
+  color: $text-3;
+}

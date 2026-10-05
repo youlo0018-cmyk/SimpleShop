@@ -65,6 +65,30 @@ public sealed class DesignController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>小程序读取商户已发布店铺装修，无需登录。</summary>
+    /// <param name="merchantId">商户 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>已发布装修配置；草稿永不外露。</returns>
+    [HttpGet("Store")]
+    public async Task<ActionResult<ApiResponse<DesignResult>>> Store(
+        [FromQuery] long merchantId, CancellationToken ct = default)
+    {
+        var result = await _mediator.Send(new QueryPublicMerchantDesignCommand(merchantId), ct);
+        return Ok(result);
+    }
+
+    /// <summary>小程序按平台编码读取已发布平台装修，无需登录。</summary>
+    /// <param name="platformCode">平台编码。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>已发布装修配置；草稿永不外露。</returns>
+    [HttpGet("PlatformStore")]
+    public async Task<ActionResult<ApiResponse<DesignResult>>> PlatformStore(
+        [FromQuery] string platformCode, CancellationToken ct = default)
+    {
+        var result = await _mediator.Send(new QueryPublicPlatformDesignCommand(platformCode), ct);
+        return Ok(result);
+    }
+
     /// <summary>保存平台装修草稿。</summary>
     /// <param name="command">命令。</param>
     /// <param name="ct">取消令牌。</param>

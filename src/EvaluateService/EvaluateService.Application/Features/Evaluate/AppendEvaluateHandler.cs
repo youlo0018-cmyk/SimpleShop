@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using EvaluateService.Domain.Entities;
 using EvaluateService.Domain.Exceptions;
 using EvaluateService.Domain.IRepository;
@@ -27,11 +28,12 @@ public sealed class AppendEvaluateHandler : IRequestHandler<AppendEvaluateComman
     /// <returns>追评 Id。</returns>
     public async Task<ApiResponse<long>> Handle(AppendEvaluateCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var evaluate = await _repo.GetByIdAsync(request.EvaluateId, ct).ConfigureAwait(false);
 
         // 评价不存在与「不是你的评价」都回「评价不存在」，不回「无权追评」：
         // 后者等于确认这个评价 Id 真实存在
-        if (evaluate is null || evaluate.CustomerId != request.CustomerId)
+        if (evaluate is null || evaluate.CustomerId != customerId)
         {
             return ApiResults.Fail<long>(BaseApiResponseCode.NotFound, "评价不存在");
         }
@@ -59,7 +61,7 @@ public sealed class AppendEvaluateHandler : IRequestHandler<AppendEvaluateComman
         var append = new EvaluateAppend
         {
             // 同 PublishEvaluateHandler：归属取命令里的值，不靠租户上下文反推
-            CustomerId = request.CustomerId,
+            CustomerId = customerId,
             EvaluateId = evaluate.Id,
             StarScore = request.StarScore,
             Content = (request.Content ?? string.Empty).Trim(),

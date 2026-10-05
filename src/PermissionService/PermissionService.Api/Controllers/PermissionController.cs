@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using PermissionService.Application.Features.Permission.CreatePermission;
 using PermissionService.Application.Features.Permission.DeletePermission;
 using PermissionService.Application.Features.Permission.QueryTree;
+using PermissionService.Application.Features.Permission.UpdatePermission;
 
 namespace PermissionService.Api.Controllers;
 
@@ -32,6 +33,14 @@ public sealed class PermissionController : ControllerBase
     /// <returns>成功返回新权限点 Id。</returns>
     [HttpPost("Create")]
     public Task<ApiResponse<long>> Create([FromBody] CreatePermissionCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>编辑权限点。仅超级管理员；内置权限点只能停用。</summary>
+    /// <param name="command">编辑命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>编辑结果。</returns>
+    [HttpPost("Update")]
+    public Task<ApiResponse> Update([FromBody] UpdatePermissionCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
     /// <summary>删除权限点。仅超级管理员；内置权限点会被拒绝。</summary>

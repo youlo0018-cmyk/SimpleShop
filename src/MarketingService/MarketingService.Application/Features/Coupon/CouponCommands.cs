@@ -14,6 +14,9 @@ namespace MarketingService.Application.Features.Coupon;
 public record ClaimCouponCommand(long CustomerId, long ActivityId, int Quantity = 1)
     : IRequest<ApiResponse<ClaimCouponResult>>;
 
+/// <summary>查询当前可领取的券活动。</summary>
+public record QueryAvailableCouponsCommand() : IRequest<ApiResponse<List<CouponActivityItem>>>;
+
 /// <summary>领券结果。</summary>
 public sealed record ClaimCouponResult(IReadOnlyList<string> CouponCodes, string Message);
 

@@ -27,6 +27,14 @@ public sealed class RoleController : ControllerBase
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string keyword = "", CancellationToken ct = default)
         => _mediator.Send(new QueryRolesCommand(page, pageSize, keyword), ct);
 
+    /// <summary>查询角色详情与已绑定权限点，用于权限树回显。</summary>
+    /// <param name="roleId">角色 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>角色详情。</returns>
+    [HttpGet("Detail")]
+    public Task<ApiResponse<RoleDetailDto>> Detail([FromQuery] long roleId, CancellationToken ct)
+        => _mediator.Send(new QueryRoleDetailCommand(roleId), ct);
+
     /// <summary>新建角色。仅超级管理员。</summary>
     /// <param name="command">新建命令。</param>
     /// <param name="ct">取消令牌。</param>

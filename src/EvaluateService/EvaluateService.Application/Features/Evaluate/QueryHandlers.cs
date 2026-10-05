@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using EvaluateService.Domain.IRepository;
 using EvaluateService.Domain.Services;
 using MediatR;
@@ -57,7 +58,8 @@ public sealed class QueryMyEvaluatesHandler
     public async Task<ApiResponse<EvaluatePageResult>> Handle(
         QueryMyEvaluatesCommand request, CancellationToken ct)
     {
-        var page = await _repo.PageByCustomerAsync(request.CustomerId, request.Page, request.PageSize, ct);
+        var customerId = CustomerScope.Require(request.CustomerId);
+        var page = await _repo.PageByCustomerAsync(customerId, request.Page, request.PageSize, ct);
         var dtos = await EvaluateAssembler.BuildListAsync(_repo, page.Items, forAdmin: false, ct);
 
         // 「我的评价」跨多个 SPU，均分无意义，这里全给 0 / 展示 5.0

@@ -23,7 +23,7 @@
           点开是一个完整的页面，可以正常提交前校验、返回、刷新。
         -->
         <el-button
-          v-if="config.createRoute"
+          v-if="config.createRoute && hasPermission(config.createPermission || '')"
           type="primary"
           :icon="Plus"
           @click="router.push(config.createRoute)"
@@ -85,7 +85,7 @@
               点开仍然是新页（不是弹窗）。
             -->
             <el-button
-              v-if="config.editRoute"
+              v-if="config.editRoute && hasPermission(config.editPermission || '')"
               type="primary"
               link
               @click.stop="router.push(config.editRoute(row))"
@@ -94,7 +94,7 @@
             </el-button>
             <el-button
               v-for="a in config.actions"
-              v-show="!a.showWhen || a.showWhen(row)"
+              v-show="showAction(a, row)"
               :key="a.label"
               :type="a.type || 'text'"
               :danger="a.danger"
@@ -147,16 +147,23 @@
         <span v-if="confirm.subject" class="confirm__subject">{{ confirm.subject }}</span>
       </p>
 
-      <el-form v-if="confirm.withReason" label-position="top" class="confirm__form">
-        <el-form-item :label="confirm.reasonLabel">
+      <el-form v-if="confirm.fields.length" label-position="top" class="confirm__form">
+        <el-form-item
+          v-for="field in confirm.fields"
+          :key="field.name"
+          :label="field.label"
+          :error="confirm.errors[field.name]"
+        >
           <el-input
-            v-model="confirm.reason"
-            type="textarea"
-            :rows="3"
-            :maxlength="200"
-            show-word-limit
-            :placeholder="confirm.reasonPlaceholder"
+            v-model="confirm.values[field.name]"
+            :type="field.type === 'number' ? 'number' : field.type || 'text'"
+            :rows="field.rows || 3"
+            :show-word-limit="field.maxlength != null"
+            :maxlength="field.maxlength"
+            :placeholder="field.placeholder"
+            :show-password="field.type === 'password'"
           />
+          <p v-if="field.help" class="confirm__help">{{ field.help }}</p>
         </el-form-item>
       </el-form>
 
@@ -166,6 +173,13 @@
         <el-button :type="confirm.danger ? 'danger' : 'primary'" :loading="confirm.saving" @click="submitConfirm">
           {{ confirm.okText }}
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="inspect.open" title="异常调用栈" width="920" align-center>
+      <pre class="stack">{{ inspect.content || '没有返回堆栈内容' }}</pre>
+      <template #footer>
+        <el-button @click="inspect.open = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -178,6 +192,7 @@ import { ElMessage } from 'element-plus';
 import { Plus } from '@element-plus/icons-vue';
 import request from '@/api/request';
 import { statusColor, statusText } from '@/utils/dict';
+import { hasPermission } from '@/utils/session';
 import {
   formatAmount,
   formatCount,
@@ -244,11 +259,23 @@ const confirm = ref({
   reasonLabel: '原因',
   reasonPlaceholder: '',
   reason: '',
+  fields: [] as any[],
+  values: {} as Record<string, any>,
+  errors: {} as Record<string, string>,
   action: null as any,
   row: null as any,
 });
+const inspect = ref({
+  open: false,
+  content: '',
+});
 
 const tabs = computed(() => config.value.tabs || []);
+
+function showAction(action: any, row: any) {
+  if (action.permission && !hasPermission(action.permission)) return false;
+  return !action.showWhen || action.showWhen(row);
+}
 
 async function load() {
   loading.value = true;
@@ -307,10 +334,47 @@ function onRow(row: any) {
 }
 
 async function runAction(action: any, row: any) {
+  if (action.route) {
+    router.push(action.route(row));
+    return;
+  }
+
+  if (action.inspect) {
+    try {
+      const data = await request(action.inspect.endpoint, {
+        body: { ...action.inspect.build(row) },
+      });
+      inspect.value = {
+        open: true,
+        content: typeof data === 'string' ? data : JSON.stringify(data, null, 2),
+      };
+    } catch {
+      // request 已提示
+    }
+    return;
+  }
+
   // 有 confirm 声明的动作走对话框，没有的直接发请求。
   // 分成两条路而不是「全都走对话框」：像「重置密码」这种一次性的轻动作，
   // 弹框只会让人多按一次。
   if (action.confirm) {
+    const fields = action.confirm.fields
+      || (action.confirm.withReason
+        ? [{
+            name: '__reason',
+            label: action.confirm.reasonLabel || '原因',
+            type: 'textarea',
+            rows: 3,
+            maxlength: 200,
+            placeholder: action.confirm.reasonPlaceholder || '请填写原因',
+            required: true,
+          }]
+        : []);
+    const values: Record<string, any> = {};
+    for (const field of fields) {
+      values[field.name] = typeof field.default === 'function' ? field.default(row) : (field.default ?? '');
+    }
+
     confirm.value = {
       open: true,
       saving: false,
@@ -325,6 +389,9 @@ async function runAction(action: any, row: any) {
       reasonLabel: action.confirm.reasonLabel || '原因',
       reasonPlaceholder: action.confirm.reasonPlaceholder || '请填写原因',
       reason: '',
+      fields,
+      values,
+      errors: {},
       action,
       row,
     };
@@ -344,17 +411,39 @@ async function submitConfirm() {
   const c = confirm.value;
   if (!c.action) return;
 
-  // 理由必填时先在前端拦一道：省掉一次往返，也避免用户点了「确定」之后
-  // 才看到一行红字。仅提示长度，真正规则以服务端为准。
-  if (c.withReason && c.reason.trim().length < 2) {
-    ElMessage.warning('请填写原因（至少 2 个字符）');
+  // 提交时才做一次全量校验（DESIGN_SPEC 5.6）。失焦不校验，
+  // 避免用户还没输入完就看到红字；失败后也不发请求。
+  c.errors = {};
+  for (const field of c.fields) {
+    const value = c.values[field.name];
+    const text = value === null || value === undefined ? '' : String(value).trim();
+    if (field.required && !text) {
+      c.errors[field.name] = `请填写${field.label}`;
+      continue;
+    }
+    if (field.minLength && text.length < field.minLength) {
+      c.errors[field.name] = `${field.label}至少 ${field.minLength} 个字符`;
+      continue;
+    }
+    if (field.pattern && text && !new RegExp(field.pattern).test(text)) {
+      c.errors[field.name] = field.patternMessage || `${field.label}格式不正确`;
+    }
+  }
+  if (Object.keys(c.errors).length) {
+    ElMessage.warning('请检查表单中标红的内容');
     return;
   }
 
   c.saving = true;
   try {
+    const payload = c.fields.length
+      ? Object.fromEntries(c.fields.map((field: any) => {
+          const raw = c.values[field.name];
+          return [field.name, field.type === 'number' ? Number(raw) : raw];
+        }))
+      : c.reason.trim();
     await request(c.action.endpoint, {
-      body: { ...c.action.build(c.row, c.reason.trim()) },
+      body: { ...c.action.build(c.row, payload) },
     });
     ElMessage.success(c.action.okText || '操作成功');
     confirm.value.open = false;
@@ -456,5 +545,27 @@ onMounted(load);
 
 .confirm__form {
   margin-top: var(--space-4);
+}
+
+.confirm__help {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-foot);
+  line-height: var(--lh-foot);
+  color: var(--text-2);
+}
+
+.stack {
+  max-height: 560px;
+  margin: 0;
+  overflow: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: #f5f5f7;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-foot);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

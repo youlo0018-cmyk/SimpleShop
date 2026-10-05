@@ -535,11 +535,13 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
     /// <inheritdoc />
     public async Task<(List<UserCoupon> Items, long Total)> PageUserCouponsAsync(
         int page, int pageSize, int status, long templateId, string orderNo, string keyword,
+        long customerId = 0,
         CancellationToken ct = default)
     {
         var select = _db.Select<UserCoupon>()
             .Where(a => status <= 0 || a.Status == status)
-            .Where(a => templateId <= 0 || a.TemplateId == templateId);
+            .Where(a => templateId <= 0 || a.TemplateId == templateId)
+            .Where(a => customerId <= 0 || a.CustomerId == customerId);
 
         if (!string.IsNullOrWhiteSpace(orderNo))
         {

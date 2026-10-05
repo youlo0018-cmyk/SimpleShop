@@ -22,6 +22,7 @@ deploy/data/
 # 视觉回归产物（基线图入库，current/diff 不入库）
 tests/visual/current/
 tests/visual/diff/
+tests/visual/user/
 
 # 本地覆盖
 appsettings.Development.json

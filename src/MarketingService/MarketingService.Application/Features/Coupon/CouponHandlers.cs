@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
 using MarketingService.Domain.Services;
@@ -21,8 +22,24 @@ public sealed class ClaimCouponHandler : IRequestHandler<ClaimCouponCommand, Api
     /// <returns>成功返回券码列表。</returns>
     public async Task<ApiResponse<ClaimCouponResult>> Handle(ClaimCouponCommand request, CancellationToken ct)
     {
+        var ctx = TenantContextHolder.Current;
+        var customerId = ctx.IsCustomer ? ctx.UserId : request.CustomerId;
+        if (ctx.IsCustomer && request.CustomerId > 0 && request.CustomerId != ctx.UserId)
+        {
+            return ApiResults.Fail<ClaimCouponResult>(
+                BaseApiResponseCode.Forbidden,
+                "不能替其他客户领券");
+        }
+
+        if (customerId <= 0)
+        {
+            return ApiResults.Fail<ClaimCouponResult>(
+                BaseApiResponseCode.Unauthorized,
+                "请先登录后再领券");
+        }
+
         var result = await _coupons.ClaimAsync(
-            request.CustomerId, request.ActivityId, request.Quantity, DateTime.UtcNow, ct);
+            customerId, request.ActivityId, request.Quantity, DateTime.UtcNow, ct);
 
         if (!result.Outcome.Succeeded)
         {
@@ -31,6 +48,66 @@ public sealed class ClaimCouponHandler : IRequestHandler<ClaimCouponCommand, Api
 
         var msg = result.CouponCodes.Count == 0 ? "您当前没有可领取的券" : $"领取成功，共 {result.CouponCodes.Count} 张";
         return ApiResults.Ok(new ClaimCouponResult(result.CouponCodes, msg), msg);
+    }
+}
+
+/// <summary>查询当前可领取的券活动。</summary>
+public sealed class QueryAvailableCouponsHandler
+    : IRequestHandler<QueryAvailableCouponsCommand, ApiResponse<List<CouponActivityItem>>>
+{
+    private readonly ICouponRepository _coupons;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="coupons">券仓储。</param>
+    public QueryAvailableCouponsHandler(ICouponRepository coupons) => _coupons = coupons;
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>当前可领取的活动列表。</returns>
+    public async Task<ApiResponse<List<CouponActivityItem>>> Handle(
+        QueryAvailableCouponsCommand request, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var (items, _) = await _coupons.PageActivitiesAsync(
+            1, 200, string.Empty, 1, 0, ct).ConfigureAwait(false);
+
+        var available = items
+            .Where(a => a.ClaimStartTime <= now &&
+                        a.ClaimEndTime >= now &&
+                        a.ClaimedQuantity < a.ClaimQuantity)
+            .ToList();
+
+        var templateIds = available.Select(a => a.TemplateId).Distinct().ToArray();
+        var names = templateIds.Length == 0
+            ? new Dictionary<long, string>()
+            : (await _coupons.ListTemplatesByIdsAsync(templateIds, ct).ConfigureAwait(false))
+                .ToDictionary(a => a.Id, a => a.TemplateName);
+
+        var result = available.Select(a => new CouponActivityItem(
+            a.Id,
+            a.ActivityName,
+            a.TemplateId,
+            names.TryGetValue(a.TemplateId, out var name) ? name : "券模板",
+            a.ClaimStartTime.ToString("yyyy-MM-dd HH:mm:ss"),
+            a.ClaimEndTime.ToString("yyyy-MM-dd HH:mm:ss"),
+            a.ClaimQuantity,
+            a.ClaimedQuantity,
+            a.PerUserLimit,
+            a.TargetType,
+            a.TargetType switch
+            {
+                1 => "全场",
+                2 => "指定商品",
+                3 => "指定规格",
+                _ => "未知"
+            },
+            a.SortOrder,
+            a.Status,
+            a.Status == 1 ? "启用" : "停用",
+            a.PlatformId)).ToList();
+
+        return ApiResults.Ok(result);
     }
 }
 

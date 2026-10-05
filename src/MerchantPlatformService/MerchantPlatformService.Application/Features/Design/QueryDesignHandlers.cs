@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using MediatR;
+using MerchantPlatformService.Domain.Entities;
 using MerchantPlatformService.Domain.IRepository;
 using MerchantPlatformService.Domain.Services;
 
@@ -54,6 +55,76 @@ public sealed class QueryMerchantDesignHandler
 
         return ApiResults.Ok(
             DesignResultFactory.FromDraft(config.DraftJson, config.PublishedJson, config.Version));
+    }
+}
+
+/// <summary>小程序读取商户已发布店铺装修。</summary>
+public sealed class QueryPublicMerchantDesignHandler
+    : IRequestHandler<QueryPublicMerchantDesignCommand, ApiResponse<DesignResult>>
+{
+    private readonly IDesignRepository _design;
+    private readonly IMerchantRepository _merchants;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="design">装修仓储。</param>
+    /// <param name="merchants">商户仓储，用于校验公开可见资格。</param>
+    public QueryPublicMerchantDesignHandler(IDesignRepository design, IMerchantRepository merchants)
+    {
+        _design = design;
+        _merchants = merchants;
+    }
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>已发布店铺装修；商户未通过审核或已停用返回 404。</returns>
+    public async Task<ApiResponse<DesignResult>> Handle(
+        QueryPublicMerchantDesignCommand request, CancellationToken ct)
+    {
+        var merchant = await _merchants.GetByIdAsync(request.MerchantId, ct);
+        if (merchant is null ||
+            merchant.AuditStatus != MerchantAuditStatuses.Approved ||
+            merchant.Status != PlatformStatuses.Enabled)
+        {
+            return ApiResults.Fail<DesignResult>(BaseApiResponseCode.NotFound, "店铺不存在或尚未营业");
+        }
+
+        var config = await _design.GetMerchantAsync(request.MerchantId, ct);
+        return ApiResults.Ok(DesignResultFactory.FromPublished(config?.PublishedJson, config?.Version ?? 0));
+    }
+}
+
+/// <summary>小程序按平台编码读取已发布平台装修。</summary>
+public sealed class QueryPublicPlatformDesignHandler
+    : IRequestHandler<QueryPublicPlatformDesignCommand, ApiResponse<DesignResult>>
+{
+    private readonly IDesignRepository _design;
+    private readonly IPlatformRepository _platforms;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="design">装修仓储。</param>
+    /// <param name="platforms">平台仓储。</param>
+    public QueryPublicPlatformDesignHandler(IDesignRepository design, IPlatformRepository platforms)
+    {
+        _design = design;
+        _platforms = platforms;
+    }
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>已发布平台装修；平台不存在或已停用返回 404。</returns>
+    public async Task<ApiResponse<DesignResult>> Handle(
+        QueryPublicPlatformDesignCommand request, CancellationToken ct)
+    {
+        var platform = await _platforms.GetByCodeAsync(request.PlatformCode.Trim(), ct);
+        if (platform is null || platform.Status != PlatformStatuses.Enabled)
+        {
+            return ApiResults.Fail<DesignResult>(BaseApiResponseCode.NotFound, "平台不存在或已停用");
+        }
+
+        var config = await _design.GetPlatformAsync(platform.Id, ct);
+        return ApiResults.Ok(DesignResultFactory.FromPublished(config?.PublishedJson, config?.Version ?? 0));
     }
 }
 

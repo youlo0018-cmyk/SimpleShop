@@ -29,6 +29,7 @@ public sealed class CreateOrderHandler
     /// <returns>成功返回订单号与实付金额。</returns>
     public async Task<ApiResponse<OrderCreatedDto>> Handle(CreateOrderCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var lines = request.Lines
             .Select(a => new OrderLineRequest(
                 a.SpuId, a.SkuId, a.Quantity,
@@ -46,7 +47,7 @@ public sealed class CreateOrderHandler
         var merchantId = ctx.IsMerchant ? ctx.MerchantId : request.MerchantId;
 
         var outcome = await _creator.CreateAsync(new CreateOrderRequest(
-            request.CustomerId, platformId, merchantId,
+            customerId, platformId, merchantId,
             request.IdempotencyKey.Trim(),
             request.ReceiverName.Trim(), request.ReceiverPhone.Trim(), request.ReceiverAddress.Trim(),
             lines,
@@ -105,8 +106,9 @@ public sealed class QueryMyOrdersHandler
     public async Task<ApiResponse<PagedResult<OrderListItemDto>>> Handle(
         QueryMyOrdersCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var (orders, total) = await _store
-            .ListByCustomerAsync(request.CustomerId, request.Status, request.Page, request.PageSize, ct)
+            .ListByCustomerAsync(customerId, request.Status, request.Page, request.PageSize, ct)
             .ConfigureAwait(false);
 
         var aggregates = await _store
@@ -144,13 +146,14 @@ public sealed class QueryOrderDetailHandler
     /// <returns>订单详情，含全部订单行。</returns>
     public async Task<ApiResponse<OrderDetailDto>> Handle(QueryOrderDetailCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var order = await _store.FindByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
 
         // 订单不存在与「不是你的订单」都回 404：返回 403 等于告诉别人这个订单号真实存在，
         // 能被拿去枚举别人的订单号（TEST_CASES 6.2）。
         // 归属校验放在**调用方**而不是组装器里 —— 后台查订单不校验归属，
         // 放进组装器会让后台永远查不到别人的单。
-        if (order is null || (request.CustomerId > 0 && order.CustomerId != request.CustomerId))
+        if (order is null || (customerId > 0 && order.CustomerId != customerId))
         {
             return ApiResults.Fail<OrderDetailDto>(BaseApiResponseCode.NotFound, "订单不存在");
         }
@@ -182,10 +185,11 @@ public sealed class CancelOrderHandler : MediatR.IRequestHandler<CancelOrderComm
     /// <returns>成功返回空响应。</returns>
     public async Task<ApiResponse> Handle(CancelOrderCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var order = await _store.FindByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
 
         // 订单不存在与「不是你的订单」都回 404：回 403 等于告诉别人这个订单号真实存在
-        if (order is null || order.CustomerId != request.CustomerId)
+        if (order is null || order.CustomerId != customerId)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "订单不存在");
         }
@@ -232,9 +236,10 @@ public sealed class ConfirmReceiptHandler : MediatR.IRequestHandler<ConfirmRecei
     /// <returns>成功返回空响应。</returns>
     public async Task<ApiResponse> Handle(ConfirmReceiptCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var order = await _store.FindByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
 
-        if (order is null || order.CustomerId != request.CustomerId)
+        if (order is null || order.CustomerId != customerId)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "订单不存在");
         }

@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using PointService.Domain.Entities;
@@ -240,13 +241,14 @@ public sealed class SignInPointsHandler : IRequestHandler<SignInPointsCommand, A
     /// <returns>成功返回签到结果。</returns>
     public async Task<ApiResponse<PointSignInResult>> Handle(SignInPointsCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         // 跨天判定以**服务端本地日期**为准，不做时区换算（BUSINESS.md 13.6）。
         // 直接用 UtcNow.Date 会让东八区凌晨 0~8 点的用户「签到到昨天」，
         // 必须先转成 Asia/Shanghai 再取日期。
         var today = TimeZoneHelper.GetShanghaiToday();
 
         var (outcome, streak, reward, already) =
-            await _points.SignInAsync(request.CustomerId, today, ct);
+            await _points.SignInAsync(customerId, today, ct);
 
         if (!outcome.Succeeded)
         {
@@ -254,7 +256,7 @@ public sealed class SignInPointsHandler : IRequestHandler<SignInPointsCommand, A
         }
 
         var result = new PointSignInResult(
-            request.CustomerId, streak, reward, outcome.Available, already,
+            customerId, streak, reward, outcome.Available, already,
             already ? "今日已签到" : $"签到成功，获得 {reward} 积分");
 
         return ApiResults.Ok(result, result.Message);
@@ -280,10 +282,11 @@ public sealed class QueryPointAccountHandler : IRequestHandler<QueryPointAccount
     /// </remarks>
     public async Task<ApiResponse<PointBalance>> Handle(QueryPointAccountCommand request, CancellationToken ct)
     {
-        var account = await _points.GetAccountAsync(request.CustomerId, ct);
+        var customerId = CustomerScope.Require(request.CustomerId);
+        var account = await _points.GetAccountAsync(customerId, ct);
 
         var balance = account is null
-            ? new PointBalance(request.CustomerId, 0, 0, 0, 0, false)
+            ? new PointBalance(customerId, 0, 0, 0, 0, false)
             : new PointBalance(
                 account.CustomerId, account.Available, account.Frozen,
                 account.TotalEarned, account.TotalUsed, false);
@@ -307,8 +310,9 @@ public sealed class QueryPointRecordsHandler : IRequestHandler<QueryPointRecords
     /// <returns>流水列表。</returns>
     public async Task<ApiResponse<List<PointRecordItem>>> Handle(QueryPointRecordsCommand request, CancellationToken ct)
     {
+        var customerId = CustomerScope.Require(request.CustomerId);
         var (items, _) = await _points.QueryRecordsAsync(
-            request.CustomerId, Math.Max(1, request.Page), Math.Clamp(request.PageSize, 1, 100), ct);
+            customerId, Math.Max(1, request.Page), Math.Clamp(request.PageSize, 1, 100), ct);
 
         var list = items.Select(a => new PointRecordItem(
             a.Id.ToString(), a.BizNo, a.Action, a.Quantity,

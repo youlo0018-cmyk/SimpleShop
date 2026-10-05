@@ -189,7 +189,9 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         $cfg['Orders:MaxClosePerRun']        = '500'
     }
     if ($name -eq 'CustomerService') {
-        $cfg['Jwt:Issuer']       = 'simpleshop'
+        # Gateway 校验的是 CustomerToken.Issuer，必须与之一致。
+        # 之前写成 simpleshop，网关验签直接 401，所有 C 端登录后接口都不可用。
+        $cfg['Jwt:Issuer']       = 'simpleshop-customer'
         $cfg['Jwt:Audience']     = 'simpleshop-customer'
         $cfg['Jwt:Secret']       = $customerJwtSecret
         $cfg['Jwt:ExpireHours']  = '12'
@@ -229,6 +231,11 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
         $cfg['Gateway:AnonymousPaths:4'] = '/gateway/shop/products/Detail'
         $cfg['Gateway:AnonymousPaths:5'] = '/gateway/shop/catalog/CategoryTree'
         $cfg['Gateway:AnonymousPaths:6'] = '/gateway/shop/catalog/Brands'
+        $cfg['Gateway:AnonymousPaths:7'] = '/gateway/design/Store'
+        $cfg['Gateway:AnonymousPaths:8'] = '/gateway/evaluates/List'
+        $cfg['Gateway:AnonymousPaths:9'] = '/gateway/marketing/seckill/sessions/Public'
+        $cfg['Gateway:AnonymousPaths:10'] = '/gateway/coupons/Available'
+        $cfg['Gateway:AnonymousPaths:11'] = '/gateway/design/PlatformStore'
     }
     if ($name -eq 'AuthService') {
         # 后台令牌服务配置（BUSINESS 4.1 / DATA_SPEC 1.5）

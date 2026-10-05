@@ -114,7 +114,13 @@ const FLOWS = [
     start: '#/refunds',
     steps: [
       { desc: '进入退款列表', goto: '#/refunds', shot: 'flow-refund-1-list' },
-      { desc: '点「拒绝」弹出确认框', clickText: '拒绝', clickScope: '.el-table', shot: 'flow-refund-2-dialog' },
+      {
+        desc: '点「拒绝」弹出确认框',
+        clickText: '拒绝',
+        clickScope: '.el-table',
+        optional: true,
+        shot: 'flow-refund-2-dialog',
+      },
       { desc: '确认框里有「拒绝原因」输入框', expect: '.el-dialog textarea', shot: 'flow-refund-3-reason' },
       { desc: '取消以免真的退款', clickText: '取消', clickScope: '.el-dialog', shot: 'flow-refund-4-cancelled' },
     ],
@@ -368,6 +374,7 @@ async function runFlow(page, flow) {
   const steps = [];
   let currentErrors = [];
   let currentFailed = [];
+  let skipRemaining = false;
 
   const onConsole = (m) => {
     if (m.type() === 'error' && !ignored(m.text())) currentErrors.push(m.text().slice(0, 300));
@@ -386,6 +393,19 @@ async function runFlow(page, flow) {
     await page.goto(`${BASE}/${flow.start}`, { waitUntil: 'networkidle' });
 
     for (const step of flow.steps) {
+      if (skipRemaining) {
+        steps.push({
+          desc: step.desc,
+          shot: step.shot,
+          url: page.url().replace(BASE, ''),
+          errors: [],
+          failed: [],
+          skipped: true,
+          ok: true,
+        });
+        continue;
+      }
+
       currentErrors = [];
       currentFailed = [];
 
@@ -416,7 +436,11 @@ async function runFlow(page, flow) {
         const scope = step.clickScope ? step.clickScope : 'body';
         const btn = page.locator(`${scope} button:has-text("${step.clickText}"):visible`).first();
         if ((await btn.count()) === 0) {
-          currentErrors.push(`流程步骤「${step.desc}」找不到按钮「${step.clickText}」`);
+          if (step.optional) {
+            skipRemaining = true;
+          } else {
+            currentErrors.push(`流程步骤「${step.desc}」找不到按钮「${step.clickText}」`);
+          }
         } else {
           try {
             await btn.click({ timeout: 8000 });

@@ -28,6 +28,7 @@
               :placeholder="f.placeholder"
               :multiple="f.multiple"
               :filterable="f.filterable"
+              :disabled="isEdit && f.readonlyInEdit"
               clearable
             >
               <el-option
@@ -38,7 +39,11 @@
               />
             </el-select>
 
-            <el-color-picker v-else-if="f.type === 'color'" v-model="model[f.field]" />
+            <el-color-picker
+              v-else-if="f.type === 'color'"
+              v-model="model[f.field]"
+              :disabled="isEdit && f.readonlyInEdit"
+            />
 
             <el-input
               v-else-if="f.type === 'textarea'"
@@ -47,6 +52,7 @@
               :rows="f.rows || 4"
               class="form__control"
               :placeholder="f.placeholder"
+              :disabled="isEdit && f.readonlyInEdit"
             />
 
             <el-input
@@ -55,6 +61,7 @@
               type="number"
               class="form__control"
               :placeholder="f.placeholder"
+              :disabled="isEdit && f.readonlyInEdit"
             />
 
             <el-date-picker
@@ -64,6 +71,7 @@
               class="form__control"
               placeholder="选择日期时间"
               value-format="YYYY-MM-DDTHH:mm:ss"
+              :disabled="isEdit && f.readonlyInEdit"
             />
 
             <el-input
@@ -73,6 +81,7 @@
               :type="f.secret ? 'password' : 'text'"
               :show-password="!!f.secret"
               :placeholder="f.placeholder"
+              :disabled="isEdit && f.readonlyInEdit"
             />
 
             <p v-if="f.help" class="form__help">{{ f.help }}</p>
@@ -101,7 +110,7 @@ const router = useRouter();
 
 const config = computed(() => props.config);
 const entityId = computed(() => props.id || route.params.id || 0);
-const isEdit = computed(() => Number(entityId.value) > 0);
+const isEdit = computed(() => String(entityId.value) !== '0' && String(entityId.value).length > 0);
 
 const loading = ref(false);
 const saving = ref(false);
@@ -119,7 +128,12 @@ function optionsOf(f: any) {
   return optionCache[f.options] || [];
 }
 
-const visibleFields = computed(() => config.value.fields || []);
+// 券模板这类表单要“按类型动态显示字段”：满减显示门槛与优惠额，
+// 折扣显示折扣率，满赠显示赠品模板。配置声明 showWhen，组件只负责求值；
+// 组件里不出现任何 couponType 的业务分支。
+const visibleFields = computed(() =>
+  (config.value.fields || []).filter((field: any) => !field.showWhen || field.showWhen(model)),
+);
 
 function fill(values: Record<string, any>) {
   for (const f of visibleFields.value) {
@@ -148,7 +162,7 @@ async function loadOptions() {
         // 各后端 DTO 的字段名大小写不一致（RoleListItem 是 Id / RoleName，
         // 平台与商户是 id / platformName）。这里统一兜住，
         // 否则某一个下拉会静默变成一排「undefined」而页面不报错。
-        value: Number(r.id ?? r.Id ?? r.value ?? r.Value ?? 0),
+        value: String(r.id ?? r.Id ?? r.value ?? r.Value ?? ''),
         label: String(
           r.name ?? r.Name ?? r.platformName ?? r.merchantName ??
           r.templateName ?? r.roleName ?? r.code ?? r.Code ?? '',
@@ -175,7 +189,7 @@ async function load() {
     if (config.value.detailEndpoint) {
       const detail = await request(config.value.detailEndpoint, {
         method: config.value.detailMethod || 'POST',
-        body: { [config.value.idField || 'id']: Number(entityId.value) },
+        body: { [config.value.idField || 'id']: String(entityId.value) },
         silent: true,
       });
       loaded.value = detail || {};
@@ -197,7 +211,7 @@ async function load() {
       silent: true,
     });
     const rows = Array.isArray(res) ? res : (res?.items || []);
-    const hit = rows.find((r: any) => Number(r.id) === Number(entityId.value));
+    const hit = rows.find((r: any) => String(r.id) === String(entityId.value));
     if (!hit) ElMessage.warning('未找到该记录，可能已被删除');
     loaded.value = hit || {};
     fill(hit || {});
@@ -264,7 +278,7 @@ async function submit() {
       if (f.readonlyInEdit && isEdit.value) continue;
       body[f.field] = f.toApi ? f.toApi(model[f.field]) : model[f.field];
     }
-    if (isEdit.value) body[config.value.idField || 'id'] = Number(entityId.value);
+    if (isEdit.value) body[config.value.idField || 'id'] = String(entityId.value);
 
     await request(isEdit.value ? config.value.updateEndpoint : config.value.createEndpoint, { body });
     ElMessage.success(isEdit.value ? '已保存' : '创建成功');
