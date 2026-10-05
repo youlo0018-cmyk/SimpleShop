@@ -5,8 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>UserService.Api</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: 缺 XML 注释的公开成员。100% 注释是强制规范，宁可编译失败也不放过 -->
+    <WarningsAsErrors>CS1591</WarningsAsErrors>
   </PropertyGroup>
-<ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\UserService.Infrastructure\UserService.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Collaboration\Collaboration.Web\Collaboration.Web.csproj" />
   </ItemGroup>

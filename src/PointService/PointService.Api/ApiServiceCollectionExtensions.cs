@@ -24,6 +24,7 @@ public static class ApiServiceCollectionExtensions
 
         PointValidators.AddPointValidators(services);
         PointRuleValidators.AddPointRuleValidators(services);
+        AdminPointValidators.AddAdminPointValidators(services);
 
         services.AddInfrastructure();
         return services;

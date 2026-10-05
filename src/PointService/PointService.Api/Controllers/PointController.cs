@@ -69,6 +69,23 @@ public sealed class PointController : ControllerBase
         [FromBody] QueryPointRulesCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>分页查积分流水（<b>跨客户</b>，后台用）。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>积分流水分页结果。</returns>
+    /// <remarks>
+    /// 与 C 端的 <c>GET points/Records</c> 刻意分开：那条必须带 customerId（只看自己的），
+    /// 这条是后台跨客户查「刚刚发生了什么」。
+    /// 合成一条的话「customerId=0 表示不限」会和「0 是无效客户」在同一个入口打架。
+    ///
+    /// <para>列表带出变动前后的余额（流水表里已冗余），后台排查客诉问的是
+    /// 「当时还剩多少」，而回表只能算出「现在还剩多少」。</para>
+    /// </remarks>
+    [HttpPost("RecordsAll")]
+    public Task<ApiResponse<PagedResult<AdminPointRecordItem>>> RecordsAll(
+        [FromBody] QueryAdminPointRecordsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>保存积分规则（整组覆盖）。</summary>
     /// <param name="command">命令，7 条规则全量提交。</param>
     /// <param name="ct">取消令牌。</param>

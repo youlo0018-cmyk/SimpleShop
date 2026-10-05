@@ -331,6 +331,55 @@ Invoke-Case 'API-ADM-053' 'coupons/Settle 空订单行返回 400（同一类缺�
     (Post-EpStatus '/gateway/coupons/Settle' @{ customerId = 0; lines = $null } $auth) -eq 400
 }
 
+Write-Host "`n=== 文件管理 / 积分流水（补齐占位页所需的后端）===" -ForegroundColor Cyan
+
+Invoke-Case 'API-ADM-070' 'files/List 返回分页结果（含可读大小与分类中文名）' {
+    $r = Post-Ep '/gateway/files/List' @{ page = 1; pageSize = 5 }
+    # 显式加括号：PowerShell 里 -and 与 -or **优先级相同、左结合**，
+    # 写成 `A -and B -or C` 会被解析成 `(A -and B) -or C` —— 于是 C 一真就整体通过，
+    # 前面的断言全部白写，测试变成永远绿的摆设。
+    if (-not ($r.Success -and $r.data -ne $null)) { return $false }
+
+    $items = @($r.data.items)
+    if ($items.Count -eq 0) { return $true }
+
+    return ($items[0].sizeText -match '\s(B|KB|MB|GB)$') -and ([bool]$items[0].categoryName)
+}
+
+Invoke-Case 'API-ADM-071' 'files/List 拒绝未知分类（ToolService 此前完全没有校验管道）' {
+    # 这一条同时守住 ToolService 的校验管道：它以前只注册了 AddMediatR，
+    # 没注册 AddValidatorsFromAssembly 与 ValidationBehavior，命令一条校验都不跑。
+    (Post-EpStatus '/gateway/files/List' @{ page = 1; pageSize = 5; category = 'not-a-category' } $auth) -eq 400
+}
+
+Invoke-Case 'API-ADM-072' 'files/List 拒绝越界页码' {
+    (Post-EpStatus '/gateway/files/List' @{ page = 0; pageSize = 5 } $auth) -eq 400
+}
+
+Invoke-Case 'API-ADM-073' 'files/Delete 不存在的文件返回 404' {
+    $r = Post-Ep '/gateway/files/Delete' @{ fileId = 999999999 }
+    -not $r.Success -and $r.Code -eq 404
+}
+
+Invoke-Case 'API-ADM-074' 'points/RecordsAll 跨客户返回流水且带动作中文名' {
+    $r = Post-Ep '/gateway/points/RecordsAll' @{ page = 1; pageSize = 5 }
+    if (-not ($r.Success -and $r.data -ne $null)) { return $false }
+
+    $items = @($r.data.items)
+    if ($items.Count -eq 0) { return $true }
+
+    return [bool]$items[0].actionName
+}
+
+Invoke-Case 'API-ADM-075' 'points/RecordsAll 按动作筛选生效' {
+    $r = Post-Ep '/gateway/points/RecordsAll' @{ page = 1; pageSize = 5; action = 'signin' }
+    $r.Success -and @($r.data.items | Where-Object { $_.action -ne 'signin' }).Count -eq 0
+}
+
+Invoke-Case 'API-ADM-076' 'points/RecordsAll 拒绝越界每页条数' {
+    (Post-EpStatus '/gateway/points/RecordsAll' @{ page = 1; pageSize = 5000 } $auth) -eq 400
+}
+
 Write-Host "`n=== 鉴权：受限账号必须被拒 ===" -ForegroundColor Cyan
 
 # 造一个「什么都读不了」的账号，用它验证上面这些端点确实绑了权限点。
@@ -379,6 +428,8 @@ if ($roAuth) {
         @{ Id = 'API-ADM-063'; Path = '/gateway/logistics-companies/List'; Body = @{ page = 1; pageSize = 5 } },
         @{ Id = 'API-ADM-064'; Path = '/gateway/points/Rules'; Body = @{} },
         @{ Id = 'API-ADM-065'; Path = '/gateway/products/SearchIndex/Reconcile'; Body = @{ pageSize = 10 } }
+        @{ Id = 'API-ADM-066'; Path = '/gateway/files/List'; Body = @{ page = 1; pageSize = 5 } },
+        @{ Id = 'API-ADM-067'; Path = '/gateway/points/RecordsAll'; Body = @{ page = 1; pageSize = 5 } }
     )) {
         $probeId = $probe.Id
         $probePath = $probe.Path

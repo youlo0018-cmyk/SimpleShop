@@ -111,6 +111,24 @@ public interface IPointRepository
     Task<(List<PointRecord> Items, long Total)> QueryRecordsAsync(
         long customerId, int page, int pageSize, CancellationToken ct = default);
 
+    /// <summary>后台分页查积分流水（<b>跨客户</b>）。</summary>
+    /// <param name="page">页码，从 1 起。</param>
+    /// <param name="pageSize">每页条数。</param>
+    /// <param name="customerId">客户 Id 过滤，0 表示不限。</param>
+    /// <param name="action">动作过滤，空表示不限。</param>
+    /// <param name="bizNo">业务单号过滤，空表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>流水列表与总数。幂等只读。</returns>
+    /// <remarks>
+    /// 与 <see cref="QueryRecordsAsync"/> 分开而不是加个 customerId=0 的「不限」分支：
+    /// 那个方法带 customerId 是因为它给 C 端「我的积分」用，
+    /// 复用它做后台查询的话，「0 表示不限」与「0 是无效客户」这两种含义会在同一个入口打架。
+    /// 分成两个方法后，**C 端那个必须传客户 Id** 这件事在类型上就是显然的。
+    /// </remarks>
+    Task<(List<PointRecord> Items, long Total)> QueryRecordsAdminAsync(
+        int page, int pageSize, long customerId, string action, string bizNo,
+        CancellationToken ct = default);
+
     /// <summary>取某笔冻结批次的明细（各发放批次划走多少）。</summary>
     /// <param name="bizNo">业务单号。</param>
     /// <param name="ct">取消令牌。</param>

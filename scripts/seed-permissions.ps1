@@ -111,9 +111,10 @@ $leaves = [ordered]@{
     # 结束动作的真名是 Finish，不是 End。
     '2117' = @(@('seckill:read', '秒杀场次列表', '/gateway/marketing/seckill/sessions/List'), @('seckill:create', '新建场次', '/gateway/marketing/seckill/sessions/Create'),
              @('seckill:update', '编辑场次', '/gateway/marketing/seckill/sessions/Update'), @('seckill:end', '结束中止场次', '/gateway/marketing/seckill/sessions/Finish'))
-    # 积分报表在 PointService 的 reports/Point 上，不在 points/Report。
-    # 积分流水列表挂在 points/Records（新增），规则维护挂在 points/Rules（新增）。
-    '2118' = @(@('point:read', '积分报表与流水', '/gateway/points/Records'), @('point:rule-update', '积分规则维护', '/gateway/points/Rules'))
+    # 后台积分流水走 points/RecordsAll（跨客户），C 端的 points/Records 是「只看自己的」，
+    # 刻意不绑权限点：它是客户令牌访问的，带上后台权限点会把小程序自己的积分页挡掉。
+    # 积分报表在 reports/Point 上（report:view 的通配已覆盖），规则维护在 points/Rules。
+    '2118' = @(@('point:read', '积分流水', '/gateway/points/RecordsAll'), @('point:rule-update', '积分规则维护', '/gateway/points/Rules'))
     # ⚠️ 后台评价端点在 EvaluateAdminController 上，路由是 **evaluates/admin/**
     # （真实路径 /gateway/evaluates/admin/Reply 等）。
     # 这里原本绑的是 /gateway/evaluates/Reply —— 少了一层 admin，

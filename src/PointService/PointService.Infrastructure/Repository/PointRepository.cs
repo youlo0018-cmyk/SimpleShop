@@ -509,6 +509,41 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
     }
 
     /// <inheritdoc />
+    public async Task<(List<PointRecord> Items, long Total)> QueryRecordsAdminAsync(
+        int page, int pageSize, long customerId, string action, string bizNo,
+        CancellationToken ct = default)
+    {
+        var select = _db.Select<PointRecord>()
+            .Where(a => customerId <= 0 || a.CustomerId == customerId);
+
+        if (!string.IsNullOrWhiteSpace(action))
+        {
+            var act = action.Trim();
+            select = select.Where(a => a.Action == act);
+        }
+
+        if (!string.IsNullOrWhiteSpace(bizNo))
+        {
+            var no = bizNo.Trim();
+            select = select.Where(a => a.BizNo == no);
+        }
+
+        var total = await select.CountAsync(ct).ConfigureAwait(false);
+
+        // 按发生时间倒序，再按 Id 兜底。后台查流水问的是「刚刚发生了什么」，
+        // 而同一毫秒可能有多条（签到 + 发放就在同一次请求里），
+        // 少了那个 Id 就会出现翻页时同一行出现在两页。
+        var items = await select
+            .OrderByDescending(a => a.CreatedAt)
+            .OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return (items, total);
+    }
+
+    /// <inheritdoc />
     public async Task<List<PointLockLot>> GetLockLotsAsync(string bizNo, CancellationToken ct = default)
     {
         var lockRow = _db.Select<PointLock>().Where(a => a.BizNo == bizNo).First();

@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>ToolService.Api</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: 缺 XML 注释的公开成员。100% 注释是强制规范，宁可编译失败也不放过 -->
+    <WarningsAsErrors>CS1591</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,6 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Consul.AspNetCore" Version="1.7.14.1" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.0.0" />
   </ItemGroup>
 
 </Project>

@@ -192,6 +192,25 @@ public static class PointActions
 
     /// <summary>签到发放（独立 action，便于按 action 统计签到积分）。</summary>
     public const string SignIn = "signin";
+
+    /// <summary>取中文名。</summary>
+    /// <param name="action">动作值。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    /// <remarks>
+    /// DATA_SPEC 4.5：枚举文案由**后端下发**，前端不维护对照表。
+    /// 两边各写一份的后果是后端加了新 action、前端忘了改，界面直接显示一个裸字符串。
+    /// </remarks>
+    public static string NameOf(string action) => action switch
+    {
+        Earn => "发放",
+        Lock => "冻结",
+        Unfreeze => "解冻",
+        Consume => "实扣",
+        Refund => "回收",
+        Expire => "过期",
+        SignIn => "签到",
+        _ => "未知"
+    };
 }
 
 /// <summary>积分发放来源。</summary>
