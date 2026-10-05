@@ -146,6 +146,26 @@ async function visit(page, item) {
       return (el?.textContent || '').trim();
     });
 
+    // 表格渲染完整性：配置声明了几列，表头就该有几列。
+    // 这条是被真实 bug 逼出来的：操作列被 `<template #default>` + v-if 包住，
+    // 顶替了整个默认插槽，于是**所有数据列消失、只剩操作列**——
+    // 而控制台一行错都没有、页面也不算白屏，纯靠「有没有报错」判定会全绿。
+    // 「渲染出来的结构对不对」必须单独断言，不能指望异常来报。
+    const tableCols = await page.evaluate(() => {
+      const ths = document.querySelectorAll('.el-table__header th');
+      const names = [];
+      ths.forEach((th) => {
+        const t = (th.textContent || '').trim();
+        if (t) names.push(t);
+      });
+      return names;
+    });
+    // 任何真实的列表都不可能只有 1 列。出现 1 列几乎必然是渲染结构出了问题
+    //（而不报错）。不依赖配置、纯靠结构就能判，所以对所有页面都成立。
+    if (tableCols.length === 1) {
+      errors.push(`表格只渲染出 1 列「${tableCols[0]}」，数据列很可能被插槽顶替丢弃了`);
+    }
+
     const name = `${slug(item.group)}-${slug(item.title)}`;
     await page.screenshot({
       path: path.join(SHOT_DIR, `adm-${name}-1440x900.png`),

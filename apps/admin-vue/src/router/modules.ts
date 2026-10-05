@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router';
 import { REPORTS } from './report-configs';
+import { LISTS } from './list-configs';
 
 // 菜单与路由的单一来源（BUSINESS.md 5.2 的 23 组功能模块）。
 // meta.title 同时用于侧边栏文字与浏览器标题，meta.icon 是 Element Plus 图标名。
@@ -21,12 +22,28 @@ function ph(path: string, title: string, perm: string) {
 
 // 报表页：四张表同构，用同一个组件 + 各自的配置驱动。
 // 复制四个组件的话，改一次「金额怎么显示」要改四处。
-function reportRoute(path: string, name: string, title: string, perm: string) {
+// 配置键同样显式传入，不从 name 推导（理由同 listRoute）。
+function reportRoute(path: string, name: string, title: string, perm: string, configKey: keyof typeof REPORTS) {
   return {
     path,
     name,
     component: () => import('@/views/ReportView.vue'),
-    props: { config: REPORTS[name.replace('report-', '') as keyof typeof REPORTS] },
+    props: { config: REPORTS[configKey] },
+    meta: { title, perm },
+  };
+}
+
+// 列表页同构：一个 ListView + 各自的配置驱动。
+// 配置键**显式传入**，不从 name 推导 —— 推导过的那版把
+// customer-list -> customer（键其实叫 customers）、stock-list -> stock（键叫 inventory），
+// 结果 config 为 undefined，页面直接抛 `Cannot read properties of undefined`。
+// 名字与键对不上是常态，显式传才不会悄悄错位。
+function listRoute(path: string, name: string, title: string, perm: string, configKey: keyof typeof LISTS) {
+  return {
+    path,
+    name,
+    component: () => import('@/views/ListView.vue'),
+    props: { config: LISTS[configKey] },
     meta: { title, perm },
   };
 }
@@ -52,7 +69,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'customers',
     meta: { title: '客户', icon: 'UserFilled', perm: 'customer:read' },
     children: [
-      { path: '', name: 'customer-list', ...ph('', '客户列表', 'customer:read') },
+      listRoute('', 'customer-list', '客户列表', 'customer:read', 'customers'),
       { path: 'detail/:id', name: 'customer-detail', ...ph('detail/:id', '客户详情', 'customer:read') },
     ],
   },
@@ -103,7 +120,7 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'products',
     meta: { title: '商品', icon: 'Goods', perm: 'product:read' },
     children: [
-      { path: '', name: 'product-list', ...ph('', '商品列表', 'product:read') },
+      listRoute('', 'product-list', '商品列表', 'product:read', 'products'),
       { path: 'create', name: 'product-create', ...ph('create', '新建商品', 'product:create') },
       { path: 'edit/:id', name: 'product-edit', ...ph('edit/:id', '编辑商品', 'product:update') },
       { path: 'audit', name: 'product-audit', ...ph('audit', '商品审核', 'product:audit') },
@@ -112,7 +129,7 @@ export const adminRoutes: RouteRecordRaw[] = [
   {
     path: 'inventory',
     meta: { title: '库存', icon: 'Coin', perm: 'stock:read' },
-    children: [{ path: '', name: 'stock-list', ...ph('', '库存管理', 'stock:read') }],
+    children: [listRoute('', 'stock-list', '库存管理', 'stock:read', 'inventory')],
   },
   {
     path: 'search-index',
@@ -207,10 +224,10 @@ export const adminRoutes: RouteRecordRaw[] = [
     path: 'reports',
     meta: { title: '报表', icon: 'DataLine', perm: 'report:view' },
     children: [
-      reportRoute('business', 'report-business', '经营报表', 'report:view'),
-      reportRoute('marketing', 'report-marketing', '营销效果报表', 'report:marketing'),
-      reportRoute('seckill', 'report-seckill', '秒杀效果报表', 'report:seckill'),
-      reportRoute('point', 'report-point', '积分报表', 'report:view'),
+      reportRoute('business', 'report-business', '经营报表', 'report:view', 'business'),
+      reportRoute('marketing', 'report-marketing', '营销效果报表', 'report:marketing', 'marketing'),
+      reportRoute('seckill', 'report-seckill', '秒杀效果报表', 'report:seckill', 'seckill'),
+      reportRoute('point', 'report-point', '积分报表', 'report:view', 'point'),
     ],
   },
   {

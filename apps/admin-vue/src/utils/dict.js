@@ -116,6 +116,19 @@ const D = {
     1: { text: '启用', color: 'success' },
     2: { text: '停用', color: 'neutral' },
   },
+
+  // 客户账号状态（与 userStatus 数值相同但语义不同，分开写以免将来改一边忘了另一边）
+  customer: {
+    1: { text: '正常', color: 'success' },
+    2: { text: '已停用', color: 'neutral' },
+  },
+
+  // 库存是否预警。这个字段本来就是布尔，字典表照样管颜色，
+  // 免得页面里为它单写一套 if。
+  lowStock: {
+    true: { text: '需补货', color: 'warning' },
+    false: { text: '充足', color: 'neutral' },
+  },
 };
 
 // 取状态对应的语义色档位。
@@ -123,7 +136,10 @@ const D = {
 export function statusColor(kind, value) {
   const map = D[kind];
   if (!map) return 'neutral';
-  const hit = map[Number(value)];
+  // 布尔字段（如 isLowStock）的字典键就是 true/false，
+  // 直接 Number() 会把它们变成 1/0 然后匹配不上。
+  // 所以先按原值试一次，再退回数字键。
+  const hit = map[value] || map[Number(value)];
   return hit ? hit.color : 'neutral';
 }
 
@@ -131,7 +147,7 @@ export function statusColor(kind, value) {
 export function statusText(kind, value) {
   const map = D[kind];
   if (!map) return '';
-  const hit = map[Number(value)];
+  const hit = map[value] || map[Number(value)];
   return hit ? hit.text : '';
 }
 
