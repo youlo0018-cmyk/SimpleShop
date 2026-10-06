@@ -108,9 +108,15 @@ public sealed class QueryRefundsHandler : IRequestHandler<QueryRefundsCommand, A
 /// <summary>退款模块的展示装配。</summary>
 public static class RefundAssembler
 {
-    /// <summary>把 UTC 时间转成展示字符串。</summary>
+    /// <summary>把 UTC 时间格式化成字符串（**仍是 UTC**）。</summary>
     /// <param name="utc">UTC 时间。</param>
-    /// <returns>展示用字符串。</returns>
+    /// <returns>UTC 展示字符串。</returns>
+    /// <remarks>
+    /// <b>不转服务器本地时区</b>：DATA_SPEC 4.8 要求「后端返回 UTC 字符串，前端统一格式化为 Asia/Shanghai」，
+    /// 2.8 的「展示层统一转 Asia/Shanghai」指的也是前端。
+    /// 服务端 ToLocalTime 的后果是正确性绑在容器时区上：镜像默认 UTC 时，
+    /// 返回的时间会被前端当成本地时间再转一次，整体差 8 小时（2.8 那句「容器时区变化不会污染」正是要避免这个）。
+    /// </remarks>
     public static string FormatTime(DateTime utc)
-        => DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+        => DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToString("yyyy-MM-dd HH:mm");
 }

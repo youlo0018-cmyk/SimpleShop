@@ -53,9 +53,10 @@ public sealed class QueryActivityRecordsHandler
             a.OrderNo,
             a.CustomerId,
             a.DiscountAmount,
-            // 与其余后台列表同一口径：库里存 UTC，展示转服务器本地时区（DATA_SPEC 2.8）
+            // 与其余后台列表同一口径：库里存 UTC，**接口也回 UTC**，转 Asia/Shanghai 由前端做
+            // （DATA_SPEC 4.8；服务端 ToLocalTime 会把正确性绑在容器时区上）
             DateTime.SpecifyKind(a.CreatedAt, DateTimeKind.Utc)
-                .ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")))
+                .ToString("yyyy-MM-dd HH:mm:ss")))
             .ToList();
 
         return ApiResults.Ok(new PagedResult<ActivityRecordItem>(

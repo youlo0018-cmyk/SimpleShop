@@ -605,6 +605,25 @@ Invoke-Case 'API-PAY-046' '🔴 退款单列表 / 详情返回平台与店铺**�
         -and $detail.data.merchantName -eq $row.merchantName
 }
 
+Invoke-Case 'API-PAY-047' '🔴 接口返回的时间是 UTC，不是服务器本地时间' {
+    # DATA_SPEC 4.8：后端返回 UTC 字符串，前端统一格式化为 Asia/Shanghai。
+    # 之前这里有 7 处 ToLocalTime：本机时区恰好是 +08 时「看起来对」，
+    # 换成默认 UTC 的容器就会整体差 8 小时 —— 而 2.8 那句「容器时区变化不会污染历史数据」正是要防这个。
+    $list = PayPost '/refunds/List' @{ status = 0; page = 1; pageSize = 5 }
+    $row = @($list.data.items)[0]
+    if ($null -eq $row) { return $false }
+
+    $returned = [datetime]::ParseExact($row.createdAt, 'yyyy-MM-dd HH:mm', $null)
+    $utcNow = [DateTime]::UtcNow
+    $diff = [Math]::Abs(($returned - $utcNow).TotalMinutes)
+
+    Write-Host ("        返回 {0}；UTC 现在 {1}；相差 {2:N1} 分钟" -f `
+        $row.createdAt, $utcNow.ToString('yyyy-MM-dd HH:mm'), $diff) -ForegroundColor DarkGray
+
+    # 返回本地时间的话会差 480 分钟（+08），判据取「几分钟内」留出执行耗时
+    return $diff -le 10
+}
+
 Invoke-Case 'API-PAY-090' '删商品 → 删分类' {
     if ($script:productId -gt 0) {
         Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `

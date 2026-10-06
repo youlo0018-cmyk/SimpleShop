@@ -30,9 +30,10 @@ public sealed class QueryCustomerFavoritesHandler
 
         var dtos = items.Select(a => new CustomerFavoriteDto(
             a.SpuId.ToString(),
-            // 与其余 C 端列表同一口径：库里存 UTC，展示转服务器本地时区（DATA_SPEC 2.8）
+            // 与其余 C 端列表同一口径：库里存 UTC，**接口也回 UTC**，转 Asia/Shanghai 由前端做
+            // （DATA_SPEC 4.8；服务端 ToLocalTime 会把正确性绑在容器时区上）
             DateTime.SpecifyKind(a.FavoritedAt, DateTimeKind.Utc)
-                .ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))).ToList();
+                .ToString("yyyy-MM-dd HH:mm:ss"))).ToList();
 
         return ApiResults.Ok(new PagedResult<CustomerFavoriteDto>(
             dtos, total, request.Page, request.PageSize));

@@ -534,11 +534,15 @@ public static class MerchantAssembler
     /// <summary>展示时间格式：本地时区，不带时区后缀。</summary>
     private const string TimeFormat = "yyyy-MM-dd HH:mm";
 
-    /// <summary>把 UTC 时间转成展示字符串。</summary>
+    /// <summary>把 UTC 时间格式化成字符串（**仍是 UTC**）。</summary>
     /// <param name="utc">UTC 时间。</param>
-    /// <returns>展示用字符串。</returns>
+    /// <returns>UTC 展示字符串。</returns>
+    /// <remarks>
+    /// DATA_SPEC 4.8：后端返回 UTC 字符串，前端统一格式化为 Asia/Shanghai。
+    /// 服务端 ToLocalTime 会让镜像时区决定显示时间。
+    /// </remarks>
     public static string FormatTime(DateTime utc)
-        => DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToLocalTime().ToString(TimeFormat);
+        => DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToString(TimeFormat);
 }
 
 /// <summary>商户下拉框处理器。</summary>

@@ -132,9 +132,13 @@ internal static class PaymentAssembler
             message);
     }
 
-    /// <summary>把 UTC 时间转成展示字符串。</summary>
+    /// <summary>把 UTC 时间格式化成字符串（**仍是 UTC**）。</summary>
     /// <param name="utc">UTC 时间。</param>
-    /// <returns>展示用字符串。</returns>
+    /// <returns>UTC 展示字符串。</returns>
+    /// <remarks>
+    /// 与退款侧同一口径：DATA_SPEC 4.8 要求后端返回 UTC，Asia/Shanghai 的转换在前端做。
+    /// 服务端 ToLocalTime 会把正确性绑在容器时区上。
+    /// </remarks>
     public static string FormatTime(DateTime utc)
-        => DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        => DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToString("yyyy-MM-dd HH:mm:ss");
 }
