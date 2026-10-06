@@ -478,6 +478,29 @@ Invoke-Case 'API-MKT-066' '旧客户端仍带 perOrderLimit / totalQuantity 时�
     return $r.data.activityDiscount -eq 10
 }
 
+Invoke-Case 'API-MKT-067' '🔴 编辑活动也要校验「指定商品范围必须填列表」（两条路径规则必须一致）' {
+    # 编辑校验曾经少写了这条规则：同样的活动**建不出来、却能改出来**，
+    # 改完它对谁都生效不了（适用金额恒为 0），而列表上显示的是「已启用」。
+    $id = (New-Activity @{
+        activityType = 1; thresholdAmount = 0; discountAmount = 10
+        targetType = 3; targets = '[1001]'
+        activityName = "编辑校验$($script:suffix)"
+    }).data
+    if (-not $id) { return $false }
+
+    $r = Post-Api '/marketing/activities/Update' @{
+        activityId = [long]$id; activityName = "编辑校验$($script:suffix)"
+        activityType = 1; thresholdAmount = 0; discountAmount = 10
+        discountRate = 0; giftTemplateId = 0; giftQuantity = 1
+        targetType = 3; targets = '[]'
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        sortOrder = 0; status = 1
+    }
+    Stop-Activity ([long]$id)
+    return (-not $r.success) -and (Get-ErrorText $r) -match '商品 Id 列表'
+}
+
 Write-Host "`n=== GFT 满赠发券（下单承诺 → 支付兑现）===" -ForegroundColor Cyan
 
 # 满赠的判定发生在**下单**那一刻（活动时间窗、门槛、赠送张数都按下单当时算），

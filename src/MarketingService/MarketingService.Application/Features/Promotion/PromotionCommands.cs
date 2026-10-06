@@ -6,6 +6,52 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace MarketingService.Application.Features.Promotion;
 
+/// <summary>活动的可校验字段（新建与编辑共用同一套规则）。</summary>
+/// <remarks>
+/// <b>为什么要抽这一层</b>：新建与编辑是同一个表单的两条路径，规则必须一模一样。
+/// 各写一份的结果是缺陷只会从松的那一侧漏出来 —— 实际就漏过一条：
+/// 编辑校验少写了「指定商品范围时必须填商品 Id 列表」，于是「指定 SPU 但不填列表」
+/// 的活动可以建不出来、却能改出来，改完它对谁都生效不了（适用金额恒为 0）。
+/// </remarks>
+public interface IPromotionActivitySpec
+{
+    /// <summary>活动名。</summary>
+    string ActivityName { get; }
+
+    /// <summary>活动类型，见 <see cref="ActivityTypes"/>。</summary>
+    int ActivityType { get; }
+
+    /// <summary>门槛金额。</summary>
+    decimal ThresholdAmount { get; }
+
+    /// <summary>优惠金额（满减用）。</summary>
+    decimal DiscountAmount { get; }
+
+    /// <summary>折扣率（满折用）。</summary>
+    decimal DiscountRate { get; }
+
+    /// <summary>满赠赠送的券模板 Id。</summary>
+    long GiftTemplateId { get; }
+
+    /// <summary>满赠每单赠送张数。</summary>
+    int GiftQuantity { get; }
+
+    /// <summary>适用范围类型。</summary>
+    int TargetType { get; }
+
+    /// <summary>适用范围的 JSON 文本。</summary>
+    string Targets { get; }
+
+    /// <summary>开始时间（UTC）。</summary>
+    DateTime StartTime { get; }
+
+    /// <summary>结束时间（UTC）。</summary>
+    DateTime EndTime { get; }
+
+    /// <summary>状态，1 启用 / 2 停用。</summary>
+    int Status { get; }
+}
+
 /// <summary>新建营销活动。</summary>
 /// <param name="ActivityName">活动名，2-128 字符。</param>
 /// <param name="ActivityType">活动类型，见 <see cref="ActivityTypes"/>。</param>
@@ -39,7 +85,7 @@ public record CreatePromotionActivityCommand(
     int SortOrder = 0,
     int Status = 1,
     long PlatformId = 0,
-    long MerchantId = 0) : IRequest<ApiResponse<long>>;
+    long MerchantId = 0) : IRequest<ApiResponse<long>>, IPromotionActivitySpec;
 
 /// <summary>编辑营销活动。</summary>
 /// <param name="ActivityId">活动 Id。</param>
@@ -70,7 +116,7 @@ public record UpdatePromotionActivityCommand(
     DateTime StartTime,
     DateTime EndTime,
     int SortOrder,
-    int Status) : IRequest<ApiResponse>;
+    int Status) : IRequest<ApiResponse>, IPromotionActivitySpec;
 
 /// <summary>活动分页（后台）。</summary>
 /// <param name="ActivityType">活动类型，0 表示全部。</param>
@@ -227,11 +273,18 @@ public static class PromotionValidators
         services.AddScoped<IValidator<QueryActivityRecordsCommand>, QueryActivityRecordsValidator>();
     }
 
-    /// <summary>新建校验。</summary>
-    private sealed class CreatePromotionValidator : AbstractValidator<CreatePromotionActivityCommand>
+    /// <summary>活动字段规则（新建与编辑共用）。</summary>
+    /// <typeparam name="T">命令类型，实现 <see cref="IPromotionActivitySpec"/>。</typeparam>
+    /// <remarks>
+    /// 各写一份的结果是缺陷只会从松的那一侧漏出来 —— 实际就漏过一条：
+    /// 编辑校验少写了「指定商品范围时必须填商品 Id 列表」，于是「指定 SPU 但不填列表」
+    /// 的活动建不出来、却能改出来，改完它对谁都生效不了（适用金额恒为 0）。
+    /// </remarks>
+    private sealed class PromotionActivityRules<T> : AbstractValidator<T>
+        where T : IPromotionActivitySpec
     {
-        /// <summary>构造校验器。</summary>
-        public CreatePromotionValidator()
+        /// <summary>构造规则集。</summary>
+        public PromotionActivityRules()
         {
             RuleFor(x => x.ActivityName).NotEmpty().MinimumLength(2).MaximumLength(128)
                 .WithMessage("活动名 2-128 个字符");
@@ -298,71 +351,28 @@ public static class PromotionValidators
             RuleFor(x => x.EndTime).NotEqual(default(DateTime)).WithMessage("请填写活动结束时间");
             RuleFor(x => x.EndTime).GreaterThan(x => x.StartTime).WithMessage("活动结束时间必须晚于开始时间");
             RuleFor(x => x.Status).Must(a => a is 1 or 2).WithMessage("状态不正确");
+        }
+    }
+
+    /// <summary>新建校验。字段规则与编辑完全一致，另加「商户 Id 不能为负」。</summary>
+    private sealed class CreatePromotionValidator : AbstractValidator<CreatePromotionActivityCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public CreatePromotionValidator()
+        {
+            Include(new PromotionActivityRules<CreatePromotionActivityCommand>());
             RuleFor(x => x.MerchantId).GreaterThanOrEqualTo(0).WithMessage("商户 Id 不能为负数");
         }
     }
 
-    /// <summary>编辑校验。规则与新建一致，外加活动 Id 必须为正。</summary>
+    /// <summary>编辑校验。字段规则与新建完全一致，另加活动 Id 必须为正。</summary>
     private sealed class UpdatePromotionValidator : AbstractValidator<UpdatePromotionActivityCommand>
     {
         /// <summary>构造校验器。</summary>
         public UpdatePromotionValidator()
         {
             RuleFor(x => x.ActivityId).GreaterThan(0).WithMessage("活动 Id 必须为正数");
-            RuleFor(x => x.ActivityName).NotEmpty().MinimumLength(2).MaximumLength(128)
-                .WithMessage("活动名 2-128 个字符");
-
-            // 下面每条 RuleFor 都必须写成 `x => x.某个属性` 的**具体属性表达式**。
-            //
-            // 踩过的坑：原本抽了一个共用的泛型辅助方法，内部是
-            // `RuleFor(x => amount(x))` 这种**方法调用表达式**。FluentValidation
-            // 从表达式里提取属性名，方法调用提不出来，于是错误键变成空字符串，
-            // 响应变成 {"errors":{"":["满减活动必须填写优惠金额，且大于 0"]}}。
-            // 前端拿到空键就没法把这句提示挂到对应输入框下面——而那正是需求里
-            // 「提交校验失败时输入框下方备注失败原因」要的东西。
-            // 校验失败但用户不知道是哪一栏错了，比不校验还糟。
-            // 括号是必需的：关系模式（>= A and <= B）与相等模式（== C）之间要用 or 连接时，
-            // 必须把关系模式整体括起来，否则编译器报 CS9135「应为 int 类型的常量值」。
-            RuleFor(x => x.ActivityType).Must(a =>
-                    a is (>= ActivityTypes.FullReduction and <= ActivityTypes.Discount) or ActivityTypes.Gift)
-                .WithMessage("活动类型不正确");
-
-            RuleFor(x => x.ActivityType).Must(a => a != ActivityTypes.Seckill)
-                .WithMessage("限时抢购请通过秒杀场次入口维护，不要用普通活动入口");
-
-            RuleFor(x => x.ThresholdAmount).InclusiveBetween(0m, 9_999_999.99m)
-                .WithMessage("门槛金额超出范围");
-
-            // 满减必须给金额、满折必须给折扣率、满赠必须给券模板。
-            // 不校验就会出现「建了个满减但没填金额」的活动：它会命中却什么也不减，
-            // 用户看到「已参与活动」却没便宜——这是最容易被投诉的一种配置错误。
-            When(x => x.ActivityType == ActivityTypes.FullReduction, () =>
-            {
-                RuleFor(x => x.DiscountAmount).InclusiveBetween(0.01m, 9_999_999.99m)
-                    .WithMessage("满减活动必须填写优惠金额，且大于 0");
-            });
-
-            When(x => x.ActivityType == ActivityTypes.Discount, () =>
-            {
-                RuleFor(x => x.DiscountRate).InclusiveBetween(0.01m, 10m)
-                    .WithMessage("满折折扣率必须在 0.01 ~ 10 之间，8.5 表示 85 折");
-            });
-
-            When(x => x.ActivityType == ActivityTypes.Gift, () =>
-            {
-                RuleFor(x => x.GiftTemplateId).GreaterThan(0)
-                    .WithMessage("满赠活动必须选择赠送的券模板");
-
-                RuleFor(x => x.GiftQuantity).InclusiveBetween(1, 100)
-                    .WithMessage("满赠赠送张数必须在 1 ~ 100 之间");
-            });
-
-            RuleFor(x => x.TargetType).Must(a => a is >= TargetTypes.All and <= TargetTypes.BySku)
-                .WithMessage("适用范围类型不正确");
-            RuleFor(x => x.StartTime).NotEqual(default(DateTime)).WithMessage("请填写活动开始时间");
-            RuleFor(x => x.EndTime).NotEqual(default(DateTime)).WithMessage("请填写活动结束时间");
-            RuleFor(x => x.EndTime).GreaterThan(x => x.StartTime).WithMessage("活动结束时间必须晚于开始时间");
-            RuleFor(x => x.Status).Must(a => a is 1 or 2).WithMessage("状态不正确");
+            Include(new PromotionActivityRules<UpdatePromotionActivityCommand>());
         }
     }
 
