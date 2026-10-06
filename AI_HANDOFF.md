@@ -190,19 +190,19 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
 | `dotnet test`（单元测试） | **384/384** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **686/686**，18 个脚本全绿 |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **690/690**，18 个脚本全绿 |
 | └ `admin-endpoints-regression.ps1` | 72/72 |
 | └ `api-regression.ps1` | 16/16 |
 | └ `auth-regression.ps1` | 19/19 |
 | └ `cart-regression.ps1` | 17/17 |
-| └ `customer-regression.ps1` | 16/16 |
+| └ `customer-regression.ps1` | 18/18 |
 | └ `design-regression.ps1` | 35/35 |
 | └ `evaluate-regression.ps1` | 44/44 |
 | └ `gateway-regression.ps1` | 25/25 |
 | └ `inventory-regression.ps1` | 26/26 |
 | └ `log-regression.ps1` | 19/19 |
 | └ `marketing-regression.ps1` | 97/97 |
-| └ `merchantplatform-regression.ps1` | 38/38 |
+| └ `merchantplatform-regression.ps1` | 40/40 |
 | └ `order-regression.ps1` | 88/88 |
 | └ `payment-regression.ps1` | 28/28 |
 | └ `point-regression.ps1` | 31/31 |
