@@ -326,10 +326,17 @@ Invoke-Case 'API-RPT-054' '🔴 售罄率不是整数除法的结果（int/int �
 }
 
 Invoke-Case 'API-RPT-055' '逐场次：参与人数不超过抢购记录数（去重口径生效）' {
-    # 同一客户反复点击只算一个参与者，所以参与人数必须严格小于等于记录数。
-    # 出现「参与人数 > 记录数」说明去重被写成了求和。
+    # 🔴 这里原来断言 participantCount <= grabSuccessCount，**把两个口径当成了同一个集合**。
+    #
+    # BUSINESS.md 17 把它们列为两个独立指标：
+    #   参与人数   = 点过「抢购」的**不同客户数**（含没抢到的）
+    #   抢购成功数 = 成功的**记录数**
+    # 10 个人来抢、1 个成功时，参与人数(10) > 成功数(1) 完全正常 ——
+    # 旧的断言会把这种完全正常的场次判成「去重被写成了求和」。
+    #
+    # 真正该守的不变量是「抢到的人必然参与过」：成功数不能超过参与人数。
     foreach ($s in $script:skl.data.sessions) {
-        if ($s.grabSuccessCount -gt 0 -and $s.participantCount -gt $s.grabSuccessCount) { return $false }
+        if ($s.grabSuccessCount -gt 0 -and $s.participantCount -lt $s.grabSuccessCount) { return $false }
     }
     return $true
 }

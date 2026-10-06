@@ -852,6 +852,66 @@ Invoke-Case 'API-SKL-025' '🔴 P0 第三个客户抢到后，第四个客户拿
     return $r2.data.resultStatus -eq 1 -and $r3.data.resultStatus -eq 2 -and $r3.data.message -match '抢完'
 }
 
+Invoke-Case 'API-SKL-025b' '🔴 P0 预扣成功但下单失败：Redis 余量必须还回去' {
+    # 这是 TEST_CASES 的 P0-SEC-003，此前没有任何自动化覆盖。
+    #
+    # 抢购的顺序是「Redis 原子预扣 → 落限购记录 → 下单 → sold_count +1」。
+    # 下单这一步是**会失败**的（积分不足、券不可用、商品服务抖动……），
+    # 而预扣已经减掉了 1。失败时不还回去的话，这一件就凭空消失：
+    # 没人买到它，余量却永久少 1 —— 场次结束时按余量回补，货就真丢了。
+    #
+    # 这里用「要抵扣一个天文数字的积分」来稳定触发下单失败
+    # （积分不足是最容易构造的失败原因，且不依赖任何外部服务抖动）。
+    $sid = [long](New-SklSession)
+    $itemId = [long](Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $sid; skuId = $script:sklSkuId; seckillPrice = 66.00; seckillStock = 3; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20).data
+    if (-not (Publish-Skl $sid).success) { return $false }
+
+    $key = "seckill:stock:$itemId"
+    $before = docker exec simpleshop-redis redis-cli -n 12 get $key
+    if ($before -ne '3') { Write-Host ("        初始余量异常: {0}" -f $before) -ForegroundColor DarkYellow; return $false }
+
+    # 预扣 1 之后下单失败（积分不足）
+    $cust = 980000000 + $script:suffix
+    $fail = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/grab' -Method Post `
+        -Body (@{ itemId = $itemId; customerId = $cust; pointsToUse = 999999999
+            receiverName = '预扣失败'; receiverPhone = '13800138000'; receiverAddress = '测试地址 1 号' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60
+    $afterFail = docker exec simpleshop-redis redis-cli -n 12 get $key
+
+    Write-Host ("        下单结果 success={0} status={1}；Redis 余量 {2} → {3}" -f `
+        $fail.success, $fail.data.resultStatus, $before, $afterFail) -ForegroundColor DarkGray
+
+    # 再抢一次必须还能成功：说明那 1 件确实还回去了
+    $okCustomer = 981000000 + $script:suffix
+    $ok = Invoke-Grab $itemId $okCustomer
+    $afterOk = docker exec simpleshop-redis redis-cli -n 12 get $key
+
+    # 同一个人再点一次：被限购拦下，但**参与人数不该因此 +1**。
+    # 「参与人数」是不同客户数（去重），不是点击次数 —— 写成了求和就会变成 3。
+    $again = Invoke-Grab $itemId $okCustomer
+
+    $report = Invoke-RestMethod "$Marketing/reports/Seckill" -Method Post `
+        -Body (@{ range = 4; sessionId = $sid } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60
+    $row = @($report.data.sessions | Where-Object { $_.sessionId -eq "$sid" })[0]
+    Write-Host ("        参与人数={0} 抢购成功数={1}（本次共 2 个不同客户、3 次点击）" -f `
+        $row.participantCount, $row.grabSuccessCount) -ForegroundColor DarkGray
+
+    # 清理：结束场次把剩余 2 件还回常规池
+    Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `
+        -Body (@{ sessionId = $sid; cancel = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    # 抢购接口对业务失败也是回 success=true + resultStatus（Reject 走的就是 ApiResults.Ok），
+    # 所以这里必须看 resultStatus = 5（OrderFailed），不能看 success。
+    return $fail.data.resultStatus -eq 5 -and $afterFail -eq '3' `
+        -and $ok.data.resultStatus -eq 1 -and $afterOk -eq '2' `
+        -and $again.data.resultStatus -eq 4 `
+        -and $row.participantCount -eq 2 -and $row.grabSuccessCount -eq 1
+}
+
 Invoke-Case 'API-SKL-026' 'sold_count 累计到 2，秒杀池库存正好卖完' {
     $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
         -Body (@{ sessionId = $script:grabSessionId } | ConvertTo-Json) `
