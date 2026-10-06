@@ -279,6 +279,19 @@ public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand,
                 $"当前订单状态是「{OrderStatusMachine.NameOf(order.Status)}」，只有待发货的订单可以发货");
         }
 
+        // 纯虚拟单必须走「虚拟发货」（20 → 50，不填物流信息）。
+        // 不拦的话，一张虚拟单会被推成 30 待收货：顾客被要求对一个卡号「确认收货」，
+        // 而虚拟商品的退款窗口是 {20,30} —— 等于让它一直可退，
+        // 与规格「虚拟商品交付即完成」正好相反（BUSINESS.md 10.2 / 11 链路）。
+        // 与 DeliverVirtual 里「实物不能用虚拟发货」是同一条对称规则。
+        var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
+        if (items.Count > 0 && items.All(a => a.DeliveryType == Domain.Entities.DeliveryTypes.Virtual))
+        {
+            return ApiResponseFactory.Fail(
+                BaseApiResponseCode.BusinessError,
+                "该订单是虚拟商品，请使用「虚拟发货」（不需要物流信息）");
+        }
+
         // 字典里查不到就把请求挡在这里，而不是发出去之后订单上挂一个空公司名。
         var companyName = await _logistics
             .ResolveNameAsync(request.LogisticsCompanyId, ct).ConfigureAwait(false);

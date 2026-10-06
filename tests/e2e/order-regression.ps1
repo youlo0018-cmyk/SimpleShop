@@ -1081,6 +1081,26 @@ Invoke-Case 'API-ORD-092' '实物订单不能用虚拟发货' {
     return (-not $r.success) -and $r.message -match '实物商品'
 }
 
+Invoke-Case 'API-ORD-093' '🔴 虚拟订单不能用实物发货接口（否则被推成待收货、一直可退）' {
+    # 与上一条对称：DeliverVirtual 拦实物单，Ship 也必须拦纯虚拟单。
+    # 不拦的话虚拟单会变成 30 待收货：顾客要对卡号「确认收货」，
+    # 而虚拟商品的退款窗口是 {20,30} —— 交付即完成的口径被绕过，它一直可退。
+    $o = OrderPost 'Create' (New-OrderBody 'vship' 2 1)
+    if (-not $o.success) { return $false }
+    $no = $o.data.orderNo
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+
+    $r = AdminOrderPost 'Ship' (New-ShipBody $no)
+    $d = Get-Order $no
+    Write-Host ("        用 Ship 发虚拟单: success={0} msg={1} 状态={2}" -f $r.success, $r.message, $d.status) -ForegroundColor DarkGray
+
+    $ok = (-not $r.success) -and $r.message -match '虚拟' -and $d.status -eq 20
+
+    # 收尾：用正确的入口把它交付掉，别留一张待发货的虚拟单
+    AdminOrderPost 'DeliverVirtual' @{ orderNo = $no; remark = '卡号 ABCD-0001' } | Out-Null
+    return $ok
+}
+
 Write-Host "`n=== ORD 支付超时关单 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-ORD-110' '🔴 超时未支付的订单被关掉，三项占用全部释放' {
