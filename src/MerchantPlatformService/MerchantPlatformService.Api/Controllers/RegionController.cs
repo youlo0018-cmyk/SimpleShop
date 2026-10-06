@@ -25,8 +25,9 @@ public sealed class RegionController : ControllerBase
     /// <param name="ct">取消令牌。</param>
     /// <returns>地区 JSON 数组；<c>isCustom = false</c> 表示回落的内置默认。</returns>
     /// <remarks>
-    /// 内置默认库目前**只有省级**（34 个），市 / 区县需要运营在后台「保存自定义」导入。
-    /// 返回结果带 <c>isCustom</c>，前端据此提示运营「当前用的是内置默认，建议导入完整数据」。
+    /// 内置默认是**完整的三级数据**（31 省 / 342 市 / 3056 区县，随程序发布），
+    /// 所以新装环境不改任何配置就能选省 / 市 / 区。
+    /// 返回结果带 <c>isCustom</c>，前端据此显示「内置默认 / 平台自定义」标签。
     /// </remarks>
     [HttpGet("Get")]
     public async Task<ActionResult<ApiResponse<RegionsResult>>> Get(

@@ -293,6 +293,35 @@ public sealed class QueryCouponActivitiesHandler
     }
 }
 
+/// <summary>券活动的池子规则。</summary>
+/// <remarks>
+/// 抽出来是因为新建与编辑是同一个表单的两条路径，规则必须一模一样
+/// （这个项目栽过一次：编辑路径少写一条规则，于是同样的配置「建不出来、却能改出来」）。
+/// </remarks>
+internal static class CouponActivityRules
+{
+    /// <summary>校验计划发放量是否超过模板剩余可发量。</summary>
+    /// <param name="template">关联的券模板。</param>
+    /// <param name="claimQuantity">计划发放量。</param>
+    /// <returns>通过返回 null，否则返回中文原因。</returns>
+    /// <remarks>
+    /// <c>TotalQuantity = 0</c> 表示不限量，此时没有「剩余」可言，直接放行。
+    ///
+    /// <para>只比「本活动 vs 模板剩余」，不比「同模板下所有活动的合计」：
+    /// 合计超发在**领取那一刻**由模板池子（<c>IssuedQuantity</c>）兜底拒掉，
+    /// 而这里拦的是最明显的一种配置错误 —— 一次就要发得比模板能发的还多。</para>
+    /// </remarks>
+    public static string? CheckTemplateRemaining(CouponTemplate template, int claimQuantity)
+    {
+        if (template.TotalQuantity <= 0) return null;
+
+        var remaining = template.TotalQuantity - template.IssuedQuantity;
+        if (claimQuantity <= remaining) return null;
+
+        return $"发放量超过模板剩余可发量（模板共 {template.TotalQuantity} 张，已发 {template.IssuedQuantity} 张，剩余 {remaining} 张）";
+    }
+}
+
 /// <summary>编辑券活动处理器。</summary>
 public sealed class CreateCouponActivityHandler
     : IRequestHandler<CreateCouponActivityCommand, ApiResponse<long>>
@@ -343,6 +372,15 @@ public sealed class CreateCouponActivityHandler
         if (platformId > 0 && template.PlatformId > 0 && template.PlatformId != platformId)
         {
             return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "关联的券模板不属于当前平台");
+        }
+
+        // 计划发放量不得超过模板剩余可发量（DATA_SPEC 5.13 / 5.32「仅后端验证」）。
+        // 不拦的后果：领券中心挂着一个**点了就报错**的按钮 ——
+        // 用户点「领取」才被告知「券模板剩余不足」，而那本该在配置时就挡住。
+        var remainingError = CouponActivityRules.CheckTemplateRemaining(template, request.ClaimQuantity);
+        if (remainingError is not null)
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, remainingError);
         }
 
         var activity = new CouponActivity
@@ -409,6 +447,16 @@ public sealed class UpdateCouponActivityHandler
             if (!canDisable)
             {
                 return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "关联的券模板不存在");
+            }
+        }
+        else
+        {
+            // 与新建同一条规则（DATA_SPEC 5.13）：编辑也不能把发放量改到超过模板剩余可发量。
+            // 只在新建那侧拦等于「建不出来却能改出来」，这个项目已经栽过一次。
+            var remainingError = CouponActivityRules.CheckTemplateRemaining(template, request.ClaimQuantity);
+            if (remainingError is not null)
+            {
+                return ApiResponseFactory.Fail(BaseApiResponseCode.BadRequest, remainingError);
             }
         }
 

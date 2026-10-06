@@ -12,4 +12,12 @@
   <ItemGroup>
     <ProjectReference Include="..\MerchantPlatformService.Domain\MerchantPlatformService.Domain.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- 内置默认地区库（31 省 / 342 市 / 3056 区县，约 81KB）。
+         随程序发布而不是入库：DATA_SPEC 5.31 明确要求「空表示使用内置默认，
+         不落库 81KB 冗余数据」。用嵌入资源而不是 C# 字符串，
+         是为了让这份数据保持成可直接比对 / 可整体替换的 JSON。 -->
+    <EmbeddedResource Include="Features\Region\regions-default.json" />
+  </ItemGroup>
 </Project>

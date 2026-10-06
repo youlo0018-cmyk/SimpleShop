@@ -1752,6 +1752,56 @@ Invoke-Case 'API-MKT-106' '🔴 商户账号建券模板的归属也被锁定（
     (-not $bad.success) -and ([int]$bad.code -eq 403) -and $ok.success
 }
 
+Invoke-Case 'API-MKT-107' '🔴 券活动的发放量不能超过模板剩余可发量' {
+    # 模板只有 5 张、活动却要发 50 张：领券中心会挂出一个**点了就报错**的按钮 ——
+    # 用户点「领取」才被告知「券模板剩余不足」，而那本该在配置时就挡住（DATA_SPEC 5.13 / 5.32）。
+    $smallTemplate = [long](GwPost '/gateway/marketing/coupon-templates/Create' @{
+        templateName = "小池子券$($script:suffix)"; couponType = 1
+        thresholdAmount = 10; discountAmount = 1; validDays = 30
+        totalQuantity = 5; perUserLimit = 1; perOrderLimit = 1
+        platformId = 0; status = 1
+    }).data
+
+    $tooMany = GwPost-Api '/gateway/marketing/coupon-activities/Create' @{
+        activityName = "超发活动$($script:suffix)"; templateId = $smallTemplate
+        claimStartTime = $script:now.AddMinutes(-5).ToString('o')
+        claimEndTime = $script:now.AddDays(1).ToString('o')
+        claimQuantity = 50; perUserLimit = 1
+        targetType = 1; targets = '[]'; platformId = 0; status = 1
+    }
+
+    $exact = GwPost '/gateway/marketing/coupon-activities/Create' @{
+        activityName = "刚好发完$($script:suffix)"; templateId = $smallTemplate
+        claimStartTime = $script:now.AddMinutes(-5).ToString('o')
+        claimEndTime = $script:now.AddDays(1).ToString('o')
+        claimQuantity = 5; perUserLimit = 1
+        targetType = 1; targets = '[]'; platformId = 0; status = 1
+    }
+
+    # 收尾：停用后删掉活动，再删模板
+    if ($exact.success) {
+        try {
+            GwPost '/gateway/marketing/coupon-activities/Update' @{
+                activityId = [long]$exact.data; activityName = "刚好发完$($script:suffix)"
+                templateId = $smallTemplate
+                claimStartTime = $script:now.AddMinutes(-5).ToString('o')
+                claimEndTime = $script:now.AddDays(1).ToString('o')
+                claimQuantity = 5; perUserLimit = 1
+                targetType = 1; targets = '[]'; sortOrder = 0; status = 2
+            } | Out-Null
+            Post '/marketing/coupon-activities/Delete' @{ activityId = [long]$exact.data } | Out-Null
+        }
+        catch { }
+    }
+    try { Post '/marketing/coupon-templates/Delete' @{ templateId = $smallTemplate } | Out-Null } catch { }
+
+    if (-not $tooMany.success) {
+        Write-Host ("        （被拒：" + $tooMany.message + "）") -ForegroundColor DarkGray
+    }
+
+    (-not $tooMany.success) -and $tooMany.message -match '剩余可发量' -and $exact.success
+}
+
 foreach ($id in $script:mktNewActivityIds) {
     try { Post '/marketing/activities/Delete' @{ activityId = $id } | Out-Null } catch { }
 }

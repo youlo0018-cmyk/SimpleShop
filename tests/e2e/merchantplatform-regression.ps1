@@ -464,6 +464,28 @@ Invoke-Case 'API-MP-035' '恢复默认：传空串清空配置，回落内置默
     return $s.success -and $g.data.isCustom -eq $false -and $g.data.regionsJson -match '北京市'
 }
 
+Invoke-Case 'API-MP-036' '🔴 内置默认是**完整三级**数据（31 省 / 342 市 / 3056 区县）' {
+    # 只给省级的直接后果是**收货地址三级联动根本用不了**：选完省之后没有市可选。
+    # 这条按数量断言而不是只看「有没有北京市」——后者在只有省级的版本里也是通过的。
+    $r = MpGet "/regions/Get?platformId=$($script:platformId)"
+    if (-not $r.success) { return $false }
+
+    $data = $r.data.regionsJson | ConvertFrom-Json
+    $provinces = @($data).Count
+    $cities = 0
+    $districts = 0
+    foreach ($p in $data) {
+        $cities += @($p.children).Count
+        foreach ($c in $p.children) { $districts += @($c.children).Count }
+    }
+
+    Write-Host ("        省 {0} / 市 {1} / 区县 {2}，JSON {3} 字节" -f `
+        $provinces, $cities, $districts, $r.data.byteSize) -ForegroundColor DarkGray
+
+    return $provinces -eq 31 -and $cities -eq 342 -and $districts -eq 3056 `
+        -and $r.data.byteSize -lt 2MB
+}
+
 Write-Host "`n=== MP 删除拦截 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-MP-040' '🔴 有商户的平台禁止删除，只能停用' {
