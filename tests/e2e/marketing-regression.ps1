@@ -658,6 +658,46 @@ Invoke-Case 'API-SKL-015' '🔴 重复中止被拒且不再回补第二遍' {
     return $r.success -and $before -eq $after
 }
 
+Invoke-Case 'API-SKL-015b' '🔴 P0 结束场次时不能把「在飞的抢购」当成没卖出去而回补（会超卖）' {
+    # sold_count 是在**下单成功之后**才 +1 的，所以一个「预扣成功、还在下单」的请求
+    # 此刻既没算进 sold_count、又已经占走了一件。只按 seckill_stock − sold_count
+    # 回补的话，这一件会被当成没卖出去而还给常规池，而那个请求随后照样把单落成 ——
+    # 回补多一件、又卖出一件，净超卖。
+    #
+    # 这里把「在飞」这个状态**确定性地**造出来：先真抢一单（Redis 余量 5 → 4），
+    # 再把 sold_count 直接改回 0，等价于「那一单还没走到第 ④ 步」。
+    # 结束场次时，回补量必须跟 Redis 余量对齐（4），不能是库里的 5。
+    $sid = [long](New-SklSession)
+    $itemId = [long](Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+        -Body (@{ sessionId = $sid; skuId = $script:sklSkuId; seckillPrice = 66.00; seckillStock = 5; perUserLimit = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20).data
+    if (-not (Publish-Skl $sid).success) { return $false }
+
+    $poolBefore = (Get-SkuStock $script:sklSkuId).available
+
+    # 真抢一单，让 Redis 余量变成 4
+    $cust = 970000000 + $script:suffix
+    Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/grab' -Method Post `
+        -Body (@{ itemId = $itemId; customerId = $cust
+            receiverName = '在飞'; receiverPhone = '13800138000'; receiverAddress = '测试地址 1 号' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60 | Out-Null
+
+    # 把 sold_count 改回 0：等价于「那一单还在下单，第 ④ 步还没执行」
+    docker exec simpleshop-postgres psql -U postgres -d simpleshopmarketing -q -c `
+        "UPDATE seckill_item SET sold_count = 0 WHERE id = $itemId;" | Out-Null
+
+    $fin = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `
+        -Body (@{ sessionId = $sid; cancel = $true } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    $poolAfter = (Get-SkuStock $script:sklSkuId).available
+
+    Write-Host ("        回补 {0} 件（应为 4，不能是 5）；常规池 {1} → {2}" -f `
+        $fin.data.releasedTotal, $poolBefore, $poolAfter) -ForegroundColor DarkGray
+
+    # 只还 4 件：那件在飞的货已经卖掉了，还回去就是超卖
+    return $fin.success -and $fin.data.releasedTotal -eq 4 -and ($poolAfter - $poolBefore) -eq 4
+}
+
 Invoke-Case 'API-SKL-016' '已取消的场次不出现在前台（用户只该看到即将开场与进行中）' {
     $pub = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Public' -Method Post `
         -Body (@{ platformId = 0; sessionId = 0 } | ConvertTo-Json) `

@@ -55,7 +55,30 @@ public sealed class SeckillStockReturner
 
         foreach (var item in items)
         {
-            var remaining = Math.Max(0, item.SeckillStock - item.SoldCount);
+            // 🔴 回补量取「库里的未售数」与「Redis 余量」的**较小者**。
+            //
+            // sold_count 是在**下单成功之后**才 +1 的，所以一个「预扣成功、还在下单」
+            // 的请求此刻既没算进 sold_count、又已经占走了一件。只按
+            // seckill_stock − sold_count 回补的话，这一件会被当成没卖出去而还给常规池，
+            // 而那个请求随后照样把单落成 —— 结果是**回补多了一件、又卖出一件**，超卖。
+            //
+            // Redis 余量是「划出总数 − 已预扣」，天然把「在飞的那几件」排除在外，
+            // 所以它才是真正可以还回去的数量。取较小者是双保险：
+            // 万一 Redis 余量因为重试被抬高，也不会超过库里算出来的未售数。
+            var dbRemaining = Math.Max(0, item.SeckillStock - item.SoldCount);
+            var remaining = dbRemaining;
+
+            var redisLeft = await _redis
+                .StringGetAsync($"{SeckillStockKeys.Stock}{item.Id}").ConfigureAwait(false);
+            if (redisLeft.HasValue
+                && long.TryParse(redisLeft.ToString(), out var left)
+                && left >= 0
+                && left < remaining
+                && left <= int.MaxValue)
+            {
+                remaining = (int)left;
+            }
+
             if (remaining <= 0) continue;
 
             // 业务单号带 release 后缀：与划出时不同，
