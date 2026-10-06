@@ -82,7 +82,7 @@ public interface IProductPort
 /// 商家改完名之后，历史订单会显示成改名前的名字，而商品卡是另一个名字，对不上。</para>
 public readonly record struct SkuPriceInfo(
     long SkuId, long ProductId, decimal Price, bool Enabled, bool SpuApproved, bool SpuOnShelf, long MerchantId,
-    long PlatformId = 0, int DeliveryType = DeliveryTypeIds.PhysicalExpress,
+    long PlatformId = 0, int DeliveryType = DeliveryTypes.Express,
     string SkuName = "", string SkuSpecText = "", string Image = "");
 
 /// <summary>平台端口。运费是平台级配置，算运费的职责在订单服务，配置本身归商户平台服务。</summary>
@@ -104,19 +104,6 @@ public interface IPlatformPort
 /// <param name="ShippingFee">平台运费，仅对实物快递收取，两位小数。</param>
 /// <param name="FreeShippingThreshold">满额包邮门槛，按商品实付判定；0 表示不启用。</param>
 public readonly record struct ShippingConfig(decimal ShippingFee, decimal FreeShippingThreshold);
-
-/// <summary>配送方式取值。挂在 SPU 上，一个 SPU 只有一种（BUSINESS.md 6.1）。</summary>
-public static class DeliveryTypeIds
-{
-    /// <summary>实物快递：按平台配置收运费，商户手动发货并必填物流公司与运单号。</summary>
-    public const int PhysicalExpress = 1;
-
-    /// <summary>虚拟商品：运费恒为 0，商户手动点发货且不填任何物流信息。</summary>
-    public const int Virtual = 2;
-
-    /// <summary>实物自提：运费恒为 0，商户点备货完成，走取货码核销。</summary>
-    public const int SelfPickup = 3;
-}
 
 
 /// <summary>券端口。占券 / 核销 / 回退，与活动优惠（<see cref="IActivityPort"/>）分开。</summary>

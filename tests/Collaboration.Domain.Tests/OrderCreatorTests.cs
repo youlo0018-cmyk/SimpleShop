@@ -141,8 +141,8 @@ public class OrderCreatorTests
     }
 
     [Theory]
-    [InlineData(DeliveryTypeIds.Virtual)]
-    [InlineData(DeliveryTypeIds.SelfPickup)]
+    [InlineData(DeliveryTypes.Virtual)]
+    [InlineData(DeliveryTypes.SelfPickup)]
     public async Task 虚拟与自提不收运费且不为此多打一次跨服务调用(int deliveryType)
     {
         var store = new FakeOrderStore();
@@ -177,12 +177,12 @@ public class OrderCreatorTests
             Lines = [new OrderLineRequest(
                 SpuId: 100, SkuId: 1000, Quantity: 2, UnitPrice: 25.50m,
                 ProductName: "自提商品", SkuSpecText: "红色 / M",
-                DeliveryType: DeliveryTypeIds.PhysicalExpress)],
+                DeliveryType: DeliveryTypes.Express)],
         };
 
         var result = await Build(
             new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
-            products: new FakeProductPort { DeliveryType = DeliveryTypeIds.SelfPickup },
+            products: new FakeProductPort { DeliveryType = DeliveryTypes.SelfPickup },
             platforms: platforms).CreateAsync(req);
 
         Assert.True(result.Succeeded);
@@ -337,7 +337,7 @@ public class OrderCreatorTests
                 var (platformId, merchantId) = _ownerOf(id);
                 result[id] = new SkuPriceInfo(
                     id, 100L, 25.50m, Enabled: true, SpuApproved: true, SpuOnShelf: true,
-                    merchantId, platformId, DeliveryTypeIds.PhysicalExpress);
+                    merchantId, platformId, DeliveryTypes.Express);
             }
 
             return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(result);
@@ -828,7 +828,7 @@ public class OrderCreatorTests
         public bool ReturnEmpty { get; set; }
 
         /// <summary>权威配送方式，默认实物快递。用于验证运费只对快递收取。</summary>
-        public int DeliveryType { get; set; } = DeliveryTypeIds.PhysicalExpress;
+        public int DeliveryType { get; set; } = DeliveryTypes.Express;
 
         /// <summary>商品归属平台。订单归属与运费都按它算，不采信客户端传的 platformId。</summary>
         public long PlatformId { get; set; }

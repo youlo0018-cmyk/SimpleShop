@@ -165,7 +165,7 @@ public sealed class OrderPricingResolver
     {
         // 没有实物快递行 → 运费恒为 0，不去读平台配置。
         // 虚拟商品与自提都没有物流环节，让它们为一次用不上的跨服务调用买单没有道理。
-        if (lines.All(a => a.DeliveryType != DeliveryTypeIds.PhysicalExpress))
+        if (lines.All(a => a.DeliveryType != DeliveryTypes.Express))
         {
             return new FreightRule(0m, 0m);
         }
