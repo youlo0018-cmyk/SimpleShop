@@ -74,7 +74,9 @@ public static class FilterRegistrar
     /// </remarks>
     private static void RegisterTenantFilters(GlobalFilter filter, List<Type> types, TenantContext ctx)
     {
-        if (ctx.IsSuperAdmin || ctx.IsCustomer || ctx.IsAnonymous) return;
+        // Internal 也要跳过：内部调用没有平台/商户声明，套上「PlatformId == 0」
+        // 会把所有行都过滤掉，内部接口直接查不到任何数据。
+        if (ctx.IsSuperAdmin || ctx.IsCustomer || ctx.IsAnonymous || ctx.IsInternal) return;
 
         var merchantId = ctx.IsMerchant ? ctx.MerchantId : (long?)null;
         foreach (var type in types)

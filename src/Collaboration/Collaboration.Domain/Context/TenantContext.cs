@@ -52,6 +52,9 @@ public sealed class TenantContext
     /// <summary>是否为游客（未登录）。</summary>
     public bool IsAnonymous => Access == AccessContext.Anonymous;
 
+    /// <summary>是否为服务间内部调用（<c>/internal</c> 前缀）。</summary>
+    public bool IsInternal => Access == AccessContext.Internal;
+
     /// <summary>
     /// 当前访问上下文是否需要注入公开可见性过滤。
     /// </summary>

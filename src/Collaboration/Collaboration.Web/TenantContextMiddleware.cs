@@ -81,6 +81,14 @@ public sealed class TenantContextMiddleware
     /// <returns>租户上下文。</returns>
     private TenantContext BuildContext(HttpContext http)
     {
+        // 内部接口先判：它不是「公开页面」，调用方要的是真实状态（见 AccessContext.Internal）。
+        // 必须早于口令判定 —— 内部调用本来就不带 X-Claim-*，
+        // 按下面的逻辑会落成 Anonymous，于是被误加公开可见性过滤。
+        if (http.Request.Path.StartsWithSegments("/internal"))
+        {
+            return new TenantContext { Access = AccessContext.Internal };
+        }
+
         var anonymous = new TenantContext { Access = AccessContext.Anonymous };
 
         if (_expectedToken is null) return anonymous;

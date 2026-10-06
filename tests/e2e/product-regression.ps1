@@ -604,6 +604,47 @@ Invoke-Case 'API-SHP-011c' '前台品牌列表可匿名访问（不需要登录�
     return $b.success -and $b.data -is [array]
 }
 
+Invoke-Case 'API-SHP-011d' '🔴 P0 匿名直连后台商品列表时，未审核/已下架的商品不出现（AOP 可见性过滤）' {
+    # BUSINESS.md 1.4 明确要求可见性过滤由 AOP 统一注入，并写明
+    # 「不靠每个 Handler 手写这些条件 —— 靠自觉写一定会漏」。
+    #
+    # 但在此之前**没有任何实体实现 IPublicVisible<>**，于是
+    # RegisterPublicVisibility 一直是空转的：可见性完全落在各 Handler 手写的
+    # Where 上，正是规格说要避免的那件事。实测匿名直连 /products/List
+    # 能拿到 auditStatus=10（待审核）、status=2（已下架）的商品。
+    #
+    # 这条用例把「AOP 真的生效」钉住：新建的商品默认就是「待审核 + 下架」，
+    # 匿名上下文里它必须**查不到**。
+    $body = @{
+        productId = 0; spuName = "隐形商品$($script:suffix)"; categoryId = $script:shopCategoryId
+        deliveryType = 1; mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "HIDE$($script:suffix)"; specValues = @('红'); price = 10.00; stock = 5; status = 1 })
+    }
+    $hiddenId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:headers `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+    if ($hiddenId -le 0) { return $false }
+
+    try {
+        # 直连、不带任何请求头 → 下游按「游客」上下文处理 → 应注入公开可见性过滤
+        $anon = Invoke-RestMethod "http://127.0.0.1:5058/products/List?page=1&pageSize=200" -TimeoutSec 30
+        $leaked = @($anon.data | Where-Object { [long]$_.id -eq $hiddenId })
+
+        # 后台带令牌仍然要能看到它（运营必须能看到待审核与下架商品）
+        $admin = Invoke-RestMethod "$Gateway/gateway/products/List?page=1&pageSize=200" `
+            -Headers $script:headers -TimeoutSec 30
+        $visibleForAdmin = @($admin.data | Where-Object { [long]$_.id -eq $hiddenId })
+
+        Write-Host ("        匿名可见={0} 后台可见={1}" -f $leaked.Count, $visibleForAdmin.Count) -ForegroundColor DarkGray
+
+        return $leaked.Count -eq 0 -and $visibleForAdmin.Count -eq 1
+    } finally {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:headers `
+            -Body (@{ productId = $hiddenId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+}
+
 Invoke-Case 'API-SHP-012' '清理：停用活动 → 删商品 → 删分类' {
     if ($script:shopActivityId -gt 0) {
         Invoke-RestMethod "$Marketing/marketing/activities/Delete" -Method Post `

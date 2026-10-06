@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Collaboration.Domain.Entities;
 using FreeSql.DataAnnotations;
 
@@ -15,8 +16,25 @@ namespace ProductService.Domain.Entities;
 /// 上架还要显式操作，但上架的前置条件是审核必须已通过。
 /// </remarks>
 [Table(Name = "product")]
-public class Product : AdminEntityBase
+public class Product : AdminEntityBase, IPublicVisible<Product>
 {
+    /// <summary>构造该实体的公开可见条件（BUSINESS.md 1.4）。</summary>
+    /// <param name="now">当前时间 UTC；商品不按时间窗判定，忽略。</param>
+    /// <returns>「审核通过且已上架」的条件。</returns>
+    /// <remarks>
+    /// <para><b>为什么必须有这个方法</b>：BUSINESS.md 1.4 明确要求可见性过滤由 AOP 统一注入，
+    /// 并写明「不靠每个 Handler 手写这些条件 —— 靠自觉写一定会漏」。
+    /// 但在此之前**没有任何实体实现本接口**，于是 RegisterPublicVisibility 是空转的，
+    /// 可见性完全落在各个 Handler 的手写 Where 上 —— 正是规格说要避免的那件事。</para>
+    ///
+    /// <para>只对 C 端 / 游客上下文生效（Admin 不注入，运营必须能看到待审核与下架商品）。
+    /// 现在 shop 的几个 Handler 手写的条件与这里逐字一致，所以这是**加安全网**，
+    /// 不改变任何现有行为；以后新加一个 C 端查询忘了写 Where，也不会把
+    /// 未审核 / 已下架的商品漏给顾客。</para>
+    /// </remarks>
+    public Expression<Func<Product, bool>>? BuildPublicCondition(DateTime now)
+        => x => x.AuditStatus == AuditStatuses.Approved && x.Status == ListingStatuses.OnShelf;
+
     /// <summary>商品名，2-128 字符。</summary>
     [Column(Name = "spu_name", StringLength = 128)]
     public string SpuName { get; set; } = string.Empty;

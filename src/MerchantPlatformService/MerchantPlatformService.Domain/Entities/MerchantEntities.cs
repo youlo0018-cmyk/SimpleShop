@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Collaboration.Domain.Entities;
 using Collaboration.Domain.Infrastructure;
 using FreeSql.DataAnnotations;
@@ -100,8 +101,20 @@ public static class PlatformStatuses
 
 /// <summary>商户 / 店铺。</summary>
 [Table(Name = "merchant")]
-public class Merchant : AdminEntityBase
+public class Merchant : AdminEntityBase, IPublicVisible<Merchant>
 {
+    /// <summary>构造该实体的公开可见条件（BUSINESS.md 1.4）。</summary>
+    /// <param name="now">当前时间 UTC；商户不按时间窗判定，忽略。</param>
+    /// <returns>「审核通过且已启用」的条件。</returns>
+    /// <remarks>
+    /// 用户明确要求过「小程序所有展示给用户的商户都应该是审核通过的」，
+    /// BUSINESS.md 1.4 也把它列为公开可见性的一条。这里实现之后，
+    /// C 端 / 游客上下文里的任何商户查询都会自动带上这个条件 ——
+    /// 不再依赖每个 Handler 记得手写。
+    /// </remarks>
+    public Expression<Func<Merchant, bool>>? BuildPublicCondition(DateTime now)
+        => x => x.AuditStatus == MerchantAuditStatuses.Approved && x.Status == PlatformStatuses.Enabled;
+
     /// <summary>商户 / 店铺名称，<b>同平台内唯一</b>。</summary>
     [Column(Name = "merchant_name", StringLength = 128)]
     public string MerchantName { get; set; } = string.Empty;
