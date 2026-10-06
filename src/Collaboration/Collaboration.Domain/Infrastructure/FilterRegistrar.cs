@@ -81,7 +81,23 @@ public static class FilterRegistrar
         var merchantId = ctx.IsMerchant ? ctx.MerchantId : (long?)null;
         foreach (var type in types)
         {
-            if (!typeof(AdminEntityBase).IsAssignableFrom(type) || typeof(ITenantRoot).IsAssignableFrom(type))
+            if (typeof(ITenantRoot).IsAssignableFrom(type))
+            {
+                continue;
+            }
+
+            // 判定依据是「有没有 PlatformId / MerchantId 这两列」，**不是**继承自哪个基类。
+            //
+            // 🔴 只认 AdminEntityBase 会漏掉 Order：订单表没有审计列（创建人 / 操作人），
+            // 所以 Order 继承 EntityBase，但它照样有 platform_id / merchant_id，
+            // 照样必须被租户裁剪。漏掉它的后果实测过 ——
+            // 商户 B 的后台账号能按 id 读到**商户 A 的订单详情**（列表是收窄过的，
+            // 详情没有），订单号与实付金额一览无余。
+            //
+            // 用属性名反射而不是基类判断，以后再有实体走 EntityBase + 租户列也能自动覆盖，
+            // 不需要有人记得回来改这里。
+            if (type.GetProperty(nameof(AdminEntityBase.PlatformId)) is null
+                || type.GetProperty(nameof(AdminEntityBase.MerchantId)) is null)
             {
                 continue;
             }

@@ -95,9 +95,10 @@ $script:adminHeaders = @{ Authorization = "Bearer $(Get-AdminToken)" }
 # 所有「预期会失败」的用例都要靠它：校验失败与业务失败都由全局异常中间件返回 **HTTP 400**，
 # Invoke-RestMethod 见到 400 就直接抛异常，body 里的 { success:false, message, code } 拿不到。
 # 所以统一包一层：无论 HTTP 是不是错误，都把统一响应体解析出来返回。
-function Invoke-Api([string]$Uri, [string]$Method = 'Post', $Body = $null) {
+function Invoke-Api([string]$Uri, [string]$Method = 'Post', $Body = $null, $Headers = $null) {
     try {
         $params = @{ Uri = $Uri; Method = $Method; TimeoutSec = 60; ErrorAction = 'Stop' }
+        if ($null -ne $Headers) { $params['Headers'] = $Headers }
         if ($null -ne $Body) {
             $params['Body'] = ($Body | ConvertTo-Json -Depth 8)
             $params['ContentType'] = 'application/json'
@@ -114,7 +115,15 @@ function Invoke-Api([string]$Uri, [string]$Method = 'Post', $Body = $null) {
 
 function OrderPost([string]$Op, $Body) { return Invoke-Api "$Order/orders/$Op" 'Post' $Body }
 
-function AdminOrderPost([string]$Op, $Body) { return Invoke-Api "$Order/admin/orders/$Op" 'Post' $Body }
+# 后台订单接口**走网关**，不再直连服务端口。
+#
+# 直连时下游拿不到 X-Claim-*，租户上下文是「匿名」—— 而生产里后台接口
+# 一定带后台令牌。两条路径的行为已经不同了：取货码核销要按令牌里的租户
+# 判断「这单是不是你的」，直连匿名上下文会被正当拒掉。
+# 继续直连的话，测的就不是线上那条路。
+function AdminOrderPost([string]$Op, $Body) {
+    return Invoke-Api "$Gateway/gateway/admin/orders/$Op" 'Post' $Body $script:adminHeaders
+}
 
 <#
 .SYNOPSIS
@@ -1474,6 +1483,73 @@ Invoke-Case 'API-ORD-145' '试算会拦下未过审 / 已下架的商品（而�
     # 试算要报「已下架」，而不是照常返回一个金额 ——
     # 后者会让用户看着一个算得出的价点下去，然后被下单接口拒绝。
     return (-not $preview.success) -and ($preview.message -match '下架')
+}
+
+Invoke-Case 'API-ORD-150' '🔴 P0 商户账号读不到别家的订单详情（订单表必须被租户裁剪）' {
+    # 🔴 这条在修之前是**红的**，而且是实打实的越权：
+    # Order 继承的是 EntityBase（订单表没有审计列），不是 AdminEntityBase，
+    # 而 FilterRegistrar 当时只给 AdminEntityBase 注册租户过滤 —— 于是**订单表
+    # 根本没有租户裁剪**。后台订单列表自己显式收窄了（所以列表看起来是好的），
+    # 但详情接口没有：商户 B 的账号拿一个 orderId 就能读到商户 A 的订单，
+    # 订单号、实付金额、收货人一览无余。
+    #
+    # 修法是把注册判据从「继承自哪个基类」改成「有没有 platform_id / merchant_id 两列」，
+    # 这样 Order 会被自动覆盖，以后再有同类实体也不需要有人记得回来改。
+
+    # 1) 在运费平台上建一个商户，并给它一个后台账号
+    $code = -join ((1..6) | ForEach-Object { [char](65 + (Get-Random -Max 26)) })
+    $m = Invoke-Api "$Gateway/gateway/merchants/Create" 'Post' @{
+        merchantName = "订单隔离店铺$($script:suffix)"; platformId = $script:feePlatformId
+        contactName = '隔离'; contactPhone = '13900139000'; description = '租户隔离用例'
+    } -Headers $script:adminHeaders
+    if (-not $m.success) { Write-Host ("        建商户失败: " + $m.message) -ForegroundColor DarkYellow; return $false }
+    $merchantId = [long]$m.data
+    Invoke-Api "$Gateway/gateway/merchants/Audit" 'Post' @{ merchantId = $merchantId; auditStatus = 20 } -Headers $script:adminHeaders | Out-Null
+    Invoke-Api "$Gateway/gateway/merchants/ChangeStatus" 'Post' @{ merchantId = $merchantId; status = 1 } -Headers $script:adminHeaders | Out-Null
+
+    $un = "iso$($script:suffix)"
+    $created = Invoke-Api 'http://127.0.0.1:5011/users/Create' 'Post' @{
+        userName = $un; password = 'Test123456'
+        phone = '135' + ([string]$script:suffix).PadLeft(8, '0').Substring(0, 8)
+        tenantType = 2; nickName = '隔离商户账号'
+        platformId = $script:feePlatformId; merchantId = $merchantId; roleIds = @(9005)
+    }
+    if (-not $created.success) { Write-Host ("        建账号失败: " + $created.message) -ForegroundColor DarkYellow; return $false }
+    $userB = [long]$created.data
+
+    $tokB = (Invoke-RestMethod "$Gateway/gateway/auth/token" -Method Post `
+        -Body @{ grant_type = 'password'; client_id = 'admin-app'; username = $un; password = 'Test123456' } `
+        -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 20).access_token
+    $bh = @{ Authorization = "Bearer $tokB" }
+
+    try {
+        # 2) 造一张**平台 0** 的订单（与上面那个商户完全无关）
+        $o = OrderPost 'Create' (New-OrderBody 'iso' 1 1)
+        if (-not $o.success) { return $false }
+        $targetOrderNo = $o.data.orderNo
+
+        # 用超管拿 orderId（超管本来就该看得到）
+        $list = AdminOrderPost 'List' @{ status = 0; keyword = $targetOrderNo; page = 1; pageSize = 5 }
+        $oid = (@($list.data.items)[0]).orderId
+        if (-not $oid) { return $false }
+
+        # 3) 商户账号按 id 直查详情 —— 必须读不到
+        $detail = Invoke-Api "$Gateway/gateway/admin/orders/Detail" 'Post' @{ orderId = $oid } -Headers $bh
+
+        # 4) 商户账号的列表也必须搜不到这张单
+        $mine = Invoke-Api "$Gateway/gateway/admin/orders/List" 'Post' `
+            @{ status = 0; keyword = $targetOrderNo; page = 1; pageSize = 20 } -Headers $bh
+
+        Write-Host ("        详情 success={0} msg={1}；列表命中={2}" -f `
+            $detail.success, $detail.message, @($mine.data.items).Count) -ForegroundColor DarkGray
+
+        OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $targetOrderNo } | Out-Null
+
+        return (-not $detail.success) -and @($mine.data.items).Count -eq 0
+    } finally {
+        Invoke-Api "$Gateway/gateway/merchants/Delete" 'Post' @{ merchantId = $merchantId } -Headers $script:adminHeaders | Out-Null
+        docker exec simpleshop-postgres psql -U postgres -d simpleshopuser -q -c "DELETE FROM app_user WHERE id=$userB;" | Out-Null
+    }
 }
 
 Invoke-Case 'API-ORD-139' '清理运费测试的平台与商品' {

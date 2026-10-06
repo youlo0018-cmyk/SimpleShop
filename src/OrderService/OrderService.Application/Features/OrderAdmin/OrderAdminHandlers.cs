@@ -491,10 +491,16 @@ public sealed class VerifyPickupCodeHandler
 
         // 归属校验：不是本平台 / 本商户的码不能核销。
         // 不核销只是拒了这一单，不该告诉对方「这单确实存在」——那等于订单号探测。
-        if (!BelongsToTenant(order, request.PlatformId, request.MerchantId))
+        //
+        // 🔴 判据必须是**令牌里的租户**，不是请求体里的 PlatformId / MerchantId。
+        // 旧实现读请求体，而这两个字段默认都是 0，旧判据又把 `<= 0` 当成「不限」——
+        // 于是商户只要**不传**这两个字段，这道校验就整个失效。
+        // 配合「订单表此前没有租户过滤」这一条，商户 A 能把商户 B 的自提单核销掉。
+        var tenant = TenantContextHolder.Current;
+        if (!BelongsToTenant(order, tenant))
         {
-            _logger.LogWarning("商户 {MerchantId} 试图核销不属于自己平台的取货码，订单 {OrderNo}",
-                request.MerchantId, order.OrderNo);
+            _logger.LogWarning("商户 {MerchantId} 试图核销不属于自己的取货码，订单 {OrderNo}",
+                tenant.MerchantId, order.OrderNo);
             return ApiResults.Fail<PickupCodeDto>(
                 BaseApiResponseCode.NotFound, "取货码无效，请让顾客重新出示");
         }
@@ -528,14 +534,23 @@ public sealed class VerifyPickupCodeHandler
             Verified: true), "核销成功，订单已完成");
     }
 
-    /// <summary>订单是否属于指定平台 / 商户。</summary>
+    /// <summary>订单是否属于当前令牌的租户。</summary>
     /// <param name="order">订单。</param>
-    /// <param name="platformId">平台 Id，0 表示不限。</param>
-    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="ctx">当前租户上下文（来自令牌，不是请求体）。</param>
     /// <returns>属于返回 true。</returns>
-    private static bool BelongsToTenant(Order order, long platformId, long merchantId)
-        => (platformId <= 0 || order.PlatformId == platformId)
-           && (merchantId <= 0 || order.MerchantId == merchantId);
+    /// <remarks>
+    /// <para><b>只有超管是不受限的</b>。旧签名把「platformId / merchantId &lt;= 0」当成不限，
+    /// 而调用方传的是请求体里的字段、默认值正是 0 —— 等于默认放行。</para>
+    ///
+    /// <para>平台账号看本平台，商户账号看本商户；客户 / 游客 / 内部调用一律不属于后台核销范围。</para>
+    /// </remarks>
+    private static bool BelongsToTenant(Order order, TenantContext ctx)
+    {
+        if (ctx.IsSuperAdmin) return true;
+        if (ctx.IsMerchant) return order.MerchantId == ctx.MerchantId && order.PlatformId == ctx.PlatformId;
+        if (ctx.IsPlatform) return order.PlatformId == ctx.PlatformId;
+        return false;
+    }
 }
 
 /// <summary>模拟支付处理器（仅测试环境）。</summary>
