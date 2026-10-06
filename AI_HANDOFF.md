@@ -278,6 +278,22 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-07：商品列表 / 详情只给状态数值，没有中文名（4.5 枚举文案）
+
+DATA_SPEC 4.5 要求「列表 / 详情返回数值 + 文案成对字段，前端不维护对照表」，
+而 `ProductListItem` / `ProductDetailDto` 只有 `AuditStatus` / `Status` / `DeliveryType`
+三个**裸数值** —— 后台商品列表上的「审核状态 / 上下架 / 配送方式」只能显示数字，
+或者前端自己写一张对照表（4.5 明确禁止）。
+
+改法：给三个枚举补 `NameOf`（`AuditStatuses` / `ListingStatuses` / `DeliveryTypes`），
+列表与详情各加 `AuditStatusName` / `StatusName` / `DeliveryTypeName`，
+**数值字段照旧保留**（前端的状态标签颜色还要用数值）。回归 API-SHP-010b。
+
+> 顺带说明为什么只在 ProductService 补：其它服务的列表 DTO 在早前几轮已经逐个核对过
+> （订单、退款、评价、积分、秒杀、日志、报表都带了文案）。
+
+**验证**：构建 0 警告 0 错误；E2E **679/679**（18 个脚本）。
+
 ### 2026-10-07：DATA_SPEC 4.2 的下拉接口清单里，一大半根本没实现
 
 按 4.2 逐条核对「下拉字段的数据来源」时发现：11 条里只有 4 条存在

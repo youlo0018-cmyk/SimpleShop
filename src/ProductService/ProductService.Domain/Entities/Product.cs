@@ -140,6 +140,18 @@ public static class DeliveryTypes
 
     /// <summary>实物自提：需要取货码核销，不要物流信息。</summary>
     public const int PhysicalSelfPickup = 3;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="deliveryType">配送方式。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    /// <remarks>DATA_SPEC 4.5：枚举文案由**后端下发**，前端不维护对照表。</remarks>
+    public static string NameOf(int deliveryType) => deliveryType switch
+    {
+        PhysicalExpress => "快递",
+        Virtual => "虚拟",
+        PhysicalSelfPickup => "自提",
+        _ => "未知"
+    };
 }
 
 /// <summary>商品审核状态。</summary>
@@ -153,6 +165,18 @@ public static class AuditStatuses
 
     /// <summary>已驳回。允许继续编辑，但编辑不重置审核状态，需重新提交。</summary>
     public const int Rejected = 30;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="auditStatus">审核状态。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    /// <remarks>DATA_SPEC 4.5：枚举文案由**后端下发**，前端不维护对照表。</remarks>
+    public static string NameOf(int auditStatus) => auditStatus switch
+    {
+        Pending => "待审核",
+        Approved => "已通过",
+        Rejected => "已驳回",
+        _ => "未知"
+    };
 }
 
 /// <summary>上下架状态。</summary>
@@ -163,4 +187,15 @@ public static class ListingStatuses
 
     /// <summary>下架。新建商品的默认状态。</summary>
     public const int OffShelf = 2;
+
+    /// <summary>取中文名。</summary>
+    /// <param name="status">上下架状态。</param>
+    /// <returns>中文名，未知值返回「未知」。</returns>
+    /// <remarks>DATA_SPEC 4.5：枚举文案由**后端下发**，前端不维护对照表。</remarks>
+    public static string NameOf(int status) => status switch
+    {
+        OnShelf => "上架",
+        OffShelf => "下架",
+        _ => "未知"
+    };
 }

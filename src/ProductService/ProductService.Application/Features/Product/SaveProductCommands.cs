@@ -103,6 +103,11 @@ public record QueryProductsCommand(
     int AuditStatus = 0) : IRequest<ApiResponse<List<ProductListItem>>>;
 
 /// <summary>商品详情。含规格、SKU 与解析后的规格值 Id。</summary>
+/// <remarks>
+/// 状态类字段一律**数值 + 中文名**成对下发（DATA_SPEC 4.5）：
+/// 只给数值的话，前端要自己维护「10=待审核 / 20=已通过」这张表，
+/// 后端加一个状态就会有一处漏改、界面上显示裸数字。
+/// </remarks>
 public record ProductDetailDto(
     string Id,
     string SpuName,
@@ -112,6 +117,7 @@ public record ProductDetailDto(
     long CategoryId,
     string CategoryName,
     int DeliveryType,
+    string DeliveryTypeName,
     string MainImage,
     string Images,
     string DetailImages,
@@ -120,7 +126,9 @@ public record ProductDetailDto(
     decimal MaxPrice,
     string Description,
     int AuditStatus,
+    string AuditStatusName,
     int Status,
+    string StatusName,
     long Sales,
     decimal EvaluationScore,
     int EvaluationCount,
@@ -151,6 +159,21 @@ public record SkuDto(
     IReadOnlyList<string> SpecValueIds);
 
 /// <summary>商品列表项。冗余返回品牌名 / 分类名 / 价格区间，前端不必二次查询（DATA_SPEC 4.4）。</summary>
+/// <param name="Id">商品 Id，字符串下发。</param>
+/// <param name="SpuName">商品名。</param>
+/// <param name="MainImage">主图。</param>
+/// <param name="BrandName">品牌名，未选品牌为空串。</param>
+/// <param name="CategoryName">分类名。</param>
+/// <param name="DeliveryType">配送方式，见 <see cref="DeliveryTypes"/>。</param>
+/// <param name="DeliveryTypeName">配送方式中文名，**后端下发**（4.5）。</param>
+/// <param name="MinPrice">最低售价。</param>
+/// <param name="MaxPrice">最高售价。</param>
+/// <param name="AuditStatus">审核状态。</param>
+/// <param name="AuditStatusName">审核状态中文名，**后端下发**。</param>
+/// <param name="Status">上下架状态。</param>
+/// <param name="StatusName">上下架中文名，**后端下发**。</param>
+/// <param name="Sales">销量。</param>
+/// <param name="MerchantId">归属商户 Id，0 表示平台自营。</param>
 public record ProductListItem(
     string Id,
     string SpuName,
@@ -158,10 +181,13 @@ public record ProductListItem(
     string BrandName,
     string CategoryName,
     int DeliveryType,
+    string DeliveryTypeName,
     decimal MinPrice,
     decimal MaxPrice,
     int AuditStatus,
+    string AuditStatusName,
     int Status,
+    string StatusName,
     long Sales,
     long MerchantId);
 

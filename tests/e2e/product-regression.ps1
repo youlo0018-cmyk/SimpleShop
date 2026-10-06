@@ -630,6 +630,32 @@ Invoke-Case 'API-SHP-010' '🔴 前台接口走独立前缀，后台的待审核
     return $adminIds -eq 0 -and $shopIds -eq 1
 }
 
+Invoke-Case 'API-SHP-010b' '🔴 商品列表 / 详情带状态与配送方式**中文名**（枚举文案后端下发）' {
+    # DATA_SPEC 4.5：列表 / 详情返回「数值 + 文案」成对字段，前端不维护对照表。
+    # 只给数值的话，后台商品列表上的「审核状态 / 上下架 / 配送方式」全是裸数字。
+    $list = Invoke-RestMethod "$Gateway/gateway/products/List?keyword=前台商品$($script:suffix)&page=1&pageSize=10" `
+        -Headers $script:headers -TimeoutSec 30
+    $row = @($list.data)[0]
+    if ($null -eq $row) { return $false }
+
+    $detail = (Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($row.id)" `
+        -Headers $script:headers -TimeoutSec 30).data
+
+    $expectDelivery = @{ 1 = '快递'; 2 = '虚拟'; 3 = '自提' }[[int]$row.deliveryType]
+    $expectAudit = @{ 10 = '待审核'; 20 = '已通过'; 30 = '已驳回' }[[int]$row.auditStatus]
+    $expectStatus = @{ 1 = '上架'; 2 = '下架' }[[int]$row.status]
+
+    Write-Host ("        列表：{0} / {1} / {2}" -f `
+        $row.deliveryTypeName, $row.auditStatusName, $row.statusName) -ForegroundColor DarkGray
+
+    return $row.deliveryTypeName -eq $expectDelivery `
+        -and $row.auditStatusName -eq $expectAudit `
+        -and $row.statusName -eq $expectStatus `
+        -and $detail.deliveryTypeName -eq $row.deliveryTypeName `
+        -and $detail.auditStatusName -eq $row.auditStatusName `
+        -and $detail.statusName -eq $row.statusName
+}
+
 Invoke-Case 'API-SHP-011' '🔴 营销服务不可用时按原价回退，而不是整页 500' {
     # 停掉本节的活动 → 没有优惠，但接口必须正常返回（BUSINESS.md 11.5 的「静默回退原价展示」）
     Invoke-RestMethod "$Marketing/marketing/activities/SetStatus" -Method Post `
