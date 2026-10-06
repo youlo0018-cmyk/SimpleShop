@@ -488,9 +488,16 @@ Invoke-Case 'API-PAY-035c' '🔴 P0 部分退款后订单**不能**被标成整�
 
     Write-Host ("        实付 {0}，退了 20.00；订单状态={1}，行可退={2}" -f `
         $paid, $status, $lineAfter.refundableAmount) -ForegroundColor DarkGray
+    Write-Host ("        订单级：已退={0} 还可退={1}" -f `
+        $after.data.refundedAmount, $after.data.remainingRefundable) -ForegroundColor DarkGray
 
-    # 状态必须**不是** 60（整单已退款），剩下的钱还得能退
-    return $status -ne 60 -and $lineAfter.refundableAmount -eq ($line.payableAmount - 20.00)
+    # 状态必须**不是** 60（整单已退款），剩下的钱还得能退。
+    # 订单级的「已退 / 还可退」也要跟着动 —— 那读的是 order.refunded_amount，
+    # 而两段式退款以前从不更新它（退了 20 仍显示「还可退 51」）。
+    return $status -ne 60 `
+        -and $lineAfter.refundableAmount -eq ($line.payableAmount - 20.00) `
+        -and $after.data.refundedAmount -eq 20.00 `
+        -and $after.data.remainingRefundable -eq ($paid - 20.00)
 }
 
 Invoke-Case 'API-PAY-037' '🔴🔴 审批人取自令牌，伪造请求体里的 approverName 无效' {

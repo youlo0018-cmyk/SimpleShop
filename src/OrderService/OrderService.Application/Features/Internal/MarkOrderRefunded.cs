@@ -243,6 +243,27 @@ public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefunded
             await _store.SaveRefundAsync(ledger, ledgerItems, ct).ConfigureAwait(false);
         }
 
+        // 🔴 用 TryApplyRefundAsync 而不是 TryTransitStatusAsync。
+        // 它一次做成三件事，三件都是这条路径原来缺的：
+        //   ① refunded_amount += 本次金额 —— 订单级「还可退多少」就靠这个字段
+        //      （缺了它，退了 20 的单在后台仍显示「还可退 51」）
+        //   ② 只有退满才把状态改成 60 —— 部分退款不该把整单作废
+        //   ③ 余额判断落在 SQL 的 WHERE 里（refunded_amount + 本次 <= payable_amount），
+        //      并发两笔退款不会都读到旧余额然后一起退超额。
+        //      这正是单步退款那条路径的做法，两段式以前绕过了它。
+        var affected = await _store.TryApplyRefundAsync(
+            order.Id, order.Status, request.RefundAmount, fullyRefunded, ct).ConfigureAwait(false);
+
+        if (affected == 0)
+        {
+            _logger.LogWarning(
+                "订单 {OrderNo} 的退款未生效（可退余额不足或状态已变），退款单已审批但订单未更新",
+                order.OrderNo);
+
+            return ApiResponseFactory.Fail(
+                BaseApiResponseCode.OrderStateInvalid, "订单可退余额不足或状态已变更，请刷新后重试");
+        }
+
         if (!fullyRefunded)
         {
             _logger.LogInformation(
@@ -250,12 +271,6 @@ public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefunded
                 order.OrderNo, request.RefundAmount, order.Status);
 
             return ApiResponseFactory.Ok("退款已生效（部分退款，订单仍可继续退）");
-        }
-
-        var affected = await _store.TryTransitStatusAsync(order.Id, order.Status, OrderStatuses.Refunded, ct).ConfigureAwait(false);
-        if (affected == 0)
-        {
-            return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
 
         return ApiResponseFactory.Ok("订单已标记为已退款");
