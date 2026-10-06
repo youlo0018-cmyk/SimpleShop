@@ -87,6 +87,20 @@ public sealed class InternalProductController : ControllerBase
         [FromBody] CheckProductsForDesignCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>校验一批 SPU / SKU 能否作为营销活动的适用目标。</summary>
+    /// <param name="command">目标 Id 集合与归属限定。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>不通过的目标及原因。</returns>
+    /// <remarks>
+    /// 与 <c>check-for-design</c> 的差别只有一条：**不要求审核通过 / 已上架**。
+    /// 活动常常先配好、等商品上架后自动生效（规格 16.4 明确要求不要卡它们）；
+    /// 但「存在 + 归属」必须卡住，否则商户 A 的活动能把目标写成商户 B 的商品 —— 那是跨租户改价。
+    /// </remarks>
+    [HttpPost("check-targets")]
+    public Task<ApiResponse<CheckProductTargetsResult>> CheckTargets(
+        [FromBody] CheckProductTargetsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>按 SKU Id 集合取快照信息。</summary>
     /// <param name="skuIds">SKU Id 集合，逗号分隔，最多 200 个。</param>
     /// <returns>命中的 SKU 快照列表。没命中的 SKU 不会出现在结果里。</returns>

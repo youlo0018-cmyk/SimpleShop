@@ -297,10 +297,32 @@ public sealed class CreateCouponActivityHandler
     /// </remarks>
     public async Task<ApiResponse<long>> Handle(CreateCouponActivityCommand request, CancellationToken ct)
     {
+        // 归属由服务端按租户身份解析（DATA_SPEC 5.13，与 5.11 活动同一套规则）：
+        // PlatformId / MerchantId 来自请求体，而 AOP 租户过滤只管查询 / 更新 / 删除、
+        // **不管插入** —— 不解析的话，商户账号能建出一条挂在别人平台 / 商户名下的券活动。
+        if (!Promotion.PromotionActivityScope.TryResolve(
+                TenantContextHolder.Current, request.PlatformId, request.MerchantId,
+                out var platformId, out var merchantId, out var scopeError))
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.Forbidden, scopeError);
+        }
+
         var template = await _coupons.GetTemplateAsync(request.TemplateId, ct).ConfigureAwait(false);
         if (template is null)
         {
             return ApiResults.Fail<long>(BaseApiResponseCode.NotFound, "关联的券模板不存在");
+        }
+
+        // 模板与活动的归属必须一致：跨租户引用等于把 A 的券发到 B 的活动上。
+        // 只比「双方都有归属」的情况 —— 平台 0 / 商户 0 表示不限（历史数据与平台无关的模板）。
+        if (merchantId > 0 && template.MerchantId > 0 && template.MerchantId != merchantId)
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "关联的券模板不属于当前商户");
+        }
+
+        if (platformId > 0 && template.PlatformId > 0 && template.PlatformId != platformId)
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "关联的券模板不属于当前平台");
         }
 
         var activity = new CouponActivity
@@ -316,8 +338,8 @@ public sealed class CreateCouponActivityHandler
             Targets = (request.Targets ?? "[]").Trim(),
             SortOrder = request.SortOrder,
             Status = request.Status,
-            PlatformId = request.PlatformId,
-            MerchantId = request.MerchantId
+            PlatformId = platformId,
+            MerchantId = merchantId
         };
 
         var id = await _coupons.InsertActivityAsync(activity, ct).ConfigureAwait(false);

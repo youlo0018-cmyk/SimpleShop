@@ -47,6 +47,7 @@ public static class ApiServiceCollectionExtensions
     SyncProductRatingsValidators.AddSyncProductRatingsValidators(services);
     OffShelfProductsByMerchantValidators.AddOffShelfProductsByMerchantValidators(services);
     CheckProductsForDesignValidators.AddCheckProductsForDesignValidators(services);
+    CheckProductTargetsValidators.AddCheckProductTargetsValidators(services);
 
         // 库存服务地址只从配置来，代码里不写端口
         var inventoryUrl = configuration["Services:InventoryServiceBaseUrl"];

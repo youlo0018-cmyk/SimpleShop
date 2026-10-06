@@ -79,6 +79,28 @@ function Post([string]$Path, $Body) {
         -Body ($Body | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
 }
 
+# 活动的**归属**（PlatformId / MerchantId）由服务端按租户身份解析（DATA_SPEC 5.11 / 5.13），
+# 所以活动的新建与编辑必须**经网关**调用：直连服务端口没有 X-Claim-* 头 = 无身份，
+# 会被判成越权。其余只读/收尾接口不受影响，仍可直连。
+function GwPost([string]$Path, $Body) {
+    return Invoke-RestMethod -Uri "$Gateway$Path" -Method Post -Headers $script:adminHeaders `
+        -Body ($Body | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
+}
+
+function GwPost-Api([string]$Path, $Body) {
+    try {
+        return Invoke-RestMethod -Uri "$Gateway$Path" -Method Post -Headers $script:adminHeaders `
+            -Body ($Body | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
+    } catch {
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{ success = $false; code = -1; message = $_.Exception.Message; data = $null }
+        }
+        try { return $raw | ConvertFrom-Json -AsHashtable }
+        catch { return [pscustomobject]@{ success = $false; code = -1; message = $raw; data = $null } }
+    }
+}
+
 # 「预期会失败」的用例必须用这个：校验失败与业务失败都由全局异常中间件返回 HTTP 400，
 # Invoke-RestMethod 见到 400 就抛异常，body 里的 { success:false, message } 拿不到，
 # 用例只能看到一句 "400 (Bad Request)"，分不清是被哪条规则拒的。
@@ -127,7 +149,7 @@ Invoke-Case 'API-MKT-001' '新建满减券模板（满 100 减 20，30 天有效
 }
 
 Invoke-Case 'API-MKT-002' '新建券活动（发 20 张）' {
-    $r = Post '/marketing/coupon-activities/Create' @{
+    $r = GwPost '/gateway/marketing/coupon-activities/Create' @{
         activityName = "活动$($script:suffix)"
         templateId = $script:templateId
         claimStartTime = $script:now.AddMinutes(-5).ToString('o')
@@ -160,7 +182,7 @@ Invoke-Case 'API-MKT-011b' '超过每人限领（第 3 张被拒）' {
 }
 
 Invoke-Case 'API-MKT-012' '🔴 超出领取窗口被拒' {
-    $r = Post '/marketing/coupon-activities/Create' @{
+    $r = GwPost '/gateway/marketing/coupon-activities/Create' @{
         activityName = "过期活动$($script:suffix)"
         templateId = $script:templateId
         claimStartTime = $script:now.AddDays(-2).ToString('o')
@@ -279,7 +301,7 @@ function New-Activity([hashtable]$over) {
     }
     foreach ($k in $over.Keys) { $b[$k] = $over[$k] }
 
-    $r = Post '/marketing/activities/Create' $b
+    $r = GwPost '/gateway/marketing/activities/Create' $b
     if ($r.success) { $script:promoIds += [long]$r.data }
     return $r
 }
@@ -402,7 +424,7 @@ Invoke-Case 'API-MKT-059' '🔴 单行封底 0.01：优惠不能把某一行打�
 }
 
 Invoke-Case 'API-MKT-060' '🔴 满减没填金额被拒（否则活动命中却不打折）' {
-    $r = Post-Api '/marketing/activities/Create' @{
+    $r = GwPost-Api '/gateway/marketing/activities/Create' @{
         activityName = "空金额$($script:suffix)"; activityType = 1
         thresholdAmount = 50; discountAmount = 0
         startTime = $script:now.AddDays(-1).ToString('o')
@@ -415,7 +437,7 @@ Invoke-Case 'API-MKT-060' '🔴 满减没填金额被拒（否则活动命中却
 }
 
 Invoke-Case 'API-MKT-061' '结束时间早于开始时间被拒' {
-    $r = Post-Api '/marketing/activities/Create' @{
+    $r = GwPost-Api '/gateway/marketing/activities/Create' @{
         activityName = "时间倒置$($script:suffix)"; activityType = 1
         thresholdAmount = 0; discountAmount = 5
         startTime = $script:now.ToString('o')
@@ -488,7 +510,7 @@ Invoke-Case 'API-MKT-067' '🔴 编辑活动也要校验「指定商品范围必
     }).data
     if (-not $id) { return $false }
 
-    $r = Post-Api '/marketing/activities/Update' @{
+    $r = GwPost-Api '/gateway/marketing/activities/Update' @{
         activityId = [long]$id; activityName = "编辑校验$($script:suffix)"
         activityType = 1; thresholdAmount = 0; discountAmount = 10
         discountRate = 0; giftTemplateId = 0; giftQuantity = 1
@@ -592,7 +614,7 @@ Invoke-Case 'API-GFT-000' '准备：60 元商品 + 赠品券模板（满 50 减 
 
     # 满赠活动：平台号必须给 0。订单的平台来自**商品**（商品是平台 0），
     # 活动按平台过滤，配成别的平台号时这单根本看不见它。
-    $script:gftActivityId = [long](Post '/marketing/activities/Create' @{
+    $script:gftActivityId = [long](GwPost '/gateway/marketing/activities/Create' @{
         activityName = "满50送2张$($script:suffix)"; activityType = 3
         thresholdAmount = 50; discountAmount = 0; discountRate = 0
         giftTemplateId = $script:gftGiftTemplateId; giftQuantity = 2
@@ -659,7 +681,7 @@ Invoke-Case 'API-GFT-003' '🔴 满赠券（券类型 4）：用它下单 → �
         platformId = 0; status = 1
     }).data
 
-    $script:gftCouponActivityId = [long](Post '/marketing/coupon-activities/Create' @{
+    $script:gftCouponActivityId = [long](GwPost '/gateway/marketing/coupon-activities/Create' @{
         activityName = "满赠券活动$($script:suffix)"; templateId = $script:gftCouponTemplateId
         claimStartTime = $script:now.AddMinutes(-5).ToString('o')
         claimEndTime = $script:now.AddDays(1).ToString('o')
@@ -694,7 +716,7 @@ Invoke-Case 'API-GFT-003' '🔴 满赠券（券类型 4）：用它下单 → �
 }
 
 Invoke-Case 'API-GFT-004' '满赠赠送张数越界被拒（0 与 101）' {
-    $zero = Post-Api '/marketing/activities/Create' @{
+    $zero = GwPost-Api '/gateway/marketing/activities/Create' @{
         activityName = "张数0$($script:suffix)"; activityType = 3
         thresholdAmount = 50; giftTemplateId = $script:gftGiftTemplateId; giftQuantity = 0
         targetType = 1; targets = '[]'
@@ -702,7 +724,7 @@ Invoke-Case 'API-GFT-004' '满赠赠送张数越界被拒（0 与 101）' {
         endTime = $script:now.AddDays(1).ToString('o')
         platformId = 0
     }
-    $tooMany = Post-Api '/marketing/activities/Create' @{
+    $tooMany = GwPost-Api '/gateway/marketing/activities/Create' @{
         activityName = "张数101$($script:suffix)"; activityType = 3
         thresholdAmount = 50; giftTemplateId = $script:gftGiftTemplateId; giftQuantity = 101
         targetType = 1; targets = '[]'
@@ -726,7 +748,7 @@ $script:rptOrderNo = ''
 $script:rptDiscount = 10
 
 Invoke-Case 'API-RPT-046' '准备：满 50 减 10 的活动 + 一单实付 50（60 − 10）' {
-    $script:rptActivityId = [long](Post '/marketing/activities/Create' @{
+    $script:rptActivityId = [long](GwPost '/gateway/marketing/activities/Create' @{
         activityName = "报表活动$($script:suffix)"; activityType = 1
         thresholdAmount = 50; discountAmount = $script:rptDiscount; discountRate = 0
         giftTemplateId = 0; giftQuantity = 1
@@ -785,7 +807,7 @@ Invoke-Case 'API-GFT-009' '清理：删活动 / 券活动 / 模板 / 商品 / �
     Post '/marketing/activities/Delete' @{ activityId = $script:gftActivityId } | Out-Null
     if ($script:gftCouponActivityId -gt 0) {
         # 券活动没有删除接口（领过的券要能查到来源），只能停用
-        Post '/marketing/coupon-activities/Update' @{
+        GwPost '/gateway/marketing/coupon-activities/Update' @{
             activityId = $script:gftCouponActivityId; activityName = "满赠券活动$($script:suffix)"
             templateId = $script:gftCouponTemplateId
             claimStartTime = $script:now.AddMinutes(-5).ToString('o')
@@ -1450,6 +1472,272 @@ Invoke-Case 'API-SKL-031' '🔴 P0 同一客户 10 个并发请求：只允许�
         -ContentType 'application/json' -TimeoutSec 30 | Out-Null
 
     return $ok -eq 1 -and $distinctOrders -eq 1 -and $limited -eq 9 -and $err -eq 0 -and $row.soldCount -eq 1
+}
+
+Write-Host "`n=== MKT 活动归属（商户账号不能跨租户建活动）===" -ForegroundColor Cyan
+
+# PlatformId / MerchantId 都是请求体字段，文档写的是「商户账号自动锁定本商户」——
+# 也就是说必须由服务端锁。表上有 AOP 租户过滤，但过滤器只管查询 / 更新 / 删除，
+# **不管插入**：不解析归属的话，商户账号能建出一条挂在别人平台 / 商户名下的活动。
+# 同理，商户活动的适用目标必须是自己家的商品，否则等于跨租户改价。
+
+$script:mktMerchantUserId = 0
+$script:mktMerchantId = 0
+$script:mktOtherMerchantId = 0
+$script:mktOtherProductId = 0
+$script:mktMerchantToken = $null
+$script:mktOwnProductId = 0
+$script:mktOwnCategoryIds = @()
+$script:mktNewActivityIds = @()
+
+try {
+    # 归属校验要一个**真实存在且启用**的平台
+    $script:mktPlatformId = [long](Invoke-RestMethod "$Gateway/gateway/platforms/List" -Method Post `
+        -Headers $script:adminHeaders -Body (@{ page = 1; pageSize = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data.items[0].id
+
+    $script:mktMerchantId = [long](Invoke-RestMethod "$Gateway/gateway/merchants/Create" -Method Post `
+        -Headers $script:adminHeaders -Body (@{
+            merchantName = "活动归属店铺$($script:suffix)"; platformId = $script:mktPlatformId
+            contactName = '归属'; contactPhone = '13900139000'; description = '活动归属用例'
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30).data
+
+    Invoke-RestMethod "$Gateway/gateway/merchants/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ merchantId = $script:mktMerchantId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/merchants/ChangeStatus" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ merchantId = $script:mktMerchantId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    # 本商户自己的一个商品（三级分类 → 商品）
+    $pc1 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = 0; categoryName = "归属$($script:suffix)"; platformId = $script:mktPlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $pc2 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $pc1; categoryName = "归属$($script:suffix)"; platformId = $script:mktPlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $pc3 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $pc2; categoryName = "归属$($script:suffix)"; platformId = $script:mktPlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $script:mktOwnCategoryIds = @($pc1, $pc2, $pc3)
+
+    $script:mktOwnProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post `
+        -Headers $script:adminHeaders -Body (@{
+            productId = 0; spuName = "归属商品$($script:suffix)"; categoryId = $pc3
+            deliveryType = 1; mainImage = 'https://cdn.example.com/own.png'
+            platformId = $script:mktPlatformId; merchantId = $script:mktMerchantId
+            specs = @(@{ specName = '颜色'; specValues = @('红') })
+            skus = @(@{ skuCode = "OWN$($script:suffix)"; specValues = @('红'); price = 88; stock = 5; status = 1 })
+        } | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    # 同平台的**另一个**商户 + 它的商品：用来验「目标不能是别人家的商品」。
+    # 必须真实存在且归属不同 —— 用一个不存在的 Id 只能测到「商品不存在」，
+    # 测不到归属那一关。
+    $script:mktOtherMerchantId = [long](Invoke-RestMethod "$Gateway/gateway/merchants/Create" -Method Post `
+        -Headers $script:adminHeaders -Body (@{
+            merchantName = "归属邻居店铺$($script:suffix)"; platformId = $script:mktPlatformId
+            contactName = '邻居'; contactPhone = '13900139001'; description = '活动归属用例'
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30).data
+
+    Invoke-RestMethod "$Gateway/gateway/merchants/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ merchantId = $script:mktOtherMerchantId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/merchants/ChangeStatus" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ merchantId = $script:mktOtherMerchantId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $script:mktOtherProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post `
+        -Headers $script:adminHeaders -Body (@{
+            productId = 0; spuName = "邻居商品$($script:suffix)"; categoryId = $pc3
+            deliveryType = 1; mainImage = 'https://cdn.example.com/other.png'
+            platformId = $script:mktPlatformId; merchantId = $script:mktOtherMerchantId
+            specs = @(@{ specName = '颜色'; specValues = @('蓝') })
+            skus = @(@{ skuCode = "OTHER$($script:suffix)"; specValues = @('蓝'); price = 99; stock = 5; status = 1 })
+        } | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    # 商户账号：角色 9004 = 商户管理员（AllowedScopes=2，与 tenantType=2 匹配）
+    $mktUser = "mktmr$($script:suffix)"
+    $mktPwd = 'Merchant123456'
+    $created = Invoke-RestMethod "$Gateway/gateway/users/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{
+            userName = $mktUser; password = $mktPwd
+            phone = '135' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+            tenantType = 2; nickName = '活动归属用例'
+            platformId = $script:mktPlatformId; merchantId = $script:mktMerchantId; roleIds = @(9004)
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30
+
+    if ($created.success) {
+        $script:mktMerchantUserId = [long]$created.data
+        $script:mktMerchantToken = (Invoke-RestMethod -Uri "$Gateway/gateway/auth/token" -Method Post `
+            -Body "grant_type=password&client_id=admin-app&username=$mktUser&password=$mktPwd" `
+            -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 30).access_token
+    }
+}
+catch {
+    Write-Host ("  （准备活动归属用例失败：" + $_.Exception.Message + "）") -ForegroundColor DarkYellow
+}
+
+function GwPost-AsMerchant([string]$Path, $Body) {
+    try {
+        return Invoke-RestMethod -Uri "$Gateway$Path" -Method Post `
+            -Headers @{ Authorization = "Bearer $($script:mktMerchantToken)" } `
+            -Body ($Body | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
+    } catch {
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{ success = $false; code = -1; message = $_.Exception.Message }
+        }
+        try { return $raw | ConvertFrom-Json -AsHashtable }
+        catch { return [pscustomobject]@{ success = $false; code = -1; message = $raw } }
+    }
+}
+
+Invoke-Case 'API-MKT-100' '🔴 商户账号传别人的平台 Id 建活动被拒（403）' {
+    if (-not $script:mktMerchantToken) { return $false }
+    $r = GwPost-AsMerchant '/gateway/marketing/activities/Create' @{
+        activityName = "越界平台$($script:suffix)"; activityType = 1
+        thresholdAmount = 10; discountAmount = 1
+        targetType = 2; targets = "[$($script:mktOwnProductId)]"
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        platformId = ($script:mktPlatformId + 999999); merchantId = 0; status = 1
+    }
+    (-not $r.success) -and ([int]$r.code -eq 403)
+}
+
+Invoke-Case 'API-MKT-101' '🔴 商户账号不能建「全场」活动（会作用到同平台其他商户）' {
+    if (-not $script:mktMerchantToken) { return $false }
+    $r = GwPost-AsMerchant '/gateway/marketing/activities/Create' @{
+        activityName = "全场越界$($script:suffix)"; activityType = 1
+        thresholdAmount = 10; discountAmount = 1
+        targetType = 1; targets = '[]'
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        platformId = $script:mktPlatformId; merchantId = 0; status = 1
+    }
+    (-not $r.success) -and ([int]$r.code -eq 400) -and $r.message -match '全场'
+}
+
+Invoke-Case 'API-MKT-102' '🔴 商户活动的目标不能是别人家的商品（400）' {
+    if (-not $script:mktMerchantToken) { return $false }
+    # 同平台、但属于**另一个商户**的商品
+    $r = GwPost-AsMerchant '/gateway/marketing/activities/Create' @{
+        activityName = "跨店目标$($script:suffix)"; activityType = 1
+        thresholdAmount = 10; discountAmount = 1
+        targetType = 2; targets = "[$($script:mktOtherProductId)]"
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        platformId = $script:mktPlatformId; merchantId = $script:mktMerchantId; status = 1
+    }
+    if (-not $r.success) {
+        Write-Host ("        （被拒：" + $r.message + "）") -ForegroundColor DarkGray
+    }
+    (-not $r.success) -and ([int]$r.code -eq 400) -and $r.message -match '不属于当前商户'
+}
+
+Invoke-Case 'API-MKT-103' '商户账号指定**自己**的商品建活动成功（防线不误伤）' {
+    if (-not $script:mktMerchantToken) { return $false }
+    $r = GwPost-AsMerchant '/gateway/marketing/activities/Create' @{
+        activityName = "本店活动$($script:suffix)"; activityType = 1
+        thresholdAmount = 10; discountAmount = 1
+        targetType = 2; targets = "[$($script:mktOwnProductId)]"
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        platformId = $script:mktPlatformId; merchantId = 0; status = 1
+    }
+    if (-not $r.success) { return $false }
+    $script:mktNewActivityIds += [long]$r.data
+    return $true
+}
+
+Invoke-Case 'API-MKT-104' '🔴 券活动的模板归属必须一致（跨租户引用被拒）' {
+    if (-not $script:mktMerchantToken) { return $false }
+
+    # 造一个挂在**别的平台**下的券模板：跨租户引用等于把 A 的券发到 B 的活动上
+    $foreignTemplate = [long](Invoke-RestMethod "$Gateway/gateway/marketing/coupon-templates/Create" -Method Post `
+        -Headers $script:adminHeaders -Body (@{
+            templateName = "异平台券$($script:suffix)"; couponType = 1
+            thresholdAmount = 10; discountAmount = 1; validDays = 30
+            totalQuantity = 5; perUserLimit = 1; perOrderLimit = 1
+            platformId = ($script:mktPlatformId + 999999); status = 1
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30).data
+
+    $r = GwPost-AsMerchant '/gateway/marketing/coupon-activities/Create' @{
+        activityName = "跨平台券活动$($script:suffix)"; templateId = $foreignTemplate
+        claimStartTime = $script:now.AddMinutes(-5).ToString('o')
+        claimEndTime = $script:now.AddDays(1).ToString('o')
+        claimQuantity = 5; perUserLimit = 1
+        targetType = 1; targets = '[]'
+        platformId = $script:mktPlatformId; merchantId = 0; status = 1
+    }
+    if (-not $r.success) {
+        Write-Host ("        （被拒：" + $r.message + "）") -ForegroundColor DarkGray
+    }
+
+    try {
+        Post '/marketing/coupon-templates/Delete' @{ templateId = $foreignTemplate } | Out-Null
+    }
+    catch { }
+
+    # 两道防线都会拦住它，先后顺序取决于租户过滤是否生效：
+    #   ① AOP 租户过滤让**别的平台**的模板查不到 → 404「关联的券模板不存在」
+    #   ② 归属一致校验（超管上下文不过滤时才会走到）→ 400「不属于当前平台」
+    # 断言只要求「明确指出模板不可用」，不把两条防线的先后写死成测试的一部分。
+    (-not $r.success) -and ([int]$r.code -in @(400, 404)) -and $r.message -match '模板'
+}
+
+# 收尾：删掉本节建的活动 / 商品 / 分类，并停用临时商户账号
+foreach ($id in $script:mktNewActivityIds) {
+    try { Post '/marketing/activities/Delete' @{ activityId = $id } | Out-Null } catch { }
+}
+if ($script:mktOwnProductId -gt 0) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:mktOwnProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    catch { }
+}
+foreach ($id in [array]($script:mktOwnCategoryIds | Sort-Object -Descending)) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ categoryId = $id } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    catch { }
+}
+if ($script:mktMerchantUserId -gt 0) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/users/UpdateStatus" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ userId = $script:mktMerchantUserId; status = 2 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        Write-Host '  （已停用临时商户账号）' -ForegroundColor DarkGray
+    }
+    catch { }
+}
+if ($script:mktMerchantId -gt 0) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/merchants/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ merchantId = $script:mktMerchantId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    catch { }
+}
+if ($script:mktOtherProductId -gt 0) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:mktOtherProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    catch { }
+}
+if ($script:mktOtherMerchantId -gt 0) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/merchants/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ merchantId = $script:mktOtherMerchantId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    catch { }
 }
 
 Invoke-Case 'API-MKT-090' '🔴 收尾断言：本次跑完不留任何活动' {

@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Collaboration.Domain.Common;
 using Microsoft.Extensions.Logging;
@@ -149,7 +150,33 @@ public interface IProductPort
     /// <returns>SKU Id → 快照；查不到的不在结果里。</returns>
     Task<IReadOnlyDictionary<long, SkuSnapshot>> GetSkuSnapshotsAsync(
         IReadOnlyCollection<long> skuIds, CancellationToken ct = default);
+
+    /// <summary>校验活动的适用目标（SPU / SKU）是否存在且属于该平台 / 商户。</summary>
+    /// <param name="spuIds">指定 SPU 的目标 Id。</param>
+    /// <param name="skuIds">指定 SKU 的目标 Id。</param>
+    /// <param name="platformId">限定平台，0 表示不限。</param>
+    /// <param name="merchantId">限定商户，0 表示不限。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>
+    /// 不通过的目标清单（全部通过时为空集合）；商品服务不可用时返回 <c>null</c>。
+    /// 调用方必须把 <c>null</c> 当成「拒绝」而不是「通过」—— 查不到 ≠ 没问题。
+    /// </returns>
+    Task<IReadOnlyList<RejectedActivityTarget>?> CheckActivityTargetsAsync(
+        IReadOnlyCollection<long> spuIds,
+        IReadOnlyCollection<long> skuIds,
+        long platformId,
+        long merchantId,
+        CancellationToken ct = default);
 }
+
+/// <summary>不可用的活动目标，字段与 ProductService 内部接口一致。</summary>
+/// <param name="TargetId">SPU 或 SKU Id。</param>
+/// <param name="TargetType">2 SPU / 3 SKU。</param>
+/// <param name="Reason">中文原因。</param>
+public sealed record RejectedActivityTarget(
+    [property: JsonPropertyName("targetId")] long TargetId,
+    [property: JsonPropertyName("targetType")] int TargetType,
+    [property: JsonPropertyName("reason")] string Reason);
 
 /// <summary>SKU 快照，字段与 ProductService 内部接口一致。</summary>
 /// <param name="SkuId">SKU Id。</param>
@@ -212,4 +239,62 @@ public sealed class HttpProductPort : IProductPort
 
         return result;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 商品服务不可用时返回 <c>null</c>（不是空集合）：空集合的意思是「全部通过」，
+    /// 而调用方拿这个结果决定要不要放行一条会影响价格的活动配置 ——
+    /// 把「查不到」当成「没问题」等于让审核形同虚设。
+    /// </remarks>
+    public async Task<IReadOnlyList<RejectedActivityTarget>?> CheckActivityTargetsAsync(
+        IReadOnlyCollection<long> spuIds,
+        IReadOnlyCollection<long> skuIds,
+        long platformId,
+        long merchantId,
+        CancellationToken ct = default)
+    {
+        if (spuIds.Count == 0 && skuIds.Count == 0) return Array.Empty<RejectedActivityTarget>();
+
+        var body = new CheckTargetsRequest(
+            spuIds.ToArray(), skuIds.ToArray(), platformId, merchantId);
+
+        try
+        {
+            var response = await _http
+                .PostAsJsonAsync("internal/products/check-targets", body, ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("校验活动目标失败：HTTP {Code}", (int)response.StatusCode);
+                return null;
+            }
+
+            var payload = await response.Content
+                .ReadFromJsonAsync<ApiResponse<CheckTargetsResponse>>(ct).ConfigureAwait(false);
+
+            if (payload is null || !payload.Success || payload.Data is null)
+            {
+                _logger.LogWarning("校验活动目标未返回可用结果");
+                return null;
+            }
+
+            return payload.Data.Rejected;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "校验活动目标调用异常");
+            return null;
+        }
+    }
+
+    /// <summary>目标校验请求体。</summary>
+    private sealed record CheckTargetsRequest(
+        [property: JsonPropertyName("spuIds")] long[] SpuIds,
+        [property: JsonPropertyName("skuIds")] long[] SkuIds,
+        [property: JsonPropertyName("platformId")] long PlatformId,
+        [property: JsonPropertyName("merchantId")] long MerchantId);
+
+    /// <summary>目标校验响应体。</summary>
+    private sealed record CheckTargetsResponse(
+        [property: JsonPropertyName("rejected")] IReadOnlyList<RejectedActivityTarget> Rejected);
 }

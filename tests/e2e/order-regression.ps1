@@ -351,7 +351,9 @@ Invoke-Case 'API-ORD-001a' '建满减券模板 + 券活动（满 40 减 10）' {
         -Body (@{ templateName = "订单券$($script:suffix)"; couponType = 1; thresholdAmount = 40; discountAmount = 10; validDays = 30; totalQuantity = 50; perUserLimit = 2; perOrderLimit = 1; platformId = 0; status = 1 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30).data
 
-    $script:activityId = (Invoke-RestMethod "$Marketing/marketing/coupon-activities/Create" -Method Post `
+    # 经网关：券活动的归属由服务端按租户身份解析（DATA_SPEC 5.13），直连没有身份会被拒
+    $script:activityId = (Invoke-RestMethod "$Gateway/gateway/marketing/coupon-activities/Create" -Method Post `
+        -Headers $script:adminHeaders `
         -Body (@{
             activityName = "订单活动$($script:suffix)"; templateId = $script:templateId
             claimStartTime = (Get-Date).AddMinutes(-5).ToString('o')
@@ -397,7 +399,8 @@ Invoke-Case 'API-ORD-009b' '🔴🔴 P0 带满减活动的单：实付必须等�
     # activityDiscount 直接写成全 0（注释写着「活动优惠尚未落地，先全 0」）。
     # 于是结算页显示 46、点下单却按 51 收 —— 少算的活动优惠变成了实收。
     $now = [DateTime]::UtcNow
-    $act = Invoke-RestMethod "$Marketing/marketing/activities/Create" -Method Post `
+    $act = Invoke-RestMethod "$Gateway/gateway/marketing/activities/Create" -Method Post `
+        -Headers $script:adminHeaders `
         -Body (@{
             activityName = "ORD满减$($script:suffix)"; activityType = 1
             thresholdAmount = 40; discountAmount = 5
@@ -1579,12 +1582,13 @@ Invoke-Case 'API-ORD-146' '🔴 P0 指定 SKU 的券只减适用行（逐行分�
         validDays = 30; totalQuantity = 50; perUserLimit = 5; perOrderLimit = 1
         platformId = 0; status = 1
     }).data
-    $activity = (Invoke-Api "$Marketing/marketing/coupon-activities/Create" 'Post' @{
+    # 经网关：券活动的归属由服务端按租户身份解析（DATA_SPEC 5.13），直连没有身份会被拒
+    $activity = (Invoke-Api "$Gateway/gateway/marketing/coupon-activities/Create" 'Post' @{
         activityName = "作用域券活动$($script:suffix)"; templateId = $template
         claimStartTime = $now.AddMinutes(-5).ToString('o'); claimEndTime = $now.AddDays(1).ToString('o')
         claimQuantity = 50; perUserLimit = 5
         targetType = 3; targets = "[$skuA]"; platformId = 0; status = 1
-    }).data
+    } $script:adminHeaders).data
     $claim = Invoke-Api "$Marketing/coupons/Claim" 'Post' @{
         customerId = $script:customerId; activityId = $activity; quantity = 1
     }
@@ -1640,11 +1644,11 @@ Invoke-Case 'API-ORD-146' '🔴 P0 指定 SKU 的券只减适用行（逐行分�
         -and $pvA.couponDiscount -eq 20.00 -and $pvB.couponDiscount -eq 0.00
 
     OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
-    Invoke-Api "$Marketing/marketing/coupon-activities/Update" 'Post' @{
+    Invoke-Api "$Gateway/gateway/marketing/coupon-activities/Update" 'Post' @{
         activityId = $activity; activityName = "作用域券活动$($script:suffix)"; templateId = $template
         claimStartTime = $now.AddMinutes(-5).ToString('o'); claimEndTime = $now.AddDays(1).ToString('o')
         claimQuantity = 50; perUserLimit = 5; targetType = 3; targets = "[$skuA]"; sortOrder = 0; status = 2
-    } | Out-Null
+    } $script:adminHeaders | Out-Null
     Invoke-Api "$Marketing/marketing/coupon-templates/Delete" 'Post' @{ templateId = $template } | Out-Null
 
     return $ok

@@ -1,4 +1,6 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
+using MarketingService.Application.Services;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
 using MarketingService.Domain.Services;
@@ -49,21 +51,47 @@ public sealed class CreatePromotionActivityHandler
     : IRequestHandler<CreatePromotionActivityCommand, ApiResponse<long>>
 {
     private readonly IPromotionRepository _promotions;
+    private readonly IProductPort _products;
 
     /// <summary>构造处理器。</summary>
     /// <param name="promotions">活动仓储。</param>
-    public CreatePromotionActivityHandler(IPromotionRepository promotions) => _promotions = promotions;
+    /// <param name="products">商品端口，用于校验适用目标的存在性与归属。</param>
+    public CreatePromotionActivityHandler(IPromotionRepository promotions, IProductPort products)
+    {
+        _promotions = promotions;
+        _products = products;
+    }
 
     /// <summary>执行新建。</summary>
     /// <param name="request">命令。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>成功返回活动 Id。</returns>
+    /// <returns>成功返回活动 Id；归属越界返回 403；目标不可用返回 400。</returns>
+    /// <remarks>
+    /// 两条校验都必须在插库之前：<c>PlatformId</c> / <c>MerchantId</c> 来自请求体（必须锁定），
+    /// <c>Targets</c> 里的 SPU / SKU 必须真实存在且属于本租户
+    /// （否则商户 A 的活动能把目标写成商户 B 的商品，那是跨租户改价）。
+    /// </remarks>
     public async Task<ApiResponse<long>> Handle(CreatePromotionActivityCommand request, CancellationToken ct)
     {
+        if (!PromotionActivityScope.TryResolve(
+                TenantContextHolder.Current, request.PlatformId, request.MerchantId,
+                out var platformId, out var merchantId, out var scopeError))
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.Forbidden, scopeError);
+        }
+
+        var targetError = await PromotionActivityTargets
+            .ValidateAsync(request.TargetType, request.Targets, platformId, merchantId, _products, ct)
+            .ConfigureAwait(false);
+        if (targetError is not null)
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, targetError);
+        }
+
         var activity = new PromotionActivity
         {
-            PlatformId = request.PlatformId,
-            MerchantId = request.MerchantId,
+            PlatformId = platformId,
+            MerchantId = merchantId,
             ActivityName = request.ActivityName.Trim(),
             ActivityType = request.ActivityType,
             ThresholdAmount = PromotionCalculator.Round2(request.ThresholdAmount),
@@ -105,19 +133,40 @@ public sealed class UpdatePromotionActivityHandler
     : IRequestHandler<UpdatePromotionActivityCommand, ApiResponse>
 {
     private readonly IPromotionRepository _promotions;
+    private readonly IProductPort _products;
 
     /// <summary>构造处理器。</summary>
     /// <param name="promotions">活动仓储。</param>
-    public UpdatePromotionActivityHandler(IPromotionRepository promotions) => _promotions = promotions;
+    /// <param name="products">商品端口，用于校验适用目标的存在性与归属。</param>
+    public UpdatePromotionActivityHandler(IPromotionRepository promotions, IProductPort products)
+    {
+        _promotions = promotions;
+        _products = products;
+    }
 
     /// <summary>执行编辑。</summary>
     /// <param name="request">命令。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>成功返回空响应。</returns>
+    /// <returns>成功返回空响应；活动不存在返回 404；目标不可用返回 400。</returns>
+    /// <remarks>
+    /// 编辑**不接收** PlatformId / MerchantId：归属在创建时锁定，事后改归属等于把一条活动
+    /// 搬到另一个租户名下（已经产生的参与记录会跟着错位）。所以这里只用已存在实体的归属
+    /// 去校验新的 Targets。
+    /// </remarks>
     public async Task<ApiResponse> Handle(UpdatePromotionActivityCommand request, CancellationToken ct)
     {
         var existing = await _promotions.GetAsync(request.ActivityId, ct);
         if (existing is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "活动不存在");
+
+        var targetError = await PromotionActivityTargets
+            .ValidateAsync(
+                request.TargetType, request.Targets,
+                existing.PlatformId, existing.MerchantId, _products, ct)
+            .ConfigureAwait(false);
+        if (targetError is not null)
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.BadRequest, targetError);
+        }
 
         existing.ActivityName = request.ActivityName.Trim();
         existing.ActivityType = request.ActivityType;

@@ -583,8 +583,10 @@ Invoke-Case 'API-SHP-006' '🔴 P0 每个 SKU 单独定价：满 100 减 20 → 
         startTime = $now.AddDays(-1).ToString('o'); endTime = $now.AddDays(1).ToString('o')
         status = 1; platformId = 0
     }
-    $script:shopActivityId = [long](Invoke-RestMethod "$Marketing/marketing/activities/Create" -Method Post `
-        -Body ($act | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30).data
+    # 经网关：活动的归属（PlatformId / MerchantId）由服务端按租户身份解析（DATA_SPEC 5.11），
+    # 直连服务端口没有 X-Claim-* 头 = 无身份，会被判越权。
+    $script:shopActivityId = [long](Invoke-RestMethod "$Gateway/gateway/marketing/activities/Create" -Method Post `
+        -Headers $script:headers -Body ($act | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30).data
 
     $r = ShopPost 'Detail' @{ customerId = 0; productId = $script:shopProductId }
     $skus = @($r.data.skus)
