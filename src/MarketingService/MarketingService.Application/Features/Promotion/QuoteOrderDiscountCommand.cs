@@ -94,6 +94,8 @@ public sealed class QuoteOrderDiscountHandler
 
         var result = PromotionCalculator.Calculate(lines, activities, coupons, priority, nowUtc);
 
+        await RecordActivityParticipationAsync(request, activities, lines, result, nowUtc, ct)
+            .ConfigureAwait(false);
         await RecordGiftPromiseAsync(request, activities, lines, result, nowUtc, ct).ConfigureAwait(false);
 
         var perLine = result.Lines
@@ -103,6 +105,51 @@ public sealed class QuoteOrderDiscountHandler
 
         return ApiResults.Ok(new QuoteOrderDiscountResult(
             perLine, PromotionCalculator.Round2(result.ActivityDiscountTotal)));
+    }
+
+    /// <summary>记一条活动参与记录（活动报表与下钻的数据源）。</summary>
+    /// <param name="request">试算命令，<c>OrderNo</c> 为空表示结算试算，不记。</param>
+    /// <param name="activities">候选活动。</param>
+    /// <param name="lines">订单行。</param>
+    /// <param name="result">优惠引擎的整单结论。</param>
+    /// <param name="nowUtc">下单时刻（UTC）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <remarks>
+    /// <para>BUSINESS.md 17 要求活动报表给「参与订单数 / 参与金额 / 折扣总额」并支持下钻订单明细，
+    /// 而订单行只存「这行减了多少钱」、不存命中了哪个活动 —— 不在这儿记一笔，报表就没有数据源。</para>
+    ///
+    /// <para>只有真实下单才记（<c>OrderNo</c> 非空）：结算页每翻一页都试算一次，
+    /// 试算也记的话「参与订单数」会被「随便看看」刷起来。</para>
+    /// </remarks>
+    private async Task RecordActivityParticipationAsync(
+        QuoteOrderDiscountCommand request,
+        IReadOnlyList<PromotionActivity> activities,
+        IReadOnlyList<PromotionLine> lines,
+        FinalPriceResult result,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.OrderNo)) return;
+        if (request.CustomerId <= 0) return;
+
+        // 被券压住的行不算参与活动（券与活动互斥，BUSINESS.md 11.2）
+        if (!result.UsedActivity) return;
+
+        var hit = PromotionCalculator.PickBest(activities, lines, nowUtc);
+        if (hit.ActivityId == 0) return;
+
+        await _promotions.RecordParticipationAsync(new MarketingActivityRecord
+        {
+            OrderNo = request.OrderNo,
+            CustomerId = request.CustomerId,
+            ActivityId = hit.ActivityId,
+            ActivityName = hit.ActivityName,
+            // 平台取**订单的**平台（订单服务按商品归属传过来）：活动可以是平台 0 的全场活动，
+            // 但报表要能按订单所属平台筛。
+            PlatformId = request.PlatformId,
+            MerchantId = activities.FirstOrDefault(a => a.Id == hit.ActivityId)?.MerchantId ?? 0,
+            DiscountAmount = PromotionCalculator.Round2(result.ActivityDiscountTotal)
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>把本单命中的满赠落成发放承诺。</summary>

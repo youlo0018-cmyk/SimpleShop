@@ -1307,6 +1307,20 @@ export const LISTS = {
     ],
   },
 
+  // 营销效果报表的「下钻订单明细」：从报表的逐活动表格点进来，带 activityId + range
+  activityRecords: {
+    title: '活动参与记录',
+    desc: '哪些订单参与了活动、各自让利多少。时间口径与报表一致',
+    endpoint: '/gateway/marketing/activities/Records',
+    method: 'POST',
+    columns: [
+      { field: 'orderNo', label: '订单号', width: 200, format: 'text', mono: true },
+      { field: 'customerId', label: '客户 Id', width: 170, format: 'text', mono: true },
+      { field: 'discountAmount', label: '折扣额', width: 110, num: true, format: 'amount' },
+      { field: 'createdAt', label: '参与时间', width: 155, format: 'time' },
+    ],
+  },
+
   files: {
     title: '文件管理',
     desc: '已上传的文件。移除只清列表，不删存储中的内容',

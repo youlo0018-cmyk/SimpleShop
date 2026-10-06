@@ -40,7 +40,7 @@ public static class ApiServiceCollectionExtensions
         AddInventoryPort(services, configuration);
         AddProductPort(services, configuration);
         AddOrderPort(services, configuration);
-        AddSeckillGmvPort(services, configuration);
+        AddOrderAmountPort(services, configuration);
 
         // 库存回补器：手动中止与「到点自动结束」共用同一段回补代码。
         // 注册成 Scoped 而不是 Transient：它持有仓储与 HttpClient，
@@ -113,18 +113,18 @@ public static class ApiServiceCollectionExtensions
     /// <summary>注册秒杀 GMV 端口：报表要向订单服务问成交额。</summary>
     /// <param name="services">服务集合。</param>
     /// <param name="configuration">应用配置。</param>
-    private static void AddSeckillGmvPort(IServiceCollection services, IConfiguration configuration)
+    private static void AddOrderAmountPort(IServiceCollection services, IConfiguration configuration)
     {
         var url = configuration["Services:OrderServiceBaseUrl"];
         if (string.IsNullOrWhiteSpace(url))
         {
             throw new InvalidOperationException(
-                "缺少配置 Services:OrderServiceBaseUrl。秒杀订单金额在订单库，没有它 GMV 算不出来。");
+                "缺少配置 Services:OrderServiceBaseUrl。订单金额在订单库，没有它报表的金额算不出来。");
         }
 
         // 超时和下单端口一致：都是打订单服务，但这个是只读汇总，
         // 不参与下单链路，失败只影响报表里的一个数字。
-        services.AddHttpClient<ISeckillGmvPort, HttpSeckillGmvPort>(client =>
+        services.AddHttpClient<IOrderAmountPort, HttpOrderAmountPort>(client =>
         {
             client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(15);

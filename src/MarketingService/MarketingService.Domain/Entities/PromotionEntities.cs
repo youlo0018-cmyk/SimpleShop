@@ -196,3 +196,48 @@ public static class GiftGrantStatuses
     /// <summary>已发放：券已进用户券包。</summary>
     public const int Issued = 20;
 }
+
+/// <summary>活动参与记录（<c>marketing_activity_record</c>）。</summary>
+/// <remarks>
+/// <para><b>为什么要有这张表</b>：BUSINESS.md 17 要求活动报表给「参与订单数 / 参与金额 / 折扣总额」，
+/// 并支持<b>下钻订单明细</b>。但订单行只存「这行减了多少钱」，<b>不存命中了哪个活动</b>，
+/// 报表没法从订单侧反推。判定活动命中的地方只有一处 —— 下单试算 —— 所以在那儿记一笔。</para>
+///
+/// <para><b>活动名存快照</b>：活动可以改名甚至软删，历史报表要显示<b>当时</b>的名字。
+/// 联表取当前值会让上个月的报表跟着这个月的改名一起变。</para>
+///
+/// <para><b>参与金额不在这张表里</b>：它必须按「已支付、未取消、未退款」算，
+/// 那是订单服务的口径（与工作台 GMV 同源）。营销侧只记「哪些单参与了」，
+/// 金额一律回订单服务问 —— 两处各算一遍必然对不上账。</para>
+/// </remarks>
+[Table(Name = "marketing_activity_record")]
+public class MarketingActivityRecord : EntityBase
+{
+    /// <summary>订单号。</summary>
+    [Column(Name = "order_no", StringLength = 64)]
+    public string OrderNo { get; set; } = string.Empty;
+
+    /// <summary>下单的客户 Id。</summary>
+    [Column(Name = "customer_id")]
+    public long CustomerId { get; set; }
+
+    /// <summary>命中的活动 Id。</summary>
+    [Column(Name = "activity_id")]
+    public long ActivityId { get; set; }
+
+    /// <summary>活动名快照。</summary>
+    [Column(Name = "activity_name", StringLength = 128)]
+    public string ActivityName { get; set; } = string.Empty;
+
+    /// <summary>归属平台 Id。</summary>
+    [Column(Name = "platform_id")]
+    public long PlatformId { get; set; }
+
+    /// <summary>归属商户 Id，0 表示平台自营。</summary>
+    [Column(Name = "merchant_id")]
+    public long MerchantId { get; set; }
+
+    /// <summary>本单因该活动实际让利多少，两位小数。</summary>
+    [Column(Name = "discount_amount")]
+    public decimal DiscountAmount { get; set; }
+}

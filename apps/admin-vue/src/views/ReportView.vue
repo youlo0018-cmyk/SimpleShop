@@ -39,6 +39,12 @@
               <span :class="col.num ? 'num' : ''">{{ render(col, row) }}</span>
             </template>
           </el-table-column>
+          <!-- 下钻列：报表只到「逐活动」这一层，明细在独立列表页（不塞进报表页） -->
+          <el-table-column v-if="config.table.linkTo" label="明细" width="110" align="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="drill(row)">{{ config.table.linkText || '查看' }}</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </section>
 
@@ -49,6 +55,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import request from '@/api/request';
 import { formatAmount, formatCount, formatPercent, emptyText } from '@/utils/format';
 
@@ -65,6 +72,7 @@ const FORMATTERS: Record<string, Fmt> = {
 };
 
 const props = defineProps<{ config: any }>();
+const router = useRouter();
 
 // 🔴 必须用 computed，不能 `const config = props.config`。
 // 四张报表复用同一个组件，vue-router 会**复用组件实例**（component 类型相同、
@@ -104,6 +112,14 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+// 下钻：把当前时间档位一起带过去。
+// 不带的话明细页会按它自己的默认区间查，行数与报表上的「参与订单数」对不上，
+// 运营会以为数据丢了（这正是「下钻」最容易出错的地方）。
+function drill(row: any) {
+  const to = config.value.table.linkTo(row, range.value);
+  if (to) router.push(to);
 }
 
 // 换报表 = 换 config，除了时间档位还要跟着换，所以两个都监听。

@@ -70,15 +70,15 @@ public static class CouponValidators
         services.AddScoped<IValidator<ConsumeCouponCommand>, CouponOrderValidator>();
         services.AddScoped<IValidator<ReleaseCouponCommand>, ReleaseCouponValidator>();
         services.AddScoped<IValidator<SettleCouponsCommand>, SettleCouponsValidator>();
-        services.AddScoped<IValidator<QueryCouponReportCommand>, CouponReportValidator>();
+        services.AddScoped<IValidator<QueryMarketingReportCommand>, MarketingReportValidator>();
         services.AddScoped<IValidator<IssueGiftGrantsCommand>, IssueGiftGrantsValidator>();
     }
 
     /// <summary>营销效果报表校验。</summary>
-    private sealed class CouponReportValidator : AbstractValidator<QueryCouponReportCommand>
+    private sealed class MarketingReportValidator : AbstractValidator<QueryMarketingReportCommand>
     {
         /// <summary>构造校验器。</summary>
-        public CouponReportValidator()
+        public MarketingReportValidator()
         {
             // 只认 1~4 四档。不校验的话非法档位会在区间换算里抛异常变成 500，
             // 而它本来就是个参数错误，应该返回带中文原因的 400。

@@ -19,12 +19,12 @@ public sealed class SeckillReportHandler
     : IRequestHandler<QuerySeckillReportCommand, ApiResponse<SeckillReport>>
 {
     private readonly ISeckillRepository _seckill;
-    private readonly ISeckillGmvPort _gmv;
+    private readonly IOrderAmountPort _gmv;
 
     /// <summary>构造处理器。</summary>
     /// <param name="seckill">秒杀仓储。</param>
     /// <param name="gmv">成交额端口（订单服务）。</param>
-    public SeckillReportHandler(ISeckillRepository seckill, ISeckillGmvPort gmv)
+    public SeckillReportHandler(ISeckillRepository seckill, IOrderAmountPort gmv)
     {
         _seckill = seckill;
         _gmv = gmv;

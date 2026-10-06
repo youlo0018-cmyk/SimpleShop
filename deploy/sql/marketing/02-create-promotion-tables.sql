@@ -110,6 +110,40 @@ CREATE INDEX IF NOT EXISTS idx_gift_grant_status
     ON gift_grant (status)
     WHERE is_deleted = false;
 
+-- 活动参与记录（BUSINESS.md 17「活动：参与订单数、参与金额、折扣总额」+ 下钻订单明细）。
+--
+-- 订单行只存「这行减了多少钱」，**不存命中了哪个活动**，所以活动报表没法从订单侧反推。
+-- 判定活动命中的地方只有一处：下单试算。所以试算时就把「这单命中了哪个活动、减了多少」
+-- 记下来，报表按它聚合，下钻就是按 activity_id 翻这张表。
+--
+-- 活动名存快照：活动可以改名甚至软删，报表要显示**当时**的名字，
+-- 联表取当前值会让历史报表跟着改名。
+CREATE TABLE IF NOT EXISTS marketing_activity_record (
+    id              bigint        NOT NULL,
+    created_at      timestamp     NOT NULL,
+    updated_at      timestamp     NULL,
+    is_deleted      boolean       NOT NULL DEFAULT false,
+    deleted_at      timestamp     NULL,
+    order_no        varchar(64)   NOT NULL DEFAULT '',
+    customer_id     bigint        NOT NULL DEFAULT 0,
+    activity_id     bigint        NOT NULL DEFAULT 0,
+    activity_name   varchar(128)  NOT NULL DEFAULT '',
+    platform_id     bigint        NOT NULL DEFAULT 0,
+    merchant_id     bigint        NOT NULL DEFAULT 0,
+    discount_amount numeric(18,2) NOT NULL DEFAULT 0,
+    CONSTRAINT pk_marketing_activity_record PRIMARY KEY (id)
+);
+
+-- 幂等键：同一单同一活动只记一次。试算会被重放（客户端重试、幂等键撞车），
+-- 没有这个索引就会把「参与订单数」刷成两倍。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_activity_record_order_activity
+    ON marketing_activity_record (order_no, activity_id);
+
+-- 报表按活动 + 时间聚合；下钻按活动翻页
+CREATE INDEX IF NOT EXISTS idx_activity_record_activity
+    ON marketing_activity_record (activity_id, created_at)
+    WHERE is_deleted = false;
+
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO simpleshop_app;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO simpleshop_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO simpleshop_app;

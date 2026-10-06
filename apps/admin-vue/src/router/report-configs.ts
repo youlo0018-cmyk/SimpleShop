@@ -38,17 +38,35 @@ export const REPORTS = {
 
   marketing: {
     title: '营销效果报表',
-    desc: '券的发放 / 领取 / 核销与折扣',
+    desc: '活动的参与与让利、券的发放 / 领取 / 核销',
     endpoint: '/gateway/reports/Marketing',
     byRange: true,
-    note: '发放与领取刻意分开看：运营常把「发了 1000 张」当业绩，只有被领走的才算触达。',
+    note: '活动与券是并列的两段：活动下单即生效、券要先领。发放与领取也刻意分开看 —— 只有被领走的券才算触达。',
     metrics: [
-      { field: 'issuedTotal', label: '发放总数', format: 'count', strong: true },
+      { field: 'activityOrderCount', label: '活动参与订单', format: 'count', strong: true },
+      { field: 'activityOrderAmount', label: '活动参与金额', format: 'amount' },
+      { field: 'activityDiscountTotal', label: '活动折扣总额', format: 'amount' },
+      { field: 'issuedTotal', label: '券发放总数', format: 'count' },
       { field: 'receivedTotal', label: '领取数', format: 'count' },
       { field: 'consumedTotal', label: '核销数', format: 'count' },
       { field: 'consumeRate', label: '核销率', format: 'percent' },
-      { field: 'discountTotal', label: '折扣总额', format: 'amount' },
+      { field: 'discountTotal', label: '券折扣总额', format: 'amount' },
     ],
+    table: {
+      title: '逐活动',
+      rows: (d: any) => d.activities || [],
+      columns: [
+        { field: 'activityName', label: '活动', width: 200 },
+        { field: 'orderCount', label: '参与订单', width: 110, num: true, format: 'count' },
+        { field: 'orderAmount', label: '参与金额', width: 120, num: true, format: 'amount' },
+        { field: 'discountTotal', label: '折扣总额', width: 120, num: true, format: 'amount' },
+      ],
+      // 下钻带上当前时间档位：明细页的默认区间与报表不同的话，
+      // 明细行数与报表上的「参与订单数」对不上，看起来像数据丢了。
+      linkText: '订单明细',
+      linkTo: (row: any, range: number) =>
+        `/marketing/activity-records?activityId=${row.activityId}&range=${range}`,
+    },
   },
 
   seckill: {

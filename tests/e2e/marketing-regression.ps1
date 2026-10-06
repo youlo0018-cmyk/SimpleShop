@@ -675,7 +675,74 @@ Invoke-Case 'API-GFT-004' '满赠赠送张数越界被拒（0 与 101）' {
         -and (-not $tooMany.success) -and (Get-ErrorText $tooMany) -match '赠送张数'
 }
 
+Write-Host "`n=== RPT 活动报表与下钻（BUSINESS.md 17）===" -ForegroundColor Cyan
+
+# 活动报表的数据源是「下单试算时记的参与记录」：订单行只存「这行减了多少钱」，
+# 不存命中了哪个活动，所以报表与下钻都依赖那条记录。
+# 这里用一个**满减**活动（折扣非 0）跑一遍，才能同时验「参与订单数」与「折扣总额」。
+
+$script:rptActivityId = 0
+$script:rptCustomerId = 740000000 + $script:suffix
+$script:rptOrderNo = ''
+$script:rptDiscount = 10
+
+Invoke-Case 'API-RPT-046' '准备：满 50 减 10 的活动 + 一单实付 50（60 − 10）' {
+    $script:rptActivityId = [long](Post '/marketing/activities/Create' @{
+        activityName = "报表活动$($script:suffix)"; activityType = 1
+        thresholdAmount = 50; discountAmount = $script:rptDiscount; discountRate = 0
+        giftTemplateId = 0; giftQuantity = 1
+        targetType = 1; targets = '[]'
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+        platformId = 0; merchantId = 0
+    }).data
+    if ($script:rptActivityId -le 0) { return $false }
+
+    $order = New-GftOrder $script:rptCustomerId 0 'RPT'
+    if (-not $order.success) { Write-Host ("        下单失败：" + $order.message) -ForegroundColor DarkYellow; return $false }
+
+    $script:rptOrderNo = $order.data.orderNo
+    $pay = Pay-GftOrder $script:rptOrderNo
+    return $pay.success -and $order.data.payableAmount -eq ($script:gftPrice - $script:rptDiscount)
+}
+
+Invoke-Case 'API-RPT-047' '🔴 活动报表：参与订单数 / 参与金额 / 折扣总额（金额回订单服务取，口径同 GMV）' {
+    $r = Post '/reports/Marketing' @{ range = 1; merchantId = 0; platformId = 0 }
+    if (-not $r.success) { Write-Host ("        报表失败：" + $r.message) -ForegroundColor DarkYellow; return $false }
+
+    $row = @($r.data.activities | Where-Object { [long]$_.activityId -eq $script:rptActivityId })[0]
+    if (-not $row) { Write-Host '        报表里没有这个活动' -ForegroundColor DarkYellow; return $false }
+
+    Write-Host ("        参与订单 {0} / 参与金额 {1} / 折扣总额 {2}" -f `
+        $row.orderCount, $row.orderAmount, $row.discountTotal) -ForegroundColor DarkGray
+
+    # 这一单是本次活动唯一的订单：参与金额必须是**实付 50**（不是原价 60），
+    # 折扣总额必须是 10。金额由订单服务按「已支付、未取消、未退款」算，与工作台 GMV 同源。
+    return $row.orderCount -eq 1 `
+        -and $row.orderAmount -eq ($script:gftPrice - $script:rptDiscount) `
+        -and $row.discountTotal -eq $script:rptDiscount
+}
+
+Invoke-Case 'API-RPT-003' '🔴 营销效果下钻：按活动查到订单明细，且时间口径与报表一致' {
+    $r = Post '/marketing/activities/Records' @{
+        activityId = $script:rptActivityId; range = 1; page = 1; pageSize = 20
+    }
+    if (-not $r.success) { Write-Host ("        下钻失败：" + $r.message) -ForegroundColor DarkYellow; return $false }
+
+    $hit = @($r.data.items | Where-Object { $_.orderNo -eq $script:rptOrderNo })
+
+    # 行数必须与报表上的「参与订单数」对得上（同一个区间口径），否则运营会以为数据丢了
+    return $r.data.total -eq 1 `
+        -and $hit.Count -eq 1 `
+        -and $hit[0].discountAmount -eq $script:rptDiscount `
+        -and $hit[0].customerId -eq $script:rptCustomerId
+}
+
 Invoke-Case 'API-GFT-009' '清理：删活动 / 券活动 / 模板 / 商品 / 分类' {
+    if ($script:rptActivityId -gt 0) {
+        Post '/marketing/activities/Delete' @{ activityId = $script:rptActivityId } | Out-Null
+    }
     Post '/marketing/activities/Delete' @{ activityId = $script:gftActivityId } | Out-Null
     if ($script:gftCouponActivityId -gt 0) {
         # 券活动没有删除接口（领过的券要能查到来源），只能停用

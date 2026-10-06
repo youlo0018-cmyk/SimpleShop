@@ -232,6 +232,7 @@ public static class PromotionValidators
         services.AddScoped<IValidator<CalculateFinalPriceCommand>, FinalPriceValidator>();
         services.AddScoped<IValidator<QuoteOrderDiscountCommand>, QuoteOrderDiscountValidator>();
         services.AddScoped<IValidator<CalculateFinalPriceBatchCommand>, FinalPriceBatchValidator>();
+        services.AddScoped<IValidator<QueryActivityRecordsCommand>, QueryActivityRecordsValidator>();
     }
 
     /// <summary>新建校验。</summary>

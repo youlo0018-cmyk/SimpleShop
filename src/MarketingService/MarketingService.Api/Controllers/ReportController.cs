@@ -21,13 +21,17 @@ public sealed class ReportController : ControllerBase
     /// <param name="mediator">MediatR 入口。</param>
     public ReportController(IMediator mediator) => _mediator = mediator;
 
-    /// <summary>营销效果报表（券部分）。</summary>
+    /// <summary>营销效果报表（活动 + 券）。</summary>
     /// <param name="command">查询条件。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>发放 / 领取 / 核销 / 核销率 / 折扣总额。</returns>
+    /// <returns>逐活动的参与订单数 / 参与金额 / 折扣总额，以及券的发放 / 领取 / 核销 / 核销率 / 折扣总额。</returns>
+    /// <remarks>
+    /// 活动段就是「下钻订单明细」的入口：拿到 <c>activities[].activityId</c> 后调
+    /// <c>POST /marketing/activities/Records</c> 翻该活动的参与订单。
+    /// </remarks>
     [HttpPost("Marketing")]
-    public Task<ApiResponse<CouponReport>> Marketing(
-        [FromBody] QueryCouponReportCommand command, CancellationToken ct)
+    public Task<ApiResponse<MarketingReport>> Marketing(
+        [FromBody] QueryMarketingReportCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
     /// <summary>秒杀效果报表。</summary>

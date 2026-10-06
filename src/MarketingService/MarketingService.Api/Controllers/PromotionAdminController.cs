@@ -65,6 +65,19 @@ public sealed class PromotionAdminController : ControllerBase
     public Task<ApiResponse> Delete([FromBody] DeletePromotionActivityCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>活动参与记录（营销效果报表下钻订单明细）。</summary>
+    /// <param name="command">查询命令，含活动 Id 与时间范围档位。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>当页参与记录（订单号 / 客户 / 折扣额 / 时间）。</returns>
+    /// <remarks>
+    /// 时间口径与 <c>/reports/Marketing</c> 完全一致（<see cref="Collaboration.Domain.Services.ReportRanges"/>），
+    /// 否则下钻出来的行数与报表上的「参与订单数」对不上，运营会以为数据丢了。
+    /// </remarks>
+    [HttpPost("Records")]
+    public Task<ApiResponse<PagedResult<ActivityRecordItem>>> Records(
+        [FromBody] QueryActivityRecordsCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>分组批量试算（商品列表页专用）。<b>每组独立算，组间互不影响。</b></summary>
     /// <param name="command">命令；Groups 每组是一个 SKU。</param>
     /// <param name="ct">取消令牌。</param>

@@ -4,6 +4,7 @@ using Collaboration.Domain.Repository;
 using FreeSql;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
+using MarketingService.Domain.Services;
 
 namespace MarketingService.Infrastructure.Repository;
 
@@ -154,4 +155,71 @@ public sealed class PromotionRepository : IPromotionRepository
                 IsDeleted = true, DeletedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
             })
             .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<bool> RecordParticipationAsync(
+        MarketingActivityRecord record, CancellationToken ct = default)
+    {
+        var exists = await _db.Select<MarketingActivityRecord>()
+            .Where(a => a.OrderNo == record.OrderNo && a.ActivityId == record.ActivityId)
+            .AnyAsync(ct)
+            .ConfigureAwait(false);
+        if (exists) return false;
+
+        record.Id = SnowflakeId.NewId();
+        record.CreatedAt = DateTime.UtcNow;
+
+        await _db.Insert(record).ExecuteAffrowsAsync(ct).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public async Task<List<ActivityParticipationAggregate>> AggregateParticipationAsync(
+        DateTime from, DateTime to, long merchantId, long platformId, int limit,
+        CancellationToken ct = default)
+    {
+        var rows = await _db.Select<MarketingActivityRecord>()
+            .Where(a => a.CreatedAt >= from && a.CreatedAt < to)
+            .Where(a => merchantId <= 0 || a.MerchantId == merchantId)
+            .Where(a => platformId <= 0 || a.PlatformId == platformId)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // 内存分组：一个区间的参与记录量级是「订单数」，与积分 / 券报表同一取舍
+        // （数据量真的上来之后改 SQL 聚合或加汇总表，见 REVIEW P2）。
+        return rows
+            .GroupBy(a => a.ActivityId)
+            .Select(g => new ActivityParticipationAggregate(
+                g.Key,
+                // 名字取快照：同一次分组里的名字理论上一样（活动改名不改历史记录）
+                g.OrderByDescending(a => a.CreatedAt).First().ActivityName,
+                g.LongCount(),
+                Math.Round(g.Sum(a => a.DiscountAmount), 2, MidpointRounding.AwayFromZero),
+                g.Select(a => a.OrderNo).ToList()))
+            .OrderByDescending(a => a.OrderCount)
+            .Take(limit)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<(List<MarketingActivityRecord> Items, long Total)> PageParticipationAsync(
+        long activityId, DateTime from, DateTime to, int page, int pageSize,
+        CancellationToken ct = default)
+    {
+        var select = _db.Select<MarketingActivityRecord>()
+            .Where(a => activityId <= 0 || a.ActivityId == activityId)
+            .Where(a => a.CreatedAt >= from && a.CreatedAt < to);
+
+        var total = await select.CountAsync(ct).ConfigureAwait(false);
+
+        // 排序带 Id 兜底：同一秒内落库的两条记录，只按时间排会翻页重复或漏行
+        var items = await select
+            .OrderByDescending(a => a.CreatedAt)
+            .OrderByDescending(a => a.Id)
+            .Page(page, pageSize)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return (items, total);
+    }
 }

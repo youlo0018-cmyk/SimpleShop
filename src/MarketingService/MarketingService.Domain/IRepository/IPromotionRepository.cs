@@ -1,4 +1,5 @@
 using MarketingService.Domain.Entities;
+using MarketingService.Domain.Services;
 
 namespace MarketingService.Domain.IRepository;
 
@@ -73,4 +74,38 @@ public interface IPromotionRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>受影响行数。</returns>
     Task<int> SoftDeleteAsync(long activityId, CancellationToken ct = default);
+
+    /// <summary>记一条活动参与记录（下单试算时写，幂等）。</summary>
+    /// <param name="record">参与记录。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>本次新写入返回 true；同一单同一活动已记过返回 false。</returns>
+    /// <remarks>
+    /// 唯一索引 <c>(order_no, activity_id)</c> 兜底：下单试算会被重放
+    /// （客户端重试、幂等键撞车），不判存在性的话「参与订单数」会被刷成两倍。
+    /// </remarks>
+    Task<bool> RecordParticipationAsync(MarketingActivityRecord record, CancellationToken ct = default);
+
+    /// <summary>按活动聚合参与情况（活动报表）。</summary>
+    /// <param name="from">区间起（含）。</param>
+    /// <param name="to">区间止（不含）。</param>
+    /// <param name="merchantId">商户 Id，0 表示不限。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="limit">最多返回多少个活动（按参与订单数倒序）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>逐活动的参与订单数、折扣总额与订单号（供调用方去订单服务取金额）。</returns>
+    Task<List<ActivityParticipationAggregate>> AggregateParticipationAsync(
+        DateTime from, DateTime to, long merchantId, long platformId, int limit,
+        CancellationToken ct = default);
+
+    /// <summary>分页查参与记录（报表下钻订单明细）。</summary>
+    /// <param name="activityId">活动 Id，0 表示不限。</param>
+    /// <param name="from">区间起（含）。</param>
+    /// <param name="to">区间止（不含）。</param>
+    /// <param name="page">页码，从 1 起。</param>
+    /// <param name="pageSize">每页条数。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>当页记录与总条数，按时间倒序。</returns>
+    Task<(List<MarketingActivityRecord> Items, long Total)> PageParticipationAsync(
+        long activityId, DateTime from, DateTime to, int page, int pageSize,
+        CancellationToken ct = default);
 }

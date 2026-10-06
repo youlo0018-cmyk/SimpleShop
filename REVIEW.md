@@ -156,6 +156,15 @@ UserService。校验用户名/手机号唯一（查库，放 Handler）→ 写 `
 删除券模板前要检查是否还有**启用中**的券活动在引用它（否则活动成了悬空引用：
 用户看得到、领不到，运营也停不掉）。
 
+**活动报表与下钻（BUSINESS.md 17）**：
+
+| 步骤 | 动作 |
+|---|---|
+| 1 | 下单试算命中活动时，把「哪一单、命中哪个活动、让利多少」记进 `marketing_activity_record`（活动名存快照） |
+| 2 | `POST /reports/Marketing` 按区间逐活动聚合：参与订单数、折扣总额 |
+| 3 | 参与金额**回订单服务**取（`internal/orders/sum-payable`，口径同工作台 GMV：排除待支付 / 已取消 / 已退款） |
+| 4 | 下钻 `POST /marketing/activities/Records`：按 `activityId` + **同一区间口径**翻参与订单明细 |
+
 **验证点**：
 
 | 场景 | 期望 |

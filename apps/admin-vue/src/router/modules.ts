@@ -290,6 +290,8 @@ export const adminRoutes: RouteRecordRaw[] = [
       formRoute('activities/create', 'coupon-activity-create', '新建券活动', 'coupon-activity:create', 'couponActivity'),
       formRoute('activities/edit/:id', 'coupon-activity-edit', '编辑券活动', 'coupon-activity:update', 'couponActivity'),
       listRoute('records', 'coupon-record-list', '券核销记录', 'coupon-record:read', 'couponRecords'),
+      // 报表下钻：从营销效果报表的逐活动表格点进来（带 activityId 与时间档位）
+      listRoute('activity-records', 'activity-record-list', '活动参与记录', 'report:marketing', 'activityRecords'),
       configRoute('config', 'coupon-config', '优惠优先级配置', 'marketing-config:update', 'promotionPriority'),
     ],
   },

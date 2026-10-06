@@ -379,6 +379,10 @@ async function load() {
       if (value !== undefined && value !== null && value !== '') body[filter.field] = value;
     }
     if (route.query.customerId) body.customerId = String(route.query.customerId);
+    // 报表下钻带过来的筛选条件：活动 Id 与时间档位必须一起传，
+    // 只传活动 Id 的话明细按默认区间查，行数与报表上的「参与订单数」对不上。
+    if (route.query.activityId) body.activityId = String(route.query.activityId);
+    if (route.query.range) body.range = Number(route.query.range);
     body.page = page.value;
     body.pageSize = pageSize.value;
 

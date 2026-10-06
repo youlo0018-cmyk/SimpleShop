@@ -17,3 +17,21 @@ public sealed record CouponReportAggregate(
     long ConsumedTotal,
     decimal ConsumeRate,
     decimal DiscountTotal);
+
+/// <summary>单个活动的参与聚合（活动报表的一行）。</summary>
+/// <param name="ActivityId">活动 Id。</param>
+/// <param name="ActivityName">活动名快照（活动改名后历史报表不跟着变）。</param>
+/// <param name="OrderCount">参与订单数。</param>
+/// <param name="DiscountTotal">折扣总额：这些订单因该活动实际让利合计。</param>
+/// <param name="OrderNos">参与的订单号，交给调用方去订单服务取「参与金额」。</param>
+/// <remarks>
+/// <b>参与金额不在这里算</b>：它必须按「已支付、未取消、未退款」的口径算，
+/// 那是订单服务的职责（与工作台 GMV 同源）。营销侧只提供「哪些单参与了」，
+/// 两边各算一遍必然对不上账。
+/// </remarks>
+public sealed record ActivityParticipationAggregate(
+    long ActivityId,
+    string ActivityName,
+    long OrderCount,
+    decimal DiscountTotal,
+    IReadOnlyList<string> OrderNos);

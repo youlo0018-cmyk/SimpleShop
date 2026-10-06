@@ -150,7 +150,10 @@ $leaves = [ordered]@{
              @('design:update', '平台装修维护', '/gateway/design/SavePlatformDraft,/gateway/design/PublishPlatform'),
              @('design:merchant', '商户店铺装修', '/gateway/design/Merchant,/gateway/design/SaveMerchantDraft,/gateway/design/PublishMerchant'))
     '2121' = @(@('dashboard:view', '工作台看板', '/gateway/reports/Report'), @('report:view', '经营报表', '/gateway/reports/*'),
-             @('report:marketing', '营销效果报表', '/gateway/reports/Marketing'), @('report:seckill', '秒杀效果报表', '/gateway/reports/Seckill'))
+             # 营销效果报表的**下钻**（按活动翻参与订单）也算这张报表的能力，
+             # 绑在同一个权限点上：只给「看报表」不给「看明细」没有实际意义。
+             @('report:marketing', '营销效果报表', '/gateway/reports/Marketing,/gateway/marketing/activities/Records'),
+             @('report:seckill', '秒杀效果报表', '/gateway/reports/Seckill'))
     # 重建索引与索引对账都在 ProductService（端点本轮新增）。
     '2122' = ,@(@('search:reindex', '重建商品索引与对账', '/gateway/products/SearchIndex/*'))
     '2123' = @(@('file:upload', '文件上传', '/gateway/files/*'), @('log:read', '日志查询', '/gateway/logs/*'))
