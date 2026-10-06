@@ -42,6 +42,7 @@ public sealed class GatewayOptions
         "/gateway/shop/catalog/Brands",
         "/gateway/design/Store",
         "/gateway/design/PlatformStore",
+        "/gateway/regions/Public",
         "/gateway/evaluates/List",
         "/gateway/marketing/seckill/sessions/Public",
         "/gateway/coupons/Available"
@@ -59,6 +60,22 @@ public sealed class GatewayOptions
         // 可见性（只返回审核通过 + 已启用的店铺，VIS-001 / VIS-002）
         // 由商户服务写死筛选，这里只负责放行匿名 —— 两件事分开，各管一头。
         "/gateway/merchants/Shop",
+    ];
+
+    /// <summary>
+    /// 客户令牌可访问、但接口本身又有后台权限映射的路径。
+    /// </summary>
+    /// <remarks>
+    /// <para>用途只有一个：小程序复用了某个后台能力，但客户令牌没有权限点，
+    /// 直接走 RBAC 会被 403。当前只有统一文件上传（发表评价要传图）。</para>
+    ///
+    /// <para><b>不要把它当成匿名白名单</b>：这里仍然要求先通过客户令牌验签，
+    /// 只是跳过「后台权限点」这一步；接口内部仍要自己校验归属（例如上传只写文件元数据，
+    /// 不涉及别人的数据）。</para>
+    /// </remarks>
+    public string[] CustomerAllowedPaths { get; set; } =
+    [
+        "/gateway/files/Upload"
     ];
 }
 

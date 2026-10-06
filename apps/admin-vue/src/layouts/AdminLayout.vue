@@ -27,7 +27,7 @@
 
           <div v-show="!collapsed && isActive(item)" class="nav__sub">
             <RouterLink
-              v-for="leaf in leaves(item)"
+              v-for="leaf in subLeaves(item)"
               :key="leaf.fullPath"
               :to="leaf.fullPath"
               class="nav__sublink"
@@ -39,7 +39,7 @@
 
           <div v-if="collapsed && hovered === item.path" class="nav__fly">
             <RouterLink
-              v-for="leaf in leaves(item)"
+              v-for="leaf in subLeaves(item)"
               :key="leaf.fullPath"
               :to="leaf.fullPath"
               class="nav__flylink"
@@ -131,6 +131,13 @@ function firstLeaf(group: any) {
   const list = leaves(group);
   if (list.length > 0) return list[0].fullPath;
   return ('/' + group.path).replace(/\/$/, '');
+}
+
+// 默认列表页的路径与分组本身相同，已经在分组标题上作为入口；
+// 再在二级菜单里列一遍会变成「账号 / 账号列表」两条指向同一页的入口。
+function subLeaves(group: any) {
+  const base = ('/' + group.path).replace(/\/+/g, '/').replace(/\/$/, '');
+  return leaves(group).filter((leaf: any) => leaf.fullPath !== base);
 }
 
 function isActive(group: any) {

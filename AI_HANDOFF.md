@@ -281,6 +281,25 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-07：小程序补齐地址簿 / 收藏 / 发表评价与追评；C 端地区库与上传打通
+
+前端回归发现小程序只有「我的评价」列表，缺三块 C 端闭环：地址簿、收藏、发表 / 追评。
+本轮补齐，并把它们接到真实接口上：
+
+| 能力 | 结果 |
+|---|---|
+| 地址簿 | `pages/address/list|form`：列表 / 新增 / 编辑 / 删除 / 设默认；结算页改为从地址簿选择默认地址 |
+| 收藏 | `pages/favorite/list`：商品摘要、已下架置灰、取消收藏；商品详情加收藏按钮 |
+| 评价 | `pages/evaluate/form`：星级 / 文字 / 最多 9 图 / 匿名；追评 30 天内最多 3 条；订单详情与「我的评价」都有入口 |
+| 地区库 | 新增匿名接口 `GET /gateway/regions/Public?platformCode=`，地址表单三级联动不再依赖后台令牌 |
+| 图片上传 | 网关新增 `CustomerAllowedPaths`，客户令牌可复用 `/gateway/files/Upload`（仍然先验签，只是跳过后台权限点） |
+
+**验证**：后台 UI 回归 31 菜单页 + 27 非菜单页 + 10 流程全绿；小程序 UI 回归 **21/21** 页全绿（新增 4 页）；
+后端 E2E **689/689**（customer-regression 17、merchantplatform-regression 40）；单元 **384/384**；
+`npm run build`（后台）、`npm run build:h5`、`npm run build:mp-weixin` 均通过。
+
+**下一步**：继续按 `FRONTEND_DESIGN.md` 复核小程序剩余固定模板页（退款申请、秒杀 PV 归因），再进入视觉基线与最终收尾。
+
 ### 2026-10-07：REVIEW 存量风险清零（P0 全验证 / P1 可消除项已修 / P2-P3 已收敛）
 
 本轮把 `REVIEW.md` 第二部分逐条复核，不再只看“有没有实现”，而是按风险项逐条找反例：

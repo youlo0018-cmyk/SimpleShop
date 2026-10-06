@@ -61,6 +61,9 @@
         <button v-if="order.canConfirmReceipt" class="button-primary" @tap="confirmReceipt">
           确认收货
         </button>
+        <button v-if="Number(order.status) === 50" class="button-primary" @tap="toEvaluate">
+          评价商品
+        </button>
       </view>
     </template>
     <view v-else class="empty">订单不存在</view>
@@ -122,6 +125,10 @@ async function confirmReceipt() {
   });
   uni.showToast({ title: '已确认收货', icon: 'success' });
   await load();
+}
+
+function toEvaluate() {
+  uni.navigateTo({ url: `/pages/evaluate/list?orderNo=${orderNo.value}` });
 }
 
 onLoad((options) => {

@@ -23,6 +23,9 @@ deploy/data/
 tests/visual/current/
 tests/visual/diff/
 tests/visual/user/
+# Playwright CLI 的运行产物（手动巡检截图 / 会话快照），不是源码
+.playwright-cli/
+output/
 
 # 本地覆盖
 appsettings.Development.json

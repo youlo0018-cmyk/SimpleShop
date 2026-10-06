@@ -67,6 +67,24 @@ page {
   opacity: 0.45;
 }
 
+.button-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 128rpx;
+  height: 60rpx;
+  padding: 0 $space-3;
+  border-radius: 30rpx;
+  background: $brand;
+  color: #fff;
+  font-size: $font-note;
+  line-height: 60rpx;
+}
+
+.button-mini::after {
+  border: none;
+}
+
 .empty {
   padding: 120rpx 0;
   text-align: center;

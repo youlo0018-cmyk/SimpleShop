@@ -20,7 +20,12 @@
           </text>
           <text class="detail__score">{{ score(product.evaluationScore) }} 分 · {{ product.evaluationCount || 0 }} 条评价</text>
         </view>
-        <view class="detail__delivery">{{ deliveryName }}</view>
+        <view class="detail__meta">
+          <text class="detail__delivery">{{ deliveryName }}</text>
+          <text class="detail__favorite" @tap="toggleFavorite">
+            {{ favorite ? '★ 已收藏' : '☆ 收藏' }}
+          </text>
+        </view>
       </view>
 
       <view class="panel sku-picker">
@@ -89,6 +94,7 @@ const loading = ref(true);
 const product = ref<any>(null);
 const selectedValueIds = ref<string[]>([]);
 const evaluations = ref<any[]>([]);
+const favorite = ref(false);
 const productId = ref('');
 
 const gallery = computed(() => {
@@ -163,6 +169,16 @@ async function load() {
       },
       silent: true,
     });
+    if (session.loggedIn && session.profile?.customerId) {
+      const favorites = await request<any>('/gateway/customers/favorites/List', {
+        method: 'POST',
+        data: { customerId: session.profile.customerId, page: 1, pageSize: 50 },
+        silent: true,
+      }).catch(() => null);
+      favorite.value = (favorites?.items || []).some(
+        (item: any) => String(item.spuId) === String(productId.value),
+      );
+    }
     evaluations.value = await request<any>('/gateway/evaluates/List', {
       method: 'POST',
       auth: false,
@@ -173,6 +189,30 @@ async function load() {
     product.value = null;
   } finally {
     loading.value = false;
+  }
+}
+
+async function toggleFavorite() {
+  session.restore();
+  if (!session.profile?.customerId) {
+    uni.navigateTo({ url: '/pages/login/index' });
+    return;
+  }
+
+  if (favorite.value) {
+    await request('/gateway/customers/favorites/Remove', {
+      method: 'POST',
+      data: { customerId: session.profile.customerId, spuId: productId.value },
+    });
+    favorite.value = false;
+    uni.showToast({ title: '已取消收藏', icon: 'none' });
+  } else {
+    await request('/gateway/customers/favorites/Add', {
+      method: 'POST',
+      data: { customerId: session.profile.customerId, spuId: productId.value },
+    });
+    favorite.value = true;
+    uni.showToast({ title: '已收藏', icon: 'success' });
   }
 }
 
@@ -213,6 +253,18 @@ onLoad((options) => {
   display: block;
   margin-top: $space-1;
   color: $text-2;
+  font-size: $font-sub;
+}
+
+.detail__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: $space-1;
+}
+
+.detail__favorite {
+  color: $brand;
   font-size: $font-sub;
 }
 

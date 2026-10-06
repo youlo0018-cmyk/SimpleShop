@@ -5,9 +5,23 @@
     <template v-else>
       <view class="panel receiver">
         <view class="section-title">收货信息</view>
-        <input v-model="form.receiverName" class="field" placeholder="收货人姓名" />
-        <input v-model="form.receiverPhone" class="field" type="number" maxlength="11" placeholder="手机号" />
-        <textarea v-model="form.receiverAddress" class="field field--area" placeholder="详细收货地址" />
+        <view class="address" @tap="toAddresses">
+          <view v-if="selectedAddress" class="address__body">
+            <view class="address__line">
+              <text class="address__name">{{ selectedAddress.consigneeName }}</text>
+              <text class="address__phone">{{ selectedAddress.consigneePhone }}</text>
+              <text v-if="selectedAddress.isDefault" class="address__default">默认</text>
+            </view>
+            <text class="address__detail">
+              {{ selectedAddress.regionPath }} {{ selectedAddress.detailAddress }}
+            </text>
+          </view>
+          <view v-else class="address__empty">
+            <text class="address__empty-title">请选择收货地址</text>
+            <text class="address__empty-desc">点这里从地址簿选择，或新增一条地址</text>
+          </view>
+          <text class="address__arrow">›</text>
+        </view>
         <input v-model="form.remark" class="field" placeholder="订单备注（选填）" />
       </view>
 
@@ -112,7 +126,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
-import { onLoad } from '@dcloudio/uni-app';
+import { onLoad, onShow } from '@dcloudio/uni-app';
 import AppHeader from '@/components/AppHeader.vue';
 import { request } from '@/core/http';
 import { amount } from '@/core/format';
@@ -137,10 +151,8 @@ const idempotencyKey = ref('');
 const preview = ref<any>(null);
 const previewError = ref('');
 const previewLines = computed<any[]>(() => preview.value?.lines || []);
+const selectedAddress = ref<any>(null);
 const form = reactive({
-  receiverName: '',
-  receiverPhone: '',
-  receiverAddress: '',
   pointsToUse: '0',
   remark: '',
 });
@@ -243,17 +255,30 @@ async function prepare() {
       silent: true,
     }).catch(() => null);
     pointBalance.value = Number(balance?.available || 0);
+
+    // 默认地址：地址簿里 isDefault 的那条；没有默认就选第一条。
+    const addresses = await request<any>('/gateway/customers/addresses/List', {
+      method: 'POST',
+      data: { customerId: session.profile.customerId, page: 1, pageSize: 100 },
+      silent: true,
+    }).catch(() => null);
+    const list = addresses?.items || [];
+    selectedAddress.value = list.find((item: any) => item.isDefault) || list[0] || null;
   } finally {
     loading.value = false;
   }
 }
 
+function toAddresses() {
+  uni.navigateTo({ url: '/pages/address/list?select=1' });
+}
+
 async function submit() {
-  if (!form.receiverName.trim() || !form.receiverPhone.trim() || !form.receiverAddress.trim()) {
-    uni.showToast({ title: '请完整填写收货信息', icon: 'none' });
+  if (!selectedAddress.value) {
+    uni.showToast({ title: '请选择收货地址', icon: 'none' });
     return;
   }
-  if (!/^1[3-9]\d{9}$/.test(form.receiverPhone.trim())) {
+  if (!/^1[3-9]\d{9}$/.test(String(selectedAddress.value.consigneePhone || '').trim())) {
     uni.showToast({ title: '手机号格式不正确', icon: 'none' });
     return;
   }
@@ -272,9 +297,9 @@ async function submit() {
         platformId: '0',
         merchantId: '0',
         idempotencyKey: idempotencyKey.value,
-        receiverName: form.receiverName.trim(),
-        receiverPhone: form.receiverPhone.trim(),
-        receiverAddress: form.receiverAddress.trim(),
+        receiverName: selectedAddress.value.consigneeName,
+        receiverPhone: selectedAddress.value.consigneePhone,
+        receiverAddress: `${selectedAddress.value.regionPath} ${selectedAddress.value.detailAddress}`,
         lines: lines.value,
         couponId: selectedCouponId.value,
         pointsToUse: Number(form.pointsToUse || 0),
@@ -295,6 +320,14 @@ async function submit() {
 onLoad(() => {
   idempotencyKey.value = `ui-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   prepare();
+});
+
+onShow(() => {
+  const picked = uni.getStorageSync('simpleshop_selected_address');
+  if (picked) {
+    selectedAddress.value = picked;
+    uni.removeStorageSync('simpleshop_selected_address');
+  }
 });
 </script>
 
@@ -326,6 +359,73 @@ onLoad(() => {
 .field--area {
   height: 160rpx;
   padding-top: $space-2;
+}
+
+.address {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  min-height: 140rpx;
+  padding: $space-3;
+  border-radius: $radius-md;
+  background: $bg-page;
+}
+
+.address__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.address__line {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+.address__name {
+  font-weight: 600;
+}
+
+.address__phone {
+  color: $text-2;
+  font-size: $font-sub;
+}
+
+.address__default {
+  padding: 2rpx 12rpx;
+  border-radius: $radius-sm;
+  background: rgba(0, 113, 227, 0.1);
+  color: $brand;
+  font-size: $font-note;
+}
+
+.address__detail {
+  display: block;
+  margin-top: $space-1;
+  color: $text-2;
+  font-size: $font-sub;
+  line-height: 1.5;
+}
+
+.address__empty {
+  flex: 1;
+}
+
+.address__empty-title {
+  display: block;
+  font-weight: 600;
+}
+
+.address__empty-desc {
+  display: block;
+  margin-top: $space-1;
+  color: $text-2;
+  font-size: $font-note;
+}
+
+.address__arrow {
+  color: $text-3;
+  font-size: 40rpx;
 }
 
 .goods__line {

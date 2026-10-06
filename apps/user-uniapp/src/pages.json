@@ -104,6 +104,30 @@
       }
     },
     {
+      "path": "pages/evaluate/form",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/address/list",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/address/form",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/favorite/list",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/shop/store",
       "style": {
         "navigationStyle": "custom"

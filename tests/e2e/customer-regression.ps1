@@ -119,6 +119,19 @@ Invoke-Case 'API-CUS-000b' 'FluentValidation 链式规则的默认文案也是�
     return $r.status -eq 400 -and $text -match '[\u4e00-\u9fa5]' -and $text -notmatch 'required'
 }
 
+Invoke-Case 'API-CUS-000c' '客户令牌可上传评价图片（复用统一上传接口）' {
+    $temp = Join-Path $env:TEMP "simpleshop-customer-upload-$($script:suffix).txt"
+    Set-Content -LiteralPath $temp -Value 'customer evaluation image placeholder' -Encoding UTF8
+    try {
+        $r = Invoke-RestMethod "$Gateway/gateway/files/Upload" -Method Post `
+            -Headers @{ Authorization = "Bearer $($script:tokenA)" } `
+            -Form @{ file = Get-Item -LiteralPath $temp } -TimeoutSec 30
+        return $r.success -and -not [string]::IsNullOrWhiteSpace($r.data.publicUrl)
+    } finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
+    }
+}
+
 Invoke-Case 'API-CUS-001' '查自己的资料：手机号打码下发' {
     $r = Post-As '/gateway/customers/Profile' @{ customerId = $script:customerA } $script:tokenA
     if (-not $r.success) { Write-Host ("        实际返回：" + $r.message) -ForegroundColor DarkYellow; return $false }

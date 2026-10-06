@@ -131,6 +131,10 @@ async function main() {
     ['coupon-mine', '/pages/coupon/mine'],
     ['orders', '/pages/order/list'],
     ['evaluate', '/pages/evaluate/list'],
+    ['evaluate-form', '/pages/evaluate/form?orderNo=UI-TEST&spuId=1&spuName=%E6%B5%8B%E8%AF%95%E5%95%86%E5%93%81'],
+    ['address-list', '/pages/address/list'],
+    ['address-form', '/pages/address/form'],
+    ['favorite', '/pages/favorite/list'],
     ['shop-store', '/pages/shop/store?merchantId=0'],
   ];
 

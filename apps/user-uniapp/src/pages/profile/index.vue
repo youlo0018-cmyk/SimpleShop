@@ -29,6 +29,14 @@
     </view>
 
     <view class="panel settings">
+      <view class="settings__row" @tap="toAddresses">
+        <text>收货地址</text>
+        <text class="settings__arrow">›</text>
+      </view>
+      <view class="settings__row" @tap="toFavorites">
+        <text>我的收藏</text>
+        <text class="settings__arrow">›</text>
+      </view>
       <view class="settings__row" @tap="toCart">
         <text>购物车</text>
         <text class="settings__arrow">›</text>
@@ -81,6 +89,12 @@ function toPoints() {
 }
 function toEvaluates() {
   if (requireLogin()) uni.navigateTo({ url: '/pages/evaluate/list' });
+}
+function toAddresses() {
+  if (requireLogin()) uni.navigateTo({ url: '/pages/address/list' });
+}
+function toFavorites() {
+  if (requireLogin()) uni.navigateTo({ url: '/pages/favorite/list' });
 }
 function toCouponCenter() {
   uni.navigateTo({ url: '/pages/coupon/center' });

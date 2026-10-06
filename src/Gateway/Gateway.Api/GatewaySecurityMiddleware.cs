@@ -155,6 +155,13 @@ public sealed class GatewaySecurityMiddleware
 
             _logger.LogError("权限中心不可用且配置为放行，{Path} 被放行——这是不安全的降级", path);
         }
+        else if (requiredCode is not null
+                 && outcome.Kind == DualTokenValidator.KindCustomer
+                 && IsCustomerAllowed(path))
+        {
+            // 客户令牌复用后台能力（当前只有统一文件上传）：仍然要求令牌有效，
+            // 但客户没有后台权限点，不能按 requiredCode 去查。
+        }
         else if (requiredCode is not null && !HasPermission(context.User, requiredCode))
         {
             _logger.LogWarning("权限不足：{Path} 需要 {Code}", path, requiredCode);
@@ -201,6 +208,13 @@ public sealed class GatewaySecurityMiddleware
         if (_options.AnonymousPaths.Any(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase))) return true;
         return _options.AnonymousPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>判断客户令牌是否被显式允许访问该路径。</summary>
+    /// <param name="path">网关路径。</param>
+    /// <returns>命中客户复用白名单返回 true。</returns>
+    private bool IsCustomerAllowed(string path)
+        => _options.CustomerAllowedPaths.Any(p =>
+            string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>判断主体是否持有指定权限点。</summary>
     /// <remarks>

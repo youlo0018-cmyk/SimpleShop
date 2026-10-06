@@ -78,3 +78,41 @@ export function request<T>(path: string, options: RequestOptions = {}): Promise<
     });
   });
 }
+
+/**
+ * 上传图片到统一文件服务，返回可直接展示的 publicUrl。
+ *
+ * 上传走 `uni.uploadFile` 而不是 `request()`：multipart/form-data 不能手写 JSON，
+ * 而 uni 在 H5 与微信小程序两端对文件表单的实现不同，统一交给它处理。
+ */
+export function uploadImage(filePath: string): Promise<string> {
+  const token = getToken();
+
+  return new Promise<string>((resolve, reject) => {
+    uni.uploadFile({
+      url: `${API_BASE}/gateway/files/Upload`,
+      filePath,
+      name: 'file',
+      header: token ? { Authorization: `Bearer ${token}` } : {},
+      success: (response) => {
+        let payload: Envelope<{ publicUrl?: string }> | null = null;
+        try {
+          payload = JSON.parse(String(response.data)) as Envelope<{ publicUrl?: string }>;
+        } catch {
+          reject(new Error('上传服务返回了无法解析的内容'));
+          return;
+        }
+
+        if (response.statusCode !== 200 || payload?.success !== true || !payload.data?.publicUrl) {
+          reject(new Error(errorMessage(payload, '图片上传失败')));
+          return;
+        }
+
+        resolve(payload.data.publicUrl);
+      },
+      fail: (error) => {
+        reject(new Error(error.errMsg || '图片上传失败'));
+      },
+    });
+  });
+}

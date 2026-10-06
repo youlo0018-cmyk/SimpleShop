@@ -7,6 +7,10 @@ namespace MerchantPlatformService.Application.Features.Region;
 /// <param name="PlatformId">平台 Id。</param>
 public record QueryRegionsCommand(long PlatformId) : IRequest<ApiResponse<RegionsResult>>;
 
+/// <summary>小程序按平台编码读取地区地址数据（无需登录）。</summary>
+/// <param name="PlatformCode">平台编码，6 位字母。</param>
+public record QueryPublicRegionsCommand(string PlatformCode) : IRequest<ApiResponse<RegionsResult>>;
+
 /// <summary>保存某平台的地区地址数据。<b>传空串 = 恢复内置默认</b>。</summary>
 /// <param name="PlatformId">平台 Id。</param>
 /// <param name="RegionsJson">三级地区 JSON 数组；<b>空字符串表示清空配置、回落内置默认</b>。</param>

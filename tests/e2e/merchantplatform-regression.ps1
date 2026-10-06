@@ -486,6 +486,18 @@ Invoke-Case 'API-MP-036' '🔴 内置默认是**完整三级**数据（31 省 / 
         -and $r.data.byteSize -lt 2MB
 }
 
+Invoke-Case 'API-MP-037' '小程序按平台编码读地区库（无需登录）' {
+    $r = Invoke-RestMethod "$Gateway/gateway/regions/Public?platformCode=$($script:platformCode)" -TimeoutSec 60
+    return $r.success -and $r.data.regionsJson -match '北京市'
+}
+
+Invoke-Case 'API-MP-038' '平台编码不存在时返回 404（不泄露平台是否存在）' {
+    # 业务失败按项目约定是 HTTP 200 + success=false + code=404；
+    # 断言 HTTP 状态码会把正常业务拒绝误判成接口坏了。
+    $r = Invoke-RestMethod "$Gateway/gateway/regions/Public?platformCode=ZZZZZZ" -TimeoutSec 60
+    return (-not $r.success) -and $r.code -eq 404
+}
+
 Write-Host "`n=== MP 删除拦截 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-MP-040' '🔴 有商户的平台禁止删除，只能停用' {

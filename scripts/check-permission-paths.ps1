@@ -164,6 +164,7 @@ try {
         '/customers/Register', '/customers/Login',
         '/shop/products/*', '/shop/catalog/*',
         '/design/Store', '/design/PlatformStore',
+        '/regions/Public',
         '/evaluates/List', '/marketing/seckill/sessions/Public',
         '/coupons/Available',
         # C 端（客户令牌）—— 刻意不绑后台权限点，绑了会把小程序自己挡掉
@@ -174,6 +175,9 @@ try {
         '/customers/addresses/*', '/customers/favorites/*',
         # payments/Create|Confirm|Query 是客户付款；Simulate 是后台的，已单独绑 order:simulate
         '/payments/Create', '/payments/Confirm', '/payments/Query',
+        # 小程序发表评价要传图，复用统一上传接口；网关按客户令牌放行，
+        # 接口本身仍要求登录（见 GatewayOptions.CustomerAllowedPaths）
+        '/files/Upload',
         '/marketing/activities/FinalPrice', '/marketing/activities/FinalPriceBatch',
         '/marketing/seckill/grab/result',
         # 报表：/reports/Point 是**客户自己的**积分报表（C 端积分页用），
