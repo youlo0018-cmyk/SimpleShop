@@ -278,6 +278,29 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-07：BUSINESS 17 / 19 两节与实现脱节（秒杀 GMV 不逐场、数据模型表写的是不存在的表）
+
+**① 秒杀报表的 GMV 只有全场总额**。§17 把 GMV 列为秒杀报表指标，而报表是「按场次」的：
+响应里 `sessions[]` 有售罄率、参与人数、成功数，**GMV 却只有 `totalGmv` 一行** ——
+运营能逐场比售罄率、比不了 GMV，而「哪个场次卖得好」正是这张报表要回答的。
+
+根因是订单侧的 `sum-payable` 只回一个总额；营销侧不知道哪个订单号属于哪个场次，
+只能给全场一个数。改法：订单侧改成回 **`items: [{orderNo, amount}]`**（总额照旧回，兼容旧调用），
+营销侧一次拿到逐单金额后按场次求和，`SeckillSessionAggregate` 加 `Gmv`。
+**总额与逐场金额来自同一份数据**，不会出现「逐场加起来不等于总额」。
+
+> **场次 PV 仍然没有**（§17 已注明）：PV 来自 `pv.log`，而 PV 中间件只记路径与方法、
+> 不记请求体，无法把「看场次详情」归因到 `sessionId`。要做这条指标得先让小程序带上场次 Id —— 属于前端工作。
+> 报表不返回该字段，而不是返回一个假数字。
+
+**② §19 数据模型表写的是不存在的表**：列了 `Shipment` / `ShipmentItem` / `UploadedFile` /
+`MarketingActivityTarget`，实际都没有；又漏了 `point_lot` / `point_lock` / `point_lock_lot` /
+`point_rule_config`、`evaluate_append` / `evaluate_reply`、`merchant_app_config`、
+`coupon_occupancy` / `gift_grant` / `seckill_grab`、`logistics_company`、`product_spec*` / `sku_spec_value`。
+已按**数据库里真实存在的表**重写，并补两条设计说明（活动目标为什么用 JSON 而不是关联表、积分为什么要 5 张表）。
+
+**验证**：构建 0 警告 0 错误；E2E **681/681**（18 个脚本，新增 API-RPT-051b）。
+
 ### 2026-10-07：BUSINESS.md 20 节（事件与锁）整节描述的是**目标架构**，不是实现
 
 按「声明了但没实现的机制」这条透镜读 BUSINESS.md 20.1 / 20.2，发现两节都是目标架构：

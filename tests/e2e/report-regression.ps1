@@ -328,6 +328,43 @@ Invoke-Case 'API-RPT-052' '🔴 抢购成功数不超过参与人数' {
     return $script:skl.data.totalGrabSuccess -le $script:skl.data.totalParticipants
 }
 
+Invoke-Case 'API-RPT-051b' '🔴 逐场次 GMV 齐全，且逐场之和等于总额' {
+    # BUSINESS.md 17 把 GMV 列为秒杀报表的指标，而报表是「按场次」的：
+    # 只给全场总额的话，运营能逐场比售罄率却比不了 GMV —— 而「哪个场次卖得好」正是这张报表要回答的。
+    $sessions = @($script:skl.data.sessions)
+    if ($sessions.Count -eq 0) { return $true }
+
+    $missing = @($sessions | Where-Object { $null -eq $_.PSObject.Properties['gmv'] })
+    if ($missing.Count -gt 0) { return $false }
+
+    $sum = [math]::Round((@($sessions | Measure-Object -Property gmv -Sum).Sum), 2)
+    $total = [math]::Round([decimal]$script:skl.data.totalGmv, 2)
+
+    Write-Host ("        逐场 GMV 合计 {0} / 总额 {1}" -f $sum, $total) -ForegroundColor DarkGray
+
+    # 逐场之和必须等于总额：两者来自同一份逐单金额，对不上就说明有一处算错了
+    if ([math]::Abs($sum - $total) -ge 0.005) { return $false }
+
+    # 再验一次**归属**：随便挑一个有订单号的场次，把它那批订单号拿去问订单服务，
+    # 逐单金额之和必须等于报表给这个场次的 GMV。
+    # 不这么做的话，「所有场次都是 0」也能让上面那条相等断言通过（测试订单大多是待支付，GMV 本来就该是 0）。
+    $sample = @($sessions | Where-Object { @($_.orderNos).Count -gt 0 } | Select-Object -First 3)
+    foreach ($s in $sample) {
+        $orders = @($s.orderNos)
+        $resp = Invoke-RestMethod -Uri "$OrderService/internal/orders/sum-payable" -Method Post `
+            -Body (@{ orderNos = $orders } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30
+
+        $expected = [math]::Round((@($resp.data.items | ForEach-Object { [decimal]$_.amount }) | Measure-Object -Sum).Sum, 2)
+        if ([math]::Abs([decimal]$s.gmv - $expected) -ge 0.005) {
+            Write-Host ("        场次 {0}：报表 GMV {1} ≠ 逐单合计 {2}" -f $s.sessionId, $s.gmv, $expected) -ForegroundColor DarkYellow
+            return $false
+        }
+    }
+
+    return $true
+}
+
 Invoke-Case 'API-RPT-053' '🔴 逐场次售罄率 = 已抢 / 总量，且落在 0~1' {
     foreach ($s in $script:skl.data.sessions) {
         if ($s.stockTotal -le 0) { continue }

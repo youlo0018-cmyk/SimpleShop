@@ -17,4 +17,16 @@ public interface IOrderAmountPort
     /// 让它把整张报表拖成 500 代价太大；真实故障由订单服务自己的日志暴露。
     /// </remarks>
     Task<decimal> SumPayableAsync(IReadOnlyCollection<string> orderNos, CancellationToken ct = default);
+
+    /// <summary>按订单号集合取**逐单**实付金额。</summary>
+    /// <param name="orderNos">订单号集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>订单号 → 实付金额；订单服务不可用或查不到时缺项（调用方按 0 计）。</returns>
+    /// <remarks>
+    /// 秒杀报表要按**场次**算 GMV，而「订单号属于哪个场次」只有营销服务知道。
+    /// 只回总额的话，营销侧要么每个场次调一次（N 次跨服务调用），
+    /// 要么只能给一个全场总额 —— 后者就是「售罄率能逐场比、GMV 却只有一行」的原因。
+    /// </remarks>
+    Task<IReadOnlyDictionary<string, decimal>> GetPayableByOrderAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default);
 }

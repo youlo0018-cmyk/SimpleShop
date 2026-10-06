@@ -592,6 +592,19 @@ public interface IOrderStore
     /// </remarks>
     Task<decimal> SumPayableByOrderNosAsync(
         IReadOnlyCollection<string> orderNos, CancellationToken ct = default);
+
+    /// <summary>按订单号集合取**逐单**实付金额。</summary>
+    /// <param name="orderNos">订单号集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>订单号 → 实付金额；查不到的订单号不在结果里（口径同上：排除待支付 / 已取消 / 已退款）。</returns>
+    /// <remarks>
+    /// 为什么要有「逐单」这一版：秒杀报表要按**场次**算 GMV，
+    /// 而一个订单号属于哪个场次只有营销服务知道。只回一个总额的话，
+    /// 营销侧要么每个场次调一次（N 次跨服务调用），要么只能给一个全场总额 ——
+    /// 后者就是「运营看到售罄率能逐场比，GMV 却只有一行」的原因。
+    /// </remarks>
+    Task<IReadOnlyDictionary<string, decimal>> GetPayableByOrderNosAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default);
 }
 
 /// <summary>订单行的聚合信息，供列表页一次取齐。</summary>

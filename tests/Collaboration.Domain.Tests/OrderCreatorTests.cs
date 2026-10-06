@@ -1371,6 +1371,13 @@ public class OrderCreatorTests
             IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
             => Task.FromResult(0m);
 
+        /// <inheritdoc />
+        /// <remarks>下单链路不用逐单金额（那是报表用的），这里只满足接口。</remarks>
+        public Task<IReadOnlyDictionary<string, decimal>> GetPayableByOrderNosAsync(
+            IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyDictionary<string, decimal>>(
+                new Dictionary<string, decimal>());
+
         public Task<Order> SaveAsync(Order order, IReadOnlyCollection<OrderItem> items, CancellationToken ct = default)
         {
             if (ThrowOnSave) throw new InvalidOperationException("落单失败");

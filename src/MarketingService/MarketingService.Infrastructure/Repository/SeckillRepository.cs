@@ -143,6 +143,9 @@ public sealed class SeckillRepository : ISeckillRepository
                 stockTotal,
                 stockSold,
                 sellOutRate,
+                // GMV 要问订单服务（金额在订单库），仓储不跨服务调用：
+                // 这里先给 0，由 SeckillReportHandler 用 with 填上真实金额。
+                0m,
                 orderNos));
         }
 

@@ -131,8 +131,14 @@ public sealed class InternalOrderController : ControllerBase
     public async Task<ApiResponse<PayableSumResult>> SumPayable(
         [FromBody] PayableSumQuery query, CancellationToken ct)
     {
-        var amount = await _store.SumPayableByOrderNosAsync(query.OrderNos, ct).ConfigureAwait(false);
-        return ApiResults.Ok(new PayableSumResult(amount));
+        // 同时回「总额」与「逐单金额」：秒杀报表要按**场次**算 GMV，
+        // 而订单号属于哪个场次只有营销服务知道 —— 只回总额的话它要么 N 次调用，要么只能给全场一个数。
+        var byOrder = await _store.GetPayableByOrderNosAsync(query.OrderNos, ct).ConfigureAwait(false);
+        var amount = Math.Round(byOrder.Values.Sum(), 2, MidpointRounding.AwayFromZero);
+
+        return ApiResults.Ok(new PayableSumResult(
+            amount,
+            byOrder.Select(a => new OrderPayableItem(a.Key, a.Value)).ToList()));
     }
 }
 
@@ -142,4 +148,10 @@ public sealed record PayableSumQuery(IReadOnlyList<string> OrderNos);
 
 /// <summary>按订单号汇总成交额的结果。</summary>
 /// <param name="Amount">成交额合计（两位小数）。</param>
-public sealed record PayableSumResult(decimal Amount);
+/// <param name="Items">逐单实付金额；口径与 <paramref name="Amount"/> 相同（排除待支付 / 已取消 / 已退款）。</param>
+public sealed record PayableSumResult(decimal Amount, IReadOnlyList<OrderPayableItem> Items);
+
+/// <summary>单个订单的实付金额。</summary>
+/// <param name="OrderNo">订单号。</param>
+/// <param name="Amount">实付金额，两位小数。</param>
+public sealed record OrderPayableItem(string OrderNo, decimal Amount);

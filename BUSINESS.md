@@ -1073,7 +1073,17 @@
 |---|---|---|
 | **工作台经营报表** | GMV（已支付实付合计，不含取消与已退款）、订单数、支付订单数、完成订单数、客单价（GMV / 支付订单数）、退款金额、退款率、库存预警数 | 今日 / 昨日 / 近 7 天 / 近 30 天 |
 | **营销效果报表** | 活动：参与订单数、参与金额、折扣总额；券：发放数、领取数、核销数、核销率、折扣总额。均支持按活动/券**下钻订单明细** | 同上 |
-| **秒杀效果报表** | 场次 PV、参与人数、抢购成功数、售罄率、GMV | 按场次 |
+| **秒杀效果报表** | 参与人数、抢购成功数、售罄率、**逐场 GMV**（+ 全场合计）；~~场次 PV~~ 见下方说明 | 按场次 |
+
+> **GMV 必须逐场给**：只给全场总额的话，运营能逐场比售罄率却比不了 GMV ——
+> 而「哪个场次卖得好」正是这张报表要回答的问题。
+> 实现上由订单服务回「逐单实付金额」，营销侧按「订单号属于哪个场次」求和
+> （一次跨服务调用，不是每场一次）。
+>
+> **场次 PV 暂缺**：PV 来自 `pv.log`，而网关的 PV 中间件只记路径与方法、
+> **不记请求体**，无法把「看场次详情」归因到某个 `sessionId`。
+> 要做这条指标，得先让小程序走一个能带场次 Id 的查询参数（或前端埋点）——
+> 那属于前端工作，不在后端范围。在那之前报表不返回该字段，而不是返回一个假数字。
 | **积分报表** | 发放总额、消耗总额、过期总额、当前总余额 | 同上 |
 
 权限点：`dashboard:view` / `report:view` / `report:marketing` / `report:seckill`。
@@ -1094,23 +1104,36 @@
 
 ## 19. 数据模型
 
-| 服务 | 实体 |
+> 表名一律**小写下划线**（AuthService 的 OpenIddict 自有表除外，那是框架建的表）。
+> 下面按服务列出**真实存在**的表 —— 这一节曾经与实现脱节（写了不存在的 `Shipment`、
+> `UploadedFile`、`MarketingActivityTarget`，又漏了积分批次 / 评价追评 / 商户装修等表），
+> 照着那张表去找表会一无所获。
+
+| 服务 | 表 |
 |---|---|
-| User | `User`（后台账号） |
-| Customer | `Customer`、`CustomerAddress`、`CustomerFavorite` |
-| Auth | OpenIddict 自有表（Applications / Authorizations / Scopes / Tokens…） |
-| Tool | `StoredFile` |
-| Permission | `Permission`、`Role`、`RolePermission`、`UserRole` |
-| Product | `Product`、`Sku`、`Category`、`Brand`、`UploadedFile`（+ `evaluation_score` / `evaluation_count`） |
-| Cart | `CartItem` |
-| Inventory | `Stock`、`StockFlow`、`pending_stock_release` |
-| Order | `Order`、`OrderItem`、`Shipment`、`ShipmentItem`（`OrderItem.SourceType` 标记普通/秒杀） |
-| Payment | `PaymentOrder`、`RefundOrder`、`RefundOrderItem` |
-| Marketing | `MarketingActivity`(+`Target`)、`CouponTemplate`、`CouponActivity`(+`Target`)、`UserCoupon`、`MarketingActivityRecord`(+`Item`)、`CouponRecord`(+`Item`)、`MarketingConfig`、`seckill_session`、`seckill_item` |
-| MerchantPlatform | `Platform`、`Merchant`、`PlatformConfig`、`PlatformAppConfig`（+ `RegionsJson`） |
-| Point | `point_account`、`point_record` |
-| Evaluate | `evaluate`、`evaluate_sku_ref` |
+| User | `app_user`（后台账号；**不是** `"User"`） |
+| Customer | `customer`、`customer_address`、`customer_favorite` |
+| Auth | OpenIddict 自有表（Applications / Authorizations / Scopes / Tokens + `__EFMigrationsHistory`） |
+| Tool | `stored_file` |
+| Permission | `permission`、`role`、`role_permission`、`user_role` |
+| Product | `product`、`product_spec`、`product_spec_value`、`sku`、`sku_spec_value`、`category`、`brand`、`logistics_company` |
+| Cart | `cart_item` |
+| Inventory | `stock`、`stock_flow`、`pending_stock_release` |
+| Order | `order`（**发货信息就在它上面**：`logistics_company_id` / `tracking_no` / `shipped_at`）、`order_item`（`source_type` 标记普通 / 秒杀）、`order_refund`、`order_refund_item` |
+| Payment | `payment_order`、`refund_order`、`refund_order_item` |
+| Marketing | `promotion_activity`、`coupon_template`、`coupon_activity`、`user_coupon`、`coupon_occupancy`、`gift_grant`、`marketing_activity_record`、`marketing_config`、`seckill_session`、`seckill_item`、`seckill_grab` |
+| MerchantPlatform | `platform`、`merchant`、`platform_config`（地区地址 `regions_json`）、`platform_app_config`、`merchant_app_config` |
+| Point | `point_account`、`point_record`、`point_lot`、`point_lock`、`point_lock_lot`、`point_rule_config` |
+| Evaluate | `evaluate`、`evaluate_sku_ref`、`evaluate_append`、`evaluate_reply` |
 | Log | ES 索引（pv / operation / exception / dlq） |
+
+**活动的适用目标不是独立表**：`promotion_activity.targets` / `coupon_activity.targets` 是
+JSON Id 数组（`target_type` 决定按 SPU 还是 SKU 解释），下单试算时在内存里匹配。
+拆成关联表能换来索引，但目标最多 200 个、只在试算时读一次，代价不值。
+
+**积分为什么要 5 张表**：`point_lot` 是按批次的到期队列（过期扣减从最早到期的批次扣），
+`point_lock` / `point_lock_lot` 是下单冻结（冻结要记住「冻的是哪几批」，退款回收才能按原批次还回去）。
+只用一个余额字段做不了「按比例回收」与「到期扣减」。
 
 所有服务**独立数据库**，通过 AgileConfig 每服务独立配置连接串。
 

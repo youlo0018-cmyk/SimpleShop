@@ -8,6 +8,11 @@ namespace MarketingService.Domain.Services;
 /// <param name="StockTotal">本场秒杀库存总量。</param>
 /// <param name="StockSold">本场已抢出数量。</param>
 /// <param name="SellOutRate">售罄率 = 已抢 / 总量。分母为 0 时为 0。</param>
+/// <param name="Gmv">
+/// 本场成交额（已支付实付合计，排除取消 / 已退款）。
+/// **必须逐场给**：只给全场总额的话，运营能逐场比售罄率却比不了 GMV ——
+/// 而「哪个场次卖得好」正是秒杀报表要回答的问题。
+/// </param>
 /// <param name="OrderNos">成功抢购产生的订单号，用于向订单服务换 GMV。</param>
 /// <remarks>
 /// <b>「参与人数」与「抢购成功数」是两个数</b>：前者是点过的人，
@@ -22,6 +27,7 @@ public sealed record SeckillSessionAggregate(
     int StockTotal,
     int StockSold,
     decimal SellOutRate,
+    decimal Gmv,
     IReadOnlyList<string> OrderNos);
 
 /// <summary>秒杀效果报表汇总。</summary>

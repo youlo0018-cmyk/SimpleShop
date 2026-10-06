@@ -43,15 +43,26 @@ public sealed class SeckillReportHandler
             from, to, request.SessionId, request.MerchantId, request.PlatformId,
             limit: 200, ct).ConfigureAwait(false);
 
-        // 一次性把所有成功订单号交给订单服务换 GMV，而不是每个场次调一次
+        // 一次性把所有成功订单号交给订单服务换**逐单**金额，而不是每个场次调一次。
+        // 拿到逐单金额后按场次求和：总额与逐场金额来自同一份数据，
+        // 不会出现「逐场加起来不等于总额」那种对不上账的报表。
         var allOrderNos = sessions.SelectMany(a => a.OrderNos).Distinct().ToList();
+        var payableByOrder = await _gmv.GetPayableByOrderAsync(allOrderNos, ct).ConfigureAwait(false);
 
-        var totalGmv = await _gmv.SumPayableAsync(allOrderNos, ct).ConfigureAwait(false);
+        var withGmv = sessions
+            .Select(a => a with
+            {
+                Gmv = Math.Round(
+                    a.OrderNos.Sum(no => payableByOrder.GetValueOrDefault(no)),
+                    2, MidpointRounding.AwayFromZero)
+            })
+            .ToList();
 
-        var totalParticipants = sessions.Sum(a => a.ParticipantCount);
-        var totalSuccess = sessions.Sum(a => a.GrabSuccessCount);
+        var totalParticipants = withGmv.Sum(a => a.ParticipantCount);
+        var totalSuccess = withGmv.Sum(a => a.GrabSuccessCount);
+        var totalGmv = Math.Round(withGmv.Sum(a => a.Gmv), 2, MidpointRounding.AwayFromZero);
 
         return ApiResults.Ok(new SeckillReport(
-            sessions, totalParticipants, totalSuccess, totalGmv));
+            withGmv, totalParticipants, totalSuccess, totalGmv));
     }
 }

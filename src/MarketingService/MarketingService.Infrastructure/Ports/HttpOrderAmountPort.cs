@@ -29,7 +29,16 @@ public sealed class HttpOrderAmountPort : IOrderAmountPort
     public async Task<decimal> SumPayableAsync(
         IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
     {
-        if (orderNos is null || orderNos.Count == 0) return 0m;
+        var byOrder = await GetPayableByOrderAsync(orderNos, ct).ConfigureAwait(false);
+        return Math.Round(byOrder.Values.Sum(), 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, decimal>> GetPayableByOrderAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, decimal>();
+        if (orderNos is null || orderNos.Count == 0) return result;
 
         try
         {
@@ -42,24 +51,29 @@ public sealed class HttpOrderAmountPort : IOrderAmountPort
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("订单服务金额汇总失败：HTTP {Code}", (int)response.StatusCode);
-                return 0m;
+                return result;
             }
 
-            var result = await response.Content
+            var payload = await response.Content
                 .ReadFromJsonAsync<ApiResponse<Result>>(ct).ConfigureAwait(false);
 
-            if (result is null || !result.Success || result.Data is null)
+            if (payload is null || !payload.Success || payload.Data is null)
             {
-                _logger.LogError("订单服务金额汇总业务失败：{Message}", result?.Message ?? "(空响应)");
-                return 0m;
+                _logger.LogError("订单服务金额汇总业务失败：{Message}", payload?.Message ?? "(空响应)");
+                return new Dictionary<string, decimal>();
             }
 
-            return result.Data.Amount;
+            foreach (var item in payload.Data.Items)
+            {
+                result[item.OrderNo] = item.Amount;
+            }
+
+            return result;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             _logger.LogError(ex, "调用订单服务金额汇总失败，金额按 0 计");
-            return 0m;
+            return result;
         }
     }
 
@@ -75,6 +89,22 @@ public sealed class HttpOrderAmountPort : IOrderAmountPort
     private sealed class Result
     {
         /// <summary>成交额合计。</summary>
+        [JsonPropertyName("amount")]
+        public decimal Amount { get; set; }
+
+        /// <summary>逐单实付金额。</summary>
+        [JsonPropertyName("items")]
+        public List<OrderPayableItem> Items { get; set; } = new();
+    }
+
+    /// <summary>单个订单的实付金额。</summary>
+    private sealed class OrderPayableItem
+    {
+        /// <summary>订单号。</summary>
+        [JsonPropertyName("orderNo")]
+        public string OrderNo { get; set; } = string.Empty;
+
+        /// <summary>实付金额。</summary>
         [JsonPropertyName("amount")]
         public decimal Amount { get; set; }
     }

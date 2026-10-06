@@ -323,21 +323,35 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
     public async Task<decimal> SumPayableByOrderNosAsync(
         IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
     {
-        if (orderNos is null || orderNos.Count == 0) return 0m;
+        var byOrder = await GetPayableByOrderNosAsync(orderNos, ct).ConfigureAwait(false);
+        return Math.Round(byOrder.Values.Sum(), 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<string, decimal>> GetPayableByOrderNosAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, decimal>();
+        if (orderNos is null || orderNos.Count == 0) return result;
 
         var list = orderNos.Where(a => !string.IsNullOrWhiteSpace(a)).Distinct().ToArray();
-        if (list.Length == 0) return 0m;
+        if (list.Length == 0) return result;
 
         // 口径与工作台 GMV 一致：排除待支付 / 已取消 / 已退款
-        var sum = await _db.Select<Order>()
+        var rows = await _db.Select<Order>()
             .Where(a => list.Contains(a.OrderNo))
             .Where(a => a.Status != OrderStatuses.PendingPayment)
             .Where(a => a.Status != OrderStatuses.Cancelled)
             .Where(a => a.Status != OrderStatuses.Refunded)
-            .SumAsync(a => a.PayableAmount)
+            .ToListAsync(a => new { a.OrderNo, a.PayableAmount }, ct)
             .ConfigureAwait(false);
 
-        return Math.Round(sum, 2, MidpointRounding.AwayFromZero);
+        foreach (var row in rows)
+        {
+            result[row.OrderNo] = row.PayableAmount;
+        }
+
+        return result;
     }
 
 
