@@ -26,23 +26,22 @@ public sealed class CouponAdminController : ControllerBase
     }
 
     /// <summary>新建券模板。</summary>
-    /// <param name="request">模板。</param>
+    /// <param name="command">模板。</param>
+    /// <param name="ct">取消令牌。</param>
     /// <returns>新模板 Id。</returns>
     /// <remarks>
-    /// 改模板不影响已发出的券——已发的券按自己的快照算（DATA_SPEC 5.12），
-    /// 所以这里不做任何「同步到已发券」的动作。
+    /// <para>改模板不影响已发出的券——已发的券按自己的快照算（DATA_SPEC 5.12），
+    /// 所以这里不做任何「同步到已发券」的动作。</para>
+    ///
+    /// <para><b>走命令 + 校验器，不再直接收实体</b>：原来把 <c>CouponTemplate</c> 实体
+    /// 绑请求体再 <c>Insert</c>，等于「创建」这条路绕过了全部校验（编辑那条路是有的）：
+    /// 满赠券可以不选赠送模板、满减券可以不填优惠金额、<c>IssuedQuantity</c> 还能由
+    /// 请求体直接写。同一个表单两条路径规则不一致，缺陷只会从松的那侧漏出来。</para>
     /// </remarks>
     [HttpPost("coupon-templates/Create")]
-    public ActionResult<ApiResponse<long>> CreateTemplate([FromBody] CouponTemplate request)
-    {
-        if (request.ValidDays is < 1 or > 3650) return BadRequest(Envelope("有效期必须为 1 ~ 3650 天"));
-        if (request.CouponType is < 1 or > 4) return BadRequest(Envelope("券类型必须是 1 满减 / 2 折扣 / 3 代金 / 4 满赠"));
-
-        request.Id = SnowflakeId.NewId();
-        request.CreatedAt = DateTime.UtcNow;
-        _db.Insert(request).ExecuteAffrows();
-        return Ok(ApiResults.Ok(request.Id, "创建成功"));
-    }
+    public Task<ApiResponse<long>> CreateTemplate(
+        [FromBody] CreateCouponTemplateCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 
     /// <summary>分页查询券模板。</summary>
     /// <param name="command">查询命令。</param>
@@ -92,29 +91,20 @@ public sealed class CouponAdminController : ControllerBase
     }
 
     /// <summary>新建券活动。</summary>
-    /// <param name="request">券活动。</param>
+    /// <param name="command">券活动。</param>
+    /// <param name="ct">取消令牌。</param>
     /// <returns>新活动 Id。</returns>
     /// <remarks>
-    /// 时间先归一到 UTC 再落库，原因写在 <see cref="ToUtc"/>。
+    /// <para>时间由处理器归一到 UTC 再落库（见 <c>CouponTimeNormalizer</c>）。</para>
+    ///
+    /// <para><b>走命令 + 校验器，不再直接收实体</b>：与券模板的创建同一处问题 ——
+    /// 实体直接 <c>Insert</c> 绕过了全部校验，<c>ClaimedQuantity</c>（已领取数）
+    /// 还能被请求体直接写。同一个表单两条路径规则不一致，缺陷只会从松的那侧漏出来。</para>
     /// </remarks>
     [HttpPost("coupon-activities/Create")]
-    public ActionResult<ApiResponse<long>> CreateActivity([FromBody] CouponActivity request)
-    {
-        request.ClaimStartTime = ToUtc(request.ClaimStartTime);
-        request.ClaimEndTime = ToUtc(request.ClaimEndTime);
-
-        if (request.ClaimEndTime <= request.ClaimStartTime)
-        {
-            return BadRequest(Envelope("领取结束时间必须晚于开始时间"));
-        }
-
-        if (request.ClaimQuantity < 1) return BadRequest(Envelope("发放量必须大于等于 1"));
-
-        request.Id = SnowflakeId.NewId();
-        request.CreatedAt = DateTime.UtcNow;
-        _db.Insert(request).ExecuteAffrows();
-        return Ok(ApiResults.Ok(request.Id, "创建成功"));
-    }
+    public Task<ApiResponse<long>> CreateActivity(
+        [FromBody] CreateCouponActivityCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 
     /// <summary>分页查询券活动。</summary>
     /// <param name="command">查询命令。</param>
@@ -155,25 +145,6 @@ public sealed class CouponAdminController : ControllerBase
     public Task<ApiResponse<PagedResult<CouponRecordItem>>> ListCouponRecords(
         [FromBody] QueryCouponRecordsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
-
-    /// <summary>把客户端传来的时间归一到 UTC。</summary>
-    /// <param name="value">原始时间。</param>
-    /// <returns>UTC 时间。</returns>
-    /// <remarks>
-    /// <b>踩过的坑</b>：本项目所有时间列都是 UTC（实体注释里写死了），领取窗口也拿
-    /// <c>DateTime.UtcNow</c> 比。但 <see cref="DateTime"/> 从 JSON 反序列化时，
-    /// 带偏移量的字符串（<c>2026-10-03T19:00:00+08:00</c>）会得到
-    /// <b>Kind=Local 且时钟值已是本地 19:00</b>——直接存进 <c>timestamp</c> 列就是错的，
-    /// 服务器按 UTC 一比就差了一个时区（本项目所在时区是 +08，也就是整整 8 小时）。
-    /// 症状是「刚建的活动立刻提示不在领取时间内」，而代码看起来完全没问题。
-    /// <para>Kind 三种取值都要处理：Local 要转换；Utc 原样；Unspecified 按本项目约定当 UTC。</para>
-    /// </remarks>
-    private static DateTime ToUtc(DateTime value) => value.Kind switch
-    {
-        DateTimeKind.Utc => value,
-        DateTimeKind.Local => value.ToUniversalTime(),
-        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
-    };
 
     /// <summary>查询券活动。</summary>
     /// <param name="activityId">活动 Id。</param>

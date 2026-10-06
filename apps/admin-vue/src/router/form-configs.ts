@@ -180,6 +180,9 @@ export const FORMS = {
     // 底层按订单号唯一占用天然保证。做成可编辑只会让人以为配大了能多减几张。
     { field: 'perOrderLimit', label: '每单限用', type: 'number', min: 1, max: 1, default: 1, readonlyInEdit: true, disabled: true, help: '固定 1 张，一笔订单只能用一张券' },
       { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0, help: '数字越小越靠前' },
+      // 归属平台创建后不可改：券模板一旦发出去，改平台等于把别人的券挪到另一个平台，
+      // 而编辑接口本来就把它排除在更新列之外。做成可编辑的旋钮只会让人以为改生效了。
+      { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0, readonlyInEdit: true, help: '券模板归属的平台；列表可按平台筛选，创建后不可改' },
       { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
     ],
   },

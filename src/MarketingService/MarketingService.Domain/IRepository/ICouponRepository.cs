@@ -173,6 +173,16 @@ public interface ICouponRepository
         int page, int pageSize, string keyword, int couponType, int status, long platformId,
         CancellationToken ct = default);
 
+    /// <summary>新建券模板。</summary>
+    /// <param name="template">待写入的模板。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>新模板 Id。</returns>
+    /// <remarks>
+    /// <b>已发放数由仓储强制从 0 起</b>：它是发放流程累加出来的计数，
+    /// 让调用方能传进来的话，报表上的「已发放」就成了可以编造的数字。
+    /// </remarks>
+    Task<long> InsertTemplateAsync(CouponTemplate template, CancellationToken ct = default);
+
     /// <summary>更新券模板的可变字段。</summary>
     /// <param name="template">携带 Id 与待更新字段的模板。</param>
     /// <param name="ct">取消令牌。</param>
@@ -189,6 +199,19 @@ public interface ICouponRepository
     /// <returns>受影响行数。幂等。</returns>
     Task<int> DeleteTemplateAsync(long templateId, CancellationToken ct = default);
 
+    /// <summary>统计有多少<b>启用中</b>的券活动还在引用某个券模板。</summary>
+    /// <param name="templateId">模板 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>引用它的启用中券活动数。</returns>
+    /// <remarks>
+    /// 删模板前必须查这个：模板被删而活动还在的话，领券中心会列出一个
+    /// <b>永远领不到</b>的券（点「领取」报「券模板不存在或已停用」），
+    /// 而且那个活动连停用都改不了（改的时候又要校验模板存在）。
+    /// <para>只算<b>启用中</b>的：已停用的活动不会出现在领券中心，
+    /// 拿它挡着删除只会让运营永远清不掉一个没人用的模板。</para>
+    /// </remarks>
+    Task<int> CountActiveActivitiesByTemplateAsync(long templateId, CancellationToken ct = default);
+
     /// <summary>分页查券活动（后台）。</summary>
     /// <param name="page">页码，从 1 起。</param>
     /// <param name="pageSize">每页条数。</param>
@@ -200,6 +223,16 @@ public interface ICouponRepository
     Task<(List<CouponActivity> Items, long Total)> PageActivitiesAsync(
         int page, int pageSize, string keyword, int status, long platformId,
         CancellationToken ct = default);
+
+    /// <summary>新建券活动。</summary>
+    /// <param name="activity">待写入的券活动。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>新活动 Id。</returns>
+    /// <remarks>
+    /// <b>已领取数由仓储强制从 0 起</b>：它是领券流程累加出来的计数，
+    /// 让调用方能传进来的话，报表上的「已领取」就成了可以编造的数字。
+    /// </remarks>
+    Task<long> InsertActivityAsync(CouponActivity activity, CancellationToken ct = default);
 
     /// <summary>更新券活动的可变字段。</summary>
     /// <param name="activity">携带 Id 与待更新字段的活动。</param>

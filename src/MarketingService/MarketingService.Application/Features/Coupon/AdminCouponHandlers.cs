@@ -1,9 +1,30 @@
 using Collaboration.Domain.Common;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
+using MarketingService.Domain.Services;
 using MediatR;
 
 namespace MarketingService.Application.Features.Coupon;
+
+/// <summary>券活动时间的归一化。</summary>
+/// <remarks>
+/// 踩过的坑：从 JSON 反序列化带偏移量的字符串（<c>...+08:00</c>）会得到
+/// <b>Kind=Local 且时钟值已是本地时间</b>，直接存进 <c>timestamp</c> 列就差一个时区。
+/// 症状是「刚建完 / 改完活动时间，活动立刻不在领取时间内」，代码看着完全没问题。
+/// 新建与编辑两条路径共用这一份，避免只修好其中一条。
+/// </remarks>
+internal static class CouponTimeNormalizer
+{
+    /// <summary>把客户端传来的时间归一到 UTC。</summary>
+    /// <param name="value">原始时间。</param>
+    /// <returns>UTC 时间。</returns>
+    internal static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
+}
 
 /// <summary>分页查询券模板处理器。</summary>
 public sealed class QueryCouponTemplatesHandler
@@ -35,6 +56,63 @@ public sealed class QueryCouponTemplatesHandler
             a.Status, EnableStatuses.NameOf(a.Status), a.PlatformId)).ToList();
 
         return ApiResults.Ok(new PagedResult<CouponTemplateItem>(items, page.Total, request.Page, request.PageSize));
+    }
+}
+
+/// <summary>编辑券模板处理器。</summary>
+public sealed class CreateCouponTemplateHandler
+    : IRequestHandler<CreateCouponTemplateCommand, ApiResponse<long>>
+{
+    private readonly ICouponRepository _coupons;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="coupons">券仓储。</param>
+    public CreateCouponTemplateHandler(ICouponRepository coupons) => _coupons = coupons;
+
+    /// <summary>执行新建。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回新模板 Id。</returns>
+    /// <remarks>
+    /// <para><b>满赠券要校验赠送的模板存在</b>：只在「大于 0」上放行的话，
+    /// 运营填一个不存在的 Id 也能保存，用户付完钱才发现赠品券发不出来。</para>
+    ///
+    /// <para><c>IssuedQuantity</c> <b>恒从 0 起</b>：它是发放流程累加出来的计数，
+    /// 允许请求体带进来的话，报表上的「已发放」就能被随手编造 ——
+    /// 编辑路径刻意把它排除在更新列之外，创建路径同样不能收。</para>
+    /// </remarks>
+    public async Task<ApiResponse<long>> Handle(CreateCouponTemplateCommand request, CancellationToken ct)
+    {
+        if (request.CouponType == CouponTypes.Gift)
+        {
+            var gift = await _coupons.GetTemplateAsync(request.GiftTemplateId, ct).ConfigureAwait(false);
+            if (gift is null)
+            {
+                return ApiResults.Fail<long>(BaseApiResponseCode.NotFound, "赠送的券模板不存在");
+            }
+        }
+
+        var template = new CouponTemplate
+        {
+            TemplateName = request.TemplateName.Trim(),
+            CouponType = request.CouponType,
+            ThresholdAmount = PromotionCalculator.Round2(request.ThresholdAmount),
+            DiscountAmount = PromotionCalculator.Round2(request.DiscountAmount),
+            DiscountRate = PromotionCalculator.Round2(request.DiscountRate),
+            GiftTemplateId = request.CouponType == CouponTypes.Gift ? request.GiftTemplateId : 0,
+            ValidDays = request.ValidDays,
+            TotalQuantity = request.TotalQuantity,
+            IssuedQuantity = 0,
+            PerUserLimit = request.PerUserLimit,
+            PerOrderLimit = request.PerOrderLimit,
+            SortOrder = request.SortOrder,
+            Status = request.Status,
+            PlatformId = request.PlatformId,
+            MerchantId = request.MerchantId
+        };
+
+        var id = await _coupons.InsertTemplateAsync(template, ct).ConfigureAwait(false);
+        return ApiResults.Ok(id, "券模板已创建（不影响已发出的券）");
     }
 }
 
@@ -113,6 +191,11 @@ public sealed class DeleteCouponTemplateHandler
     /// 如果这里改成「有发放记录就禁止删除」，运营会遇到一个无法解决的困境——
     /// 想清理一个滥发的券模板，却因为「它已经发出去了」而永远删不掉。
     /// 正确的停发手段是把状态改成「停用」。
+    ///
+    /// <para>🔴 <b>但「还有券活动在用」时必须拦住</b>：模板一删，那个活动就成了悬空引用 ——
+    /// 领券中心照样把它列出来（模板名退化成「券模板」），用户点「领取」却报
+    /// 「券模板不存在或已停用」；更糟的是运营想停用这个活动也改不动，
+    /// 因为编辑路径同样要校验模板存在。这与活动侧「有参与记录时禁止删除，只能停用」同一口径。</para>
     /// </remarks>
     public async Task<ApiResponse> Handle(DeleteCouponTemplateCommand request, CancellationToken ct)
     {
@@ -120,6 +203,15 @@ public sealed class DeleteCouponTemplateHandler
         if (template is null)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "券模板不存在");
+        }
+
+        var referencing = await _coupons.CountActiveActivitiesByTemplateAsync(request.TemplateId, ct)
+            .ConfigureAwait(false);
+        if (referencing > 0)
+        {
+            return ApiResponseFactory.Fail(
+                BaseApiResponseCode.BadRequest,
+                $"还有 {referencing} 个启用中的券活动在用这个模板，请先停用或改绑那些活动；只停发的话把模板状态改成「停用」即可");
         }
 
         await _coupons.DeleteTemplateAsync(request.TemplateId, ct).ConfigureAwait(false);
@@ -181,6 +273,58 @@ public sealed class QueryCouponActivitiesHandler
 }
 
 /// <summary>编辑券活动处理器。</summary>
+public sealed class CreateCouponActivityHandler
+    : IRequestHandler<CreateCouponActivityCommand, ApiResponse<long>>
+{
+    private readonly ICouponRepository _coupons;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="coupons">券仓储。</param>
+    public CreateCouponActivityHandler(ICouponRepository coupons) => _coupons = coupons;
+
+    /// <summary>执行新建。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回新活动 Id。</returns>
+    /// <remarks>
+    /// <para><b>关联模板必须存在</b>：只在「Id 大于 0」上放行的话，
+    /// 运营填一个不存在的模板也能保存，用户点「领取」才发现领不到券。</para>
+    ///
+    /// <para><c>ClaimedQuantity</c>（已领取数）<b>恒从 0 起</b>：
+    /// 它是领券流程累加出来的计数，允许请求体带进来的话，
+    /// 报表上的「已领取」就能被随手编造。</para>
+    /// </remarks>
+    public async Task<ApiResponse<long>> Handle(CreateCouponActivityCommand request, CancellationToken ct)
+    {
+        var template = await _coupons.GetTemplateAsync(request.TemplateId, ct).ConfigureAwait(false);
+        if (template is null)
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.NotFound, "关联的券模板不存在");
+        }
+
+        var activity = new CouponActivity
+        {
+            ActivityName = request.ActivityName.Trim(),
+            TemplateId = request.TemplateId,
+            ClaimStartTime = CouponTimeNormalizer.ToUtc(request.ClaimStartTime),
+            ClaimEndTime = CouponTimeNormalizer.ToUtc(request.ClaimEndTime),
+            ClaimQuantity = request.ClaimQuantity,
+            ClaimedQuantity = 0,
+            PerUserLimit = request.PerUserLimit,
+            TargetType = request.TargetType,
+            Targets = (request.Targets ?? "[]").Trim(),
+            SortOrder = request.SortOrder,
+            Status = request.Status,
+            PlatformId = request.PlatformId,
+            MerchantId = request.MerchantId
+        };
+
+        var id = await _coupons.InsertActivityAsync(activity, ct).ConfigureAwait(false);
+        return ApiResults.Ok(id, "券活动已创建");
+    }
+}
+
+/// <summary>编辑券活动处理器。</summary>
 public sealed class UpdateCouponActivityHandler
     : IRequestHandler<UpdateCouponActivityCommand, ApiResponse>
 {
@@ -215,7 +359,14 @@ public sealed class UpdateCouponActivityHandler
         var template = await _coupons.GetTemplateAsync(request.TemplateId, ct).ConfigureAwait(false);
         if (template is null)
         {
-            return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "关联的券模板不存在");
+            // 悬空引用（模板已被删）的**唯一**出路是停用：改绑到别的模板时那个模板必须存在，
+            // 否则只是又造一条悬空引用。没有这个口子，这类活动会永远停在「启用」且改不动，
+            // 用户在领券中心点「领取」只会拿到一句报错。
+            var canDisable = request.Status == 2 && request.TemplateId == activity.TemplateId;
+            if (!canDisable)
+            {
+                return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "关联的券模板不存在");
+            }
         }
 
         activity.ActivityName = request.ActivityName.Trim();
@@ -236,17 +387,7 @@ public sealed class UpdateCouponActivityHandler
     /// <summary>把客户端传来的时间归一到 UTC。</summary>
     /// <param name="value">原始时间。</param>
     /// <returns>UTC 时间。</returns>
-    /// <remarks>
-    /// 踩过的坑：从 JSON 反序列化带偏移量的字符串（<c>...+08:00</c>）会得到
-    /// <b>Kind=Local 且时钟值已是本地时间</b>，直接存进 <c>timestamp</c> 列就差一个时区。
-    /// 症状是「刚改完活动时间，活动立刻不在领取时间内」，代码看着完全没问题。
-    /// </remarks>
-    private static DateTime ToUtc(DateTime value) => value.Kind switch
-    {
-        DateTimeKind.Utc => value,
-        DateTimeKind.Local => value.ToUniversalTime(),
-        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
-    };
+    private static DateTime ToUtc(DateTime value) => CouponTimeNormalizer.ToUtc(value);
 }
 
 /// <summary>分页查询券核销记录处理器。</summary>

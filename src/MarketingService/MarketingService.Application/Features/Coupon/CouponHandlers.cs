@@ -84,11 +84,16 @@ public sealed class QueryAvailableCouponsHandler
             : (await _coupons.ListTemplatesByIdsAsync(templateIds, ct).ConfigureAwait(false))
                 .ToDictionary(a => a.Id, a => a.TemplateName);
 
+        // 模板已被删的活动**不再展示**：它必然领不到（ClaimAsync 会以「券模板不存在或已停用」拒绝），
+        // 摆在领券中心只是给用户一个点了就报错的按钮。删除入口已经拦住了新数据，
+        // 这里兜的是历史遗留的悬空引用。
+        available = available.Where(a => names.ContainsKey(a.TemplateId)).ToList();
+
         var result = available.Select(a => new CouponActivityItem(
             a.Id,
             a.ActivityName,
             a.TemplateId,
-            names.TryGetValue(a.TemplateId, out var name) ? name : "券模板",
+            names[a.TemplateId],
             a.ClaimStartTime.ToString("yyyy-MM-dd HH:mm:ss"),
             a.ClaimEndTime.ToString("yyyy-MM-dd HH:mm:ss"),
             a.ClaimQuantity,

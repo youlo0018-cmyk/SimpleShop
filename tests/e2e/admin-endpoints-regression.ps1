@@ -58,6 +58,22 @@ function Get-AdminToken {
 $token = Get-AdminToken
 $auth = @{ Authorization = "Bearer $token" }
 
+# 本次运行的后缀：测试数据用**唯一名字**，免得并发或重跑时互相踩。
+# 原来各用例用时间戳拼名字，券模板那几个新用例要按名字回查，统一走这一份。
+$script:suffix = Get-Random -Minimum 100000 -Maximum 999999
+
+# 把 errors 里所有字段级错误文案拼成一段。
+# 两种形状都要兼容：Post-Ep 解出来的是 PSCustomObject，
+# 直接 Invoke-RestMethod 的也是 PSCustomObject，但键大小写可能不同。
+function Get-ErrorText($resp) {
+    if ($null -eq $resp.errors) { return '' }
+    $errs = $resp.errors
+    if ($errs -is [System.Collections.IDictionary]) {
+        return (@($errs.Values | ForEach-Object { $_ }) -join ' ')
+    }
+    return (@($errs.PSObject.Properties | ForEach-Object { $_.Value }) -join ' ')
+}
+
 function Post-Ep {
     param([string]$Path, [hashtable]$Body, [hashtable]$Headers)
     if ($null -eq $Headers) { $Headers = $auth }
@@ -176,6 +192,101 @@ Invoke-Case 'API-ADM-016' '满赠券未选赠送模板被拒' {
         templateId = 1; templateName = '满赠校验用例'; couponType = 4; giftTemplateId = 0
     }
     -not $r.Success -and $r.Code -eq 400
+}
+
+Invoke-Case 'API-ADM-017' '🔴 新建满赠券未选赠送模板被拒（创建路径也要走校验）' {
+    # 创建路径此前把实体直接 Insert，绕过了全部校验：满赠券可以不选赠送模板就建出来，
+    # 用户付完钱才发现赠品券发不出。编辑路径有校验、创建路径没有，缺陷只会从松的那侧漏。
+    $r = Post-Ep '/gateway/marketing/coupon-templates/Create' @{
+        templateName = "缺赠送$($script:suffix)"; couponType = 4; validDays = 30
+        totalQuantity = 10; perUserLimit = 1; perOrderLimit = 1; platformId = 0; status = 1
+    }
+    -not $r.Success -and $r.Code -eq 400 -and (Get-ErrorText $r) -match '赠送的券模板'
+}
+
+Invoke-Case 'API-ADM-018' '🔴 新建满赠券的赠送模板不存在被拒（404）' {
+    $r = Post-Ep '/gateway/marketing/coupon-templates/Create' @{
+        templateName = "赠品不存在$($script:suffix)"; couponType = 4
+        giftTemplateId = 999999999999; validDays = 30
+        totalQuantity = 10; perUserLimit = 1; perOrderLimit = 1; platformId = 0; status = 1
+    }
+    -not $r.Success -and $r.Code -eq 404
+}
+
+Invoke-Case 'API-ADM-019' '🔴 新建满减券没填优惠金额被拒（否则命中却不减钱）' {
+    $r = Post-Ep '/gateway/marketing/coupon-templates/Create' @{
+        templateName = "空金额$($script:suffix)"; couponType = 1; thresholdAmount = 100
+        discountAmount = 0; validDays = 30; totalQuantity = 10
+        perUserLimit = 1; perOrderLimit = 1; platformId = 0; status = 1
+    }
+    -not $r.Success -and $r.Code -eq 400 -and (Get-ErrorText $r) -match '优惠金额'
+}
+
+Invoke-Case 'API-ADM-007' '🔴 新建时不能编造已发放数（IssuedQuantity 恒从 0 起）' {
+    $name = "编造发放数$($script:suffix)"
+    $created = Post-Ep '/gateway/marketing/coupon-templates/Create' @{
+        templateName = $name; couponType = 1; thresholdAmount = 10; discountAmount = 1
+        validDays = 30; totalQuantity = 100; issuedQuantity = 999
+        perUserLimit = 1; perOrderLimit = 1; platformId = 0; status = 1
+    }
+    if (-not $created.Success) { return $false }
+
+    $list = Post-Ep '/gateway/marketing/coupon-templates/List' @{ page = 1; pageSize = 50; keyword = $name }
+    $row = @($list.data.items | Where-Object { $_.templateId -eq $created.data })[0]
+
+    # 已发放数是发放流程累加出来的计数，不是表单字段：
+    # 能写进来的话，报表上的「已发放」就成了可以随手编造的数字。
+    $ok = $null -ne $row -and $row.issuedQuantity -eq 0
+    Post-Ep '/gateway/marketing/coupon-templates/Delete' @{ templateId = $created.data } | Out-Null
+    return $ok
+}
+
+Invoke-Case 'API-ADM-008' '🔴 新建券活动关联的模板不存在被拒（404）' {
+    $r = Post-Ep '/gateway/marketing/coupon-activities/Create' @{
+        activityName = "坏活动$($script:suffix)"; templateId = 999999999999
+        claimStartTime = [DateTime]::UtcNow.ToString('o')
+        claimEndTime = [DateTime]::UtcNow.AddDays(1).ToString('o')
+        claimQuantity = 10; perUserLimit = 1; targetType = 1; targets = '[]'
+        platformId = 0; status = 1
+    }
+    -not $r.Success -and $r.Code -eq 404
+}
+
+Invoke-Case 'API-ADM-009' '🔴 启用中的券活动还引用着模板时不许删模板（否则悬空引用）' {
+    # 模板被删、活动还在的后果：领券中心照样列出这个活动（模板名退化成「券模板」），
+    # 用户点「领取」报「券模板不存在或已停用」，而运营连停用这个活动都改不动。
+    $name = "引用中的模板$($script:suffix)"
+    $template = Post-Ep '/gateway/marketing/coupon-templates/Create' @{
+        templateName = $name; couponType = 1; thresholdAmount = 10; discountAmount = 1
+        validDays = 30; totalQuantity = 100; perUserLimit = 1; perOrderLimit = 1
+        platformId = 0; status = 1
+    }
+    if (-not $template.Success) { return $false }
+
+    $activity = Post-Ep '/gateway/marketing/coupon-activities/Create' @{
+        activityName = "引用活动$($script:suffix)"; templateId = $template.data
+        claimStartTime = [DateTime]::UtcNow.AddMinutes(-5).ToString('o')
+        claimEndTime = [DateTime]::UtcNow.AddDays(1).ToString('o')
+        claimQuantity = 10; perUserLimit = 1; targetType = 1; targets = '[]'
+        platformId = 0; status = 1
+    }
+    if (-not $activity.Success) { return $false }
+
+    $blocked = Post-Ep '/gateway/marketing/coupon-templates/Delete' @{ templateId = $template.data }
+    $blockedOk = -not $blocked.Success -and $blocked.Code -eq 400
+
+    # 停用活动之后就能删了：停用的活动不会出现在领券中心，拿它挡着删除没有意义
+    Post-Ep '/gateway/marketing/coupon-activities/Update' @{
+        activityId = $activity.data; activityName = "引用活动$($script:suffix)"
+        templateId = $template.data
+        claimStartTime = [DateTime]::UtcNow.AddMinutes(-5).ToString('o')
+        claimEndTime = [DateTime]::UtcNow.AddDays(1).ToString('o')
+        claimQuantity = 10; perUserLimit = 1; targetType = 1; targets = '[]'
+        sortOrder = 0; status = 2
+    } | Out-Null
+    $deleted = Post-Ep '/gateway/marketing/coupon-templates/Delete' @{ templateId = $template.data }
+
+    return $blockedOk -and $deleted.Success
 }
 
 Write-Host "`n=== 物流公司字典 ===" -ForegroundColor Cyan

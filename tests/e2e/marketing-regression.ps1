@@ -605,8 +605,10 @@ Invoke-Case 'API-GFT-003' '🔴 满赠券（券类型 4）：用它下单 → �
     # 券包里会多出 2+1 张，断言就分不清是哪一个来源发的了。
     Post '/marketing/activities/SetStatus' @{ activityId = $script:gftActivityId; status = 2 } | Out-Null
 
+    # 用**代金券**（类型 3）而不是满减券：满减券的后端校验要求门槛大于 0，
+    # 而这里要的就是「无门槛的赠品券」——代金券正是「0 元减」的形态。
     $script:gftSecondGiftTemplateId = [long](Post '/marketing/coupon-templates/Create' @{
-        templateName = "满赠券的赠品$($script:suffix)"; couponType = 1; thresholdAmount = 0; discountAmount = 5
+        templateName = "满赠券的赠品$($script:suffix)"; couponType = 3; thresholdAmount = 0; discountAmount = 5
         validDays = 30; totalQuantity = 100; perUserLimit = 5; perOrderLimit = 1
         platformId = 0; status = 1
     }).data

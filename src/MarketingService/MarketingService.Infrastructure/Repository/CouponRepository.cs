@@ -1,5 +1,6 @@
 using Collaboration.Domain.Infrastructure;
 using Collaboration.Domain.Repository;
+using Collaboration.Domain.Context;
 using FreeSql;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
@@ -627,11 +628,38 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
     }
 
     /// <inheritdoc />
+    public async Task<long> InsertTemplateAsync(CouponTemplate template, CancellationToken ct = default)
+    {
+        // Id 与创建时间由服务端生成；已发放数强制从 0 起 ——
+        // 那是发放流程累加出来的计数，不是可以填的表单字段。
+        //
+        // 审计字段显式填：FreeSql 3.5 的 Aop.CurdBefore 在本项目调用链上没有触发，
+        // 直接 _db.Insert 会让「创建人 / 最后操作人」全留在 0 ——
+        // 配置错了之后查不出是谁建的（DATA_SPEC 2.2 要求后台实体带这两组信息）。
+        var ctx = TenantContextHolder.Current;
+        template.Id = SnowflakeId.NewId();
+        template.CreatedAt = DateTime.UtcNow;
+        template.IssuedQuantity = 0;
+        template.CreatedById = ctx.UserId;
+        template.CreatedByName = ctx.UserName;
+        template.OperationId = ctx.UserId;
+        template.OperationName = ctx.UserName;
+
+        await _db.Insert(template).ExecuteAffrowsAsync(ct).ConfigureAwait(false);
+        return template.Id;
+    }
+
+    /// <inheritdoc />
     public Task<int> UpdateTemplateAsync(CouponTemplate template, CancellationToken ct = default)
+    {
+        // 操作人**只在这里**更新，创建人字段永远不进 SET：
+        // 「这个模板是谁建的」一旦被编辑动作覆盖，配置错误就再也查不出是谁引进来的。
+        var ctx = TenantContextHolder.Current;
+
         // 显式列出要更新的列：IssuedQuantity / PlatformId / MerchantId 都不该由后台表单改。
         // 用 SetDtoIgnore 的话，多写一个属性到命令上就会被顺带写进去——
         // 而 IssuedQuantity 一旦能被改，报表的「已发放」就成了可以手工编造的数字。
-        => _db.Update<CouponTemplate>()
+        return _db.Update<CouponTemplate>()
             .Where(a => a.Id == template.Id)
             .Set(a => new CouponTemplate
             {
@@ -647,9 +675,24 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
                 PerOrderLimit = template.PerOrderLimit,
                 SortOrder = template.SortOrder,
                 Status = template.Status,
+                OperationId = ctx.UserId,
+                OperationName = ctx.UserName,
                 UpdatedAt = DateTime.UtcNow
             })
             .ExecuteAffrowsAsync(ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> CountActiveActivitiesByTemplateAsync(long templateId, CancellationToken ct = default)
+    {
+        // CountAsync 返回 long，契约用 int：一个模板被上千个活动引用是不可能的量级，转换安全
+        var count = await _db.Select<CouponActivity>()
+            .Where(a => a.TemplateId == templateId && a.Status == 1)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        return (int)count;
+    }
 
     /// <inheritdoc />
     public Task<int> DeleteTemplateAsync(long templateId, CancellationToken ct = default)
@@ -685,8 +728,29 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
     }
 
     /// <inheritdoc />
+    public async Task<long> InsertActivityAsync(CouponActivity activity, CancellationToken ct = default)
+    {
+        // 同模板：Id / 创建时间由服务端生成，已领取数强制从 0 起。
+        var ctx = TenantContextHolder.Current;
+        activity.Id = SnowflakeId.NewId();
+        activity.CreatedAt = DateTime.UtcNow;
+        activity.ClaimedQuantity = 0;
+        activity.CreatedById = ctx.UserId;
+        activity.CreatedByName = ctx.UserName;
+        activity.OperationId = ctx.UserId;
+        activity.OperationName = ctx.UserName;
+
+        await _db.Insert(activity).ExecuteAffrowsAsync(ct).ConfigureAwait(false);
+        return activity.Id;
+    }
+
+    /// <inheritdoc />
     public Task<int> UpdateActivityAsync(CouponActivity activity, CancellationToken ct = default)
-        => _db.Update<CouponActivity>()
+    {
+        // 同模板：只覆盖「最后操作人」，创建人保持不变。
+        var ctx = TenantContextHolder.Current;
+
+        return _db.Update<CouponActivity>()
             .Where(a => a.Id == activity.Id)
             .Set(a => new CouponActivity
             {
@@ -700,9 +764,12 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
                 Targets = activity.Targets,
                 SortOrder = activity.SortOrder,
                 Status = activity.Status,
+                OperationId = ctx.UserId,
+                OperationName = ctx.UserName,
                 UpdatedAt = DateTime.UtcNow
             })
             .ExecuteAffrowsAsync(ct);
+    }
 
     /// <inheritdoc />
     public async Task<(List<UserCoupon> Items, long Total)> PageUserCouponsAsync(

@@ -6,6 +6,91 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace MarketingService.Application.Features.Coupon;
 
+/// <summary>券模板的可校验字段（新建与编辑共用同一套规则）。</summary>
+/// <remarks>
+/// <b>为什么要抽这一层</b>：新建与编辑是同一个表单的两条路径，规则必须一模一样。
+/// 各写一份的结果是缺陷只会从松的那一侧漏出来 —— 实际情况正是如此：
+/// 编辑路径有全套校验，新建路径把实体直接 <c>Insert</c>，于是
+/// 满赠券可以不选赠送模板、满减券可以不填优惠金额、
+/// <c>IssuedQuantity</c> 还能由请求体直接写。
+/// </remarks>
+public interface ICouponTemplateSpec
+{
+    /// <summary>模板名。</summary>
+    string TemplateName { get; }
+
+    /// <summary>券类型，见 <see cref="CouponTypes"/>。</summary>
+    int CouponType { get; }
+
+    /// <summary>门槛金额。</summary>
+    decimal ThresholdAmount { get; }
+
+    /// <summary>优惠金额。</summary>
+    decimal DiscountAmount { get; }
+
+    /// <summary>折扣率。</summary>
+    decimal DiscountRate { get; }
+
+    /// <summary>满赠券要赠送的模板 Id。</summary>
+    long GiftTemplateId { get; }
+
+    /// <summary>领取后有效天数。</summary>
+    int ValidDays { get; }
+
+    /// <summary>总发行池子。</summary>
+    int TotalQuantity { get; }
+
+    /// <summary>每人限领。</summary>
+    int PerUserLimit { get; }
+
+    /// <summary>每单限用，固定为 1。</summary>
+    int PerOrderLimit { get; }
+
+    /// <summary>排序。</summary>
+    int SortOrder { get; }
+
+    /// <summary>状态，1 启用 / 2 停用。</summary>
+    int Status { get; }
+}
+
+/// <summary>券活动的可校验字段（新建与编辑共用同一套规则）。</summary>
+/// <remarks>
+/// 理由同 <see cref="ICouponTemplateSpec"/>：两条路径各写一份校验，
+/// 缺陷只会从松的那一侧漏出来。
+/// </remarks>
+public interface ICouponActivitySpec
+{
+    /// <summary>活动名。</summary>
+    string ActivityName { get; }
+
+    /// <summary>关联的券模板 Id。</summary>
+    long TemplateId { get; }
+
+    /// <summary>领取开始时间（UTC）。</summary>
+    DateTime ClaimStartTime { get; }
+
+    /// <summary>领取结束时间（UTC）。</summary>
+    DateTime ClaimEndTime { get; }
+
+    /// <summary>本次发放量。</summary>
+    int ClaimQuantity { get; }
+
+    /// <summary>每人限领。</summary>
+    int PerUserLimit { get; }
+
+    /// <summary>适用范围类型。</summary>
+    int TargetType { get; }
+
+    /// <summary>适用范围的 JSON 文本。</summary>
+    string Targets { get; }
+
+    /// <summary>排序。</summary>
+    int SortOrder { get; }
+
+    /// <summary>状态，1 启用 / 2 停用。</summary>
+    int Status { get; }
+}
+
 /// <summary>分页查询券模板。</summary>
 /// <param name="Page">页码，从 1 起。</param>
 /// <param name="PageSize">每页条数。</param>
@@ -20,6 +105,45 @@ public record QueryCouponTemplatesCommand(
     int CouponType = 0,
     int Status = 0,
     long PlatformId = 0) : IRequest<ApiResponse<PagedResult<CouponTemplateItem>>>;
+
+/// <summary>新建券模板。</summary>
+/// <param name="TemplateName">模板名，2-128 字符。</param>
+/// <param name="CouponType">券类型，见 <see cref="CouponTypes"/>。</param>
+/// <param name="ThresholdAmount">门槛金额，0 表示无门槛。</param>
+/// <param name="DiscountAmount">优惠金额（满减 / 代金）。</param>
+/// <param name="DiscountRate">折扣率，0.01 ~ 10，8.5 表示 85 折。</param>
+/// <param name="GiftTemplateId">满赠券要赠送的模板 Id。</param>
+/// <param name="ValidDays">领取后有效天数，1 ~ 3650。</param>
+/// <param name="TotalQuantity">总发行池子，0 表示不限量。</param>
+/// <param name="PerUserLimit">每人限领，1 ~ 100。</param>
+/// <param name="PerOrderLimit">每单限用，<b>只能填 1</b>。</param>
+/// <param name="SortOrder">排序。</param>
+/// <param name="Status">状态，1 启用 / 2 停用。</param>
+/// <param name="PlatformId">归属平台 Id。</param>
+/// <param name="MerchantId">归属商户 Id，0 表示平台模板。</param>
+/// <remarks>
+/// <b>为什么不直接收实体</b>：控制器原来把 <c>CouponTemplate</c> 实体直接绑请求体再
+/// <c>Insert</c>，于是「创建」这条路绕过了所有校验，而「编辑」那条路是有的：
+/// 满赠券可以不选赠送模板就建出来（用户付完钱发不出券）、
+/// 满减券可以不填优惠金额（命中却不减钱）、
+/// <c>IssuedQuantity</c> 还能由请求体直接写（报表的「已发放」可以凭空编造）。
+/// 同一个表单的两条路径规则不一致，缺陷只会从松的那一侧漏出来。
+/// </remarks>
+public record CreateCouponTemplateCommand(
+    string TemplateName,
+    int CouponType,
+    decimal ThresholdAmount = 0,
+    decimal DiscountAmount = 0,
+    decimal DiscountRate = 0,
+    long GiftTemplateId = 0,
+    int ValidDays = 30,
+    int TotalQuantity = 0,
+    int PerUserLimit = 1,
+    int PerOrderLimit = 1,
+    int SortOrder = 0,
+    int Status = 1,
+    long PlatformId = 0,
+    long MerchantId = 0) : IRequest<ApiResponse<long>>, ICouponTemplateSpec;
 
 /// <summary>编辑券模板。改模板<b>不影响已发出的券</b>（DATA_SPEC 5.12 快照机制）。</summary>
 /// <param name="TemplateId">模板 Id。</param>
@@ -48,7 +172,7 @@ public record UpdateCouponTemplateCommand(
     int PerUserLimit = 1,
     int PerOrderLimit = 1,
     int SortOrder = 0,
-    int Status = 1) : IRequest<ApiResponse>;
+    int Status = 1) : IRequest<ApiResponse>, ICouponTemplateSpec;
 
 /// <summary>删除券模板（软删）。</summary>
 /// <param name="TemplateId">模板 Id。</param>
@@ -66,6 +190,38 @@ public record QueryCouponActivitiesCommand(
     string Keyword = "",
     int Status = 0,
     long PlatformId = 0) : IRequest<ApiResponse<PagedResult<CouponActivityItem>>>;
+
+/// <summary>新建券活动。</summary>
+/// <param name="ActivityName">活动名，2-128 字符。</param>
+/// <param name="TemplateId">关联的券模板 Id。</param>
+/// <param name="ClaimStartTime">领取开始时间（UTC）。</param>
+/// <param name="ClaimEndTime">领取结束时间（UTC）。</param>
+/// <param name="ClaimQuantity">本次发放量。</param>
+/// <param name="PerUserLimit">每人限领。</param>
+/// <param name="TargetType">适用范围。1 全场 / 2 指定 SPU / 3 指定 SKU。</param>
+/// <param name="Targets">目标列表，JSON Id 数组文本。</param>
+/// <param name="SortOrder">排序，小的在前。</param>
+/// <param name="Status">状态。1 启用 / 2 停用。</param>
+/// <param name="PlatformId">归属平台 Id。</param>
+/// <param name="MerchantId">归属商户 Id，0 表示平台活动。</param>
+/// <remarks>
+/// <b>为什么不直接收实体</b>：与券模板的创建同一处问题 —— 实体直接 <c>Insert</c>
+/// 会绕过全部校验，而且 <c>ClaimedQuantity</c>（已领取数）能被请求体直接写，
+/// 报表上的「已领取」就成了可以编造的数字；关联的模板是否存在也没人查。
+/// </remarks>
+public record CreateCouponActivityCommand(
+    string ActivityName,
+    long TemplateId,
+    DateTime ClaimStartTime = default,
+    DateTime ClaimEndTime = default,
+    int ClaimQuantity = 1,
+    int PerUserLimit = 1,
+    int TargetType = TargetTypes.All,
+    string Targets = "[]",
+    int SortOrder = 0,
+    int Status = 1,
+    long PlatformId = 0,
+    long MerchantId = 0) : IRequest<ApiResponse<long>>, ICouponActivitySpec;
 
 /// <summary>编辑券活动。</summary>
 /// <param name="ActivityId">券活动 Id。</param>
@@ -90,7 +246,7 @@ public record UpdateCouponActivityCommand(
     int TargetType = TargetTypes.All,
     string Targets = "[]",
     int SortOrder = 0,
-    int Status = 1) : IRequest<ApiResponse>;
+    int Status = 1) : IRequest<ApiResponse>, ICouponActivitySpec;
 
 /// <summary>分页查询券核销记录（已发出的券 + 核销状态）。</summary>
 /// <param name="Page">页码，从 1 起。</param>
@@ -201,9 +357,11 @@ public static class AdminCouponValidators
     public static void AddAdminCouponValidators(IServiceCollection services)
     {
         services.AddScoped<IValidator<QueryCouponTemplatesCommand>, QueryCouponTemplatesValidator>();
+        services.AddScoped<IValidator<CreateCouponTemplateCommand>, CreateCouponTemplateValidator>();
         services.AddScoped<IValidator<UpdateCouponTemplateCommand>, UpdateCouponTemplateValidator>();
         services.AddScoped<IValidator<DeleteCouponTemplateCommand>, DeleteCouponTemplateValidator>();
         services.AddScoped<IValidator<QueryCouponActivitiesCommand>, QueryCouponActivitiesValidator>();
+        services.AddScoped<IValidator<CreateCouponActivityCommand>, CreateCouponActivityValidator>();
         services.AddScoped<IValidator<UpdateCouponActivityCommand>, UpdateCouponActivityValidator>();
         services.AddScoped<IValidator<QueryCouponRecordsCommand>, QueryCouponRecordsValidator>();
         services.AddScoped<IValidator<QueryMyCouponsCommand>, QueryMyCouponsValidator>();
@@ -224,17 +382,17 @@ public static class AdminCouponValidators
         }
     }
 
-    /// <summary>编辑券模板校验。</summary>
+    /// <summary>券模板字段规则（新建与编辑共用）。</summary>
+    /// <typeparam name="T">命令类型，实现 <see cref="ICouponTemplateSpec"/>。</typeparam>
     /// <remarks>
     /// <b>券类型决定哪些金额字段必填</b>（DATA_SPEC 5.12），所以校验是<b>条件式</b>的。
     /// 「所有字段一律校验」的做法会拒掉合法的满赠券——它的 DiscountAmount 恒为 0。
     /// </remarks>
-    private sealed class UpdateCouponTemplateValidator : AbstractValidator<UpdateCouponTemplateCommand>
+    private sealed class CouponTemplateRules<T> : AbstractValidator<T> where T : ICouponTemplateSpec
     {
-        /// <summary>构造校验器。</summary>
-        public UpdateCouponTemplateValidator()
+        /// <summary>构造规则集。</summary>
+        public CouponTemplateRules()
         {
-            RuleFor(x => x.TemplateId).GreaterThan(0).WithMessage("券模板信息不正确");
             RuleFor(x => x.TemplateName).NotEmpty().Length(2, 128).WithMessage("模板名必须为 2-128 个字符");
             RuleFor(x => x.CouponType).InclusiveBetween(1, 4).WithMessage("券类型只能是 1 满减 / 2 折扣 / 3 代金 / 4 满赠");
             RuleFor(x => x.ThresholdAmount).GreaterThanOrEqualTo(0).WithMessage("门槛金额不能为负数");
@@ -282,6 +440,25 @@ public static class AdminCouponValidators
         }
     }
 
+    /// <summary>新建券模板校验。规则与编辑完全一致，只少了「模板 Id 必须为正」这一条。</summary>
+    private sealed class CreateCouponTemplateValidator : AbstractValidator<CreateCouponTemplateCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public CreateCouponTemplateValidator()
+            => Include(new CouponTemplateRules<CreateCouponTemplateCommand>());
+    }
+
+    /// <summary>编辑券模板校验。</summary>
+    private sealed class UpdateCouponTemplateValidator : AbstractValidator<UpdateCouponTemplateCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public UpdateCouponTemplateValidator()
+        {
+            RuleFor(x => x.TemplateId).GreaterThan(0).WithMessage("券模板信息不正确");
+            Include(new CouponTemplateRules<UpdateCouponTemplateCommand>());
+        }
+    }
+
     /// <summary>删除券模板校验。</summary>
     private sealed class DeleteCouponTemplateValidator : AbstractValidator<DeleteCouponTemplateCommand>
     {
@@ -305,12 +482,11 @@ public static class AdminCouponValidators
     }
 
     /// <summary>编辑券活动校验。</summary>
-    private sealed class UpdateCouponActivityValidator : AbstractValidator<UpdateCouponActivityCommand>
+    private sealed class CouponActivityRules<T> : AbstractValidator<T> where T : ICouponActivitySpec
     {
-        /// <summary>构造校验器。</summary>
-        public UpdateCouponActivityValidator()
+        /// <summary>构造规则集。</summary>
+        public CouponActivityRules()
         {
-            RuleFor(x => x.ActivityId).GreaterThan(0).WithMessage("券活动信息不正确");
             RuleFor(x => x.ActivityName).NotEmpty().Length(2, 128).WithMessage("活动名必须为 2-128 个字符");
             RuleFor(x => x.TemplateId).GreaterThan(0).WithMessage("必须选择券模板");
             RuleFor(x => x.ClaimQuantity).GreaterThanOrEqualTo(1).WithMessage("发放量必须大于等于 1");
@@ -321,6 +497,25 @@ public static class AdminCouponValidators
             RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 启用 或 2 停用");
             RuleFor(x => x.ClaimEndTime)
                 .GreaterThan(x => x.ClaimStartTime).WithMessage("领取结束时间必须晚于开始时间");
+        }
+    }
+
+    /// <summary>新建券活动校验。</summary>
+    private sealed class CreateCouponActivityValidator : AbstractValidator<CreateCouponActivityCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public CreateCouponActivityValidator()
+            => Include(new CouponActivityRules<CreateCouponActivityCommand>());
+    }
+
+    /// <summary>编辑券活动校验。</summary>
+    private sealed class UpdateCouponActivityValidator : AbstractValidator<UpdateCouponActivityCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public UpdateCouponActivityValidator()
+        {
+            RuleFor(x => x.ActivityId).GreaterThan(0).WithMessage("券活动信息不正确");
+            Include(new CouponActivityRules<UpdateCouponActivityCommand>());
         }
     }
 
