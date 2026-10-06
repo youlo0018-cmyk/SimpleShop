@@ -9,6 +9,7 @@
 [CmdletBinding()]
 param(
     [string]$CustomerService = 'http://127.0.0.1:5280',
+[string]$PointService = 'http://127.0.0.1:5082',
     [switch]$StopOnFail
 )
 
@@ -61,6 +62,20 @@ Invoke-Case 'API-AUT-010' '注册成功返回令牌' {
     $r = Invoke-RestMethod "$CustomerService/customers/Register" -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 20
     $script:customerId = $r.data.customerId
     return $r.success -and ($r.data.customerId -ne '0') -and ($r.data.token.Length -gt 50)
+}
+
+Invoke-Case 'API-AUT-010b' '🔴 注册赠送 100 积分真的发到账（BUSINESS 13.2）' {
+    # 🔴 这条在修之前是**红的**：CustomerService 注册的是
+    # UnavailablePointGrantClient —— 一个永远返回 false、只打一行日志的占位实现。
+    # 契约、调用点、返回值、日志全都在，唯独积分是假的：
+    # 实测注册后 available=0、totalEarned=0，而规格要求 +100。
+    #
+    # 占位实现最坏的地方正是「看起来已经接好了」——单看代码很难发现，
+    # 只有把余额查出来才知道。
+    $bal = (Invoke-RestMethod "$PointService/points/Balance?customerId=$($script:customerId)" -TimeoutSec 20).data
+    Write-Host ("        注册后 available={0} totalEarned={1}" -f $bal.available, $bal.totalEarned) -ForegroundColor DarkGray
+
+    return $bal.totalEarned -eq 100 -and $bal.available -eq 100
 }
 
 Invoke-Case 'API-AUT-011' '同一登录名重复注册被拒' {

@@ -6,6 +6,7 @@ using CustomerService.Application.Features.Customer.Register;
 using CustomerService.Infrastructure;
 using FluentValidation;
 using MediatR;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CustomerService.Api;
@@ -16,8 +17,10 @@ public static class ApiServiceCollectionExtensions
 {
     /// <summary>注册 MediatR、Validator 与基础设施。</summary>
     /// <param name="services">服务集合。</param>
+    /// <param name="configuration">应用配置（基础设施要读下游服务地址）。</param>
     /// <returns>原集合，便于链式调用。</returns>
-    public static IServiceCollection AddAppServices(this IServiceCollection services)
+    public static IServiceCollection AddAppServices(
+        this IServiceCollection services, IConfiguration configuration)
     {
         // 必须扫 Application 程序集：Handler 与 Validator 都在那里。
         // 之前用 Assembly.GetExecutingAssembly()（= Api 程序集），
@@ -35,7 +38,7 @@ public static class ApiServiceCollectionExtensions
         services.AddScoped<IValidator<LoginCommand>, LoginValidator>();
         CustomerAdminValidators.AddCustomerAdminValidators(services);
 
-        services.AddInfrastructure();
+        services.AddInfrastructure(configuration);
         return services;
     }
 }

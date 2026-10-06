@@ -23,17 +23,21 @@ public sealed class PublishEvaluateHandler
 {
     private readonly IEvaluateRepository _repo;
     private readonly IOrderPort _orders;
+    private readonly IPointGrantClient _points;
     private readonly ILogger<PublishEvaluateHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="repo">评价仓储。</param>
     /// <param name="orders">订单服务端口。</param>
+    /// <param name="points">积分端口，发表首评赠送 20 积分（BUSINESS.md 13.2）。</param>
     /// <param name="logger">日志器。</param>
     public PublishEvaluateHandler(
-        IEvaluateRepository repo, IOrderPort orders, ILogger<PublishEvaluateHandler> logger)
+        IEvaluateRepository repo, IOrderPort orders,
+        IPointGrantClient points, ILogger<PublishEvaluateHandler> logger)
     {
         _repo = repo;
         _orders = orders;
+        _points = points;
         _logger = logger;
     }
 
@@ -102,6 +106,21 @@ public sealed class PublishEvaluateHandler
             }).ToList();
 
             var evaluateId = await _repo.InsertWithRefsAsync(evaluate, refs, ct).ConfigureAwait(false);
+
+            // 发表首评赠送 20 积分（BUSINESS.md 13.2）。
+            //
+            // 幂等键用评价 Id：同一评价重复投递 / 重试只会发一次。
+            // 发放失败**不让评价失败** —— 评价已经落库了，为了 20 积分把它回滚，
+            // 用户看到的是「评价失败」却不知道为什么。记日志、由补偿任务补发。
+            try
+            {
+                await _points.TryGrantEvaluateBonusAsync(customerId, evaluateId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "评价 {EvaluateId} 已发表，但赠送积分失败，需人工补发", evaluateId);
+            }
 
             return ApiResults.Ok(
                 new PublishEvaluateResult(evaluateId, request.SpuId, refs.Select(a => a.SkuId).ToList()),

@@ -42,7 +42,7 @@ builder.Services.AddOptions<JwtOptions>().Bind(builder.Configuration.GetSection(
 builder.Services.AddAppFreeSql(
     builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()!.Default,
     typeof(CustomerService.Domain.Entities.Customer).Assembly);
-builder.Services.AddAppServices();
+builder.Services.AddAppServices(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 

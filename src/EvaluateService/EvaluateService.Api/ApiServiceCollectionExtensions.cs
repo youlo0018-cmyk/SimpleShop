@@ -2,6 +2,7 @@ using Collaboration.Domain.MediatR;
 using EvaluateService.Application.Features.Evaluate;
 using EvaluateService.Application.Services;
 using EvaluateService.Infrastructure;
+using EvaluateService.Infrastructure.Services;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.Configuration;
@@ -31,6 +32,7 @@ public static class ApiServiceCollectionExtensions
 
         AddOrderPort(services, configuration);
         AddProductPort(services, configuration);
+        AddPointPort(services, configuration);
 
         services.AddInfrastructure();
         return services;
@@ -73,6 +75,31 @@ public static class ApiServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(60);
+        });
+    }
+
+    /// <summary>注册积分端口：发表首评要赠送 20 积分（BUSINESS.md 13.2）。</summary>
+    /// <param name="services">服务集合。</param>
+    /// <param name="configuration">应用配置。</param>
+    /// <remarks>
+    /// fail-fast：缺地址时宁可启动就报错。这条途径此前**完全没有实现**
+    /// （<c>evaluate.created</c> 只在 EventTopics 里声明过，没人发布），
+    /// 而「静默不发积分」要到用户投诉才会被发现，且看起来像是积分服务的锅。
+    /// </remarks>
+    private static void AddPointPort(IServiceCollection services, IConfiguration configuration)
+    {
+        var url = configuration["Services:PointServiceBaseUrl"];
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException(
+                "缺少配置 Services:PointServiceBaseUrl。发表首评要赠送 20 积分（BUSINESS.md 13.2），"
+                + "没有地址就发不出去，且失败是静默的。");
+        }
+
+        services.AddHttpClient<IPointGrantClient, HttpPointGrantClient>(client =>
+        {
+            client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
         });
     }
 }

@@ -18,6 +18,7 @@ param(
     [string]$Order = 'http://127.0.0.1:5064',
     # 物流公司字典在商品服务里（DATA_SPEC 5.23）：发货现在必填物流公司与运单号。
     [string]$Product = 'http://127.0.0.1:5058',
+[string]$PointService = 'http://127.0.0.1:5082',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
@@ -209,6 +210,10 @@ Invoke-Case 'API-EVL-002' '可评价商品：两个规格合并成一个 SPU，�
 Write-Host "`n=== EVL 发表首评（SPU 级 + SKU 标记自动推导）===" -ForegroundColor Cyan
 
 Invoke-Case 'API-EVL-010' '🔴 P0 发表成功：服务端自动标记该订单买的**全部** SKU' {
+    # 先记下发表前的积分：下一条用例要断言「发表首评 +20」（BUSINESS 13.2）
+    $script:pointsBeforeEval = (Invoke-RestMethod `
+        "$PointService/points/Balance?customerId=$($script:customerId)" -TimeoutSec 20).data.totalEarned
+
     $r = EvalPost 'evaluates/Publish' @{
         customerId = $script:customerId; orderNo = $script:orderNo; spuId = $script:productId
         starScore = 5; content = '质量不错'; images = @('https://cdn.example.com/1.jpg')
@@ -223,6 +228,21 @@ Invoke-Case 'API-EVL-010' '🔴 P0 发表成功：服务端自动标记该订单
     return $script:evaluateId -gt 0 -and $script:markedSkuIds.Count -eq 2 `
         -and ($script:markedSkuIds -contains $script:skuIds[0]) `
         -and ($script:markedSkuIds -contains $script:skuIds[1])
+}
+
+Invoke-Case 'API-EVL-010b' '🔴 发表首评赠送 20 积分真的发到账（BUSINESS 13.2）' {
+    # 🔴 这条在修之前是**红的**：BUSINESS.md 13.2 写着「发表首评 +20」、
+    # 20.1 写着由 PointService 消费 evaluate.created，但 evaluate.created
+    # 只在 EventTopics 里声明过、没有任何地方发布，评价服务里也没有发积分的代码。
+    # 实测发表首评后 totalEarned 一点没变。
+    Start-Sleep -Seconds 1
+    $after = (Invoke-RestMethod "$PointService/points/Balance?customerId=$($script:customerId)" -TimeoutSec 20).data
+    $gain = [long]$after.totalEarned - [long]$script:pointsBeforeEval
+
+    Write-Host ("        发表首评前 totalEarned={0} → 后 {1}（+{2}）" -f `
+        $script:pointsBeforeEval, $after.totalEarned, $gain) -ForegroundColor DarkGray
+
+    return $gain -eq 20
 }
 
 Invoke-Case 'API-EVL-011' '🔴 P0 同一订单同一 SPU 重复评价被拒（规格 14.1 只能一条首评）' {
