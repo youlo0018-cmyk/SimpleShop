@@ -47,7 +47,12 @@ public class CouponTemplate : AdminEntityBase
     [Column(Name = "per_user_limit")]
     public int PerUserLimit { get; set; } = 1;
 
-    /// <summary>每单限用。订单级只能一张，默认 1。</summary>
+    /// <summary>
+    /// 每单限用，<b>固定为 1</b>（BUSINESS.md 12.1）。
+    /// 底层由「一个订单号只能有一条券占用记录」天然保证。
+    /// 字段保留是为了列表与详情有这一列可显示，但**不接受其它取值** ——
+    /// 一个配了却不生效的旋钮会让人误以为配置起作用了。
+    /// </summary>
     [Column(Name = "per_order_limit")]
     public int PerOrderLimit { get; set; } = 1;
 

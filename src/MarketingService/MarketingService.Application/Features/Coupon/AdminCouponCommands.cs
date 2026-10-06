@@ -32,7 +32,7 @@ public record QueryCouponTemplatesCommand(
 /// <param name="ValidDays">领取后有效天数。</param>
 /// <param name="TotalQuantity">总发行池子，0 表示不限量。</param>
 /// <param name="PerUserLimit">每人限领。</param>
-/// <param name="PerOrderLimit">每单限用。</param>
+/// <param name="PerOrderLimit">每单限用，<b>只能填 1</b>（BUSINESS.md 12.1 写死的不变量）。</param>
 /// <param name="SortOrder">排序，小的在前。</param>
 /// <param name="Status">状态。1 启用 / 2 停用。</param>
 public record UpdateCouponTemplateCommand(
@@ -133,7 +133,7 @@ public record QueryMyCouponsCommand(
 /// <param name="TotalQuantity">总发行池子，0 表示不限量。</param>
 /// <param name="IssuedQuantity">累计已发放数。</param>
 /// <param name="PerUserLimit">每人限领。</param>
-/// <param name="PerOrderLimit">每单限用。</param>
+/// <param name="PerOrderLimit">每单限用，固定为 1。</param>
 /// <param name="SortOrder">排序值。</param>
 /// <param name="Status">状态值。</param>
 /// <param name="StatusName">状态中文名。</param>
@@ -243,7 +243,15 @@ public static class AdminCouponValidators
             RuleFor(x => x.ValidDays).InclusiveBetween(1, 3650).WithMessage("有效期必须为 1 ~ 3650 天");
             RuleFor(x => x.TotalQuantity).GreaterThanOrEqualTo(0).WithMessage("发行量不能为负数");
             RuleFor(x => x.PerUserLimit).InclusiveBetween(1, 100).WithMessage("每人限领必须为 1 ~ 100");
-            RuleFor(x => x.PerOrderLimit).InclusiveBetween(1, 10).WithMessage("每单限用必须为 1 ~ 10");
+
+            // 每单限用**只能是 1**，这是 BUSINESS.md 12.1 写死的不变量，
+            // 底层由「一个订单号只能有一条券占用记录」天然保证（Occupancy 按 OrderNo 唯一）。
+            //
+            // 之前这里是 1~10：运营填了 5，后台正常保存、列表也照常显示 5，
+            // 但下单时无论如何只能用掉一张 —— 一个**配了却完全不生效**的旋钮，
+            // 比没有这个旋钮更糟，因为它让人以为配置生效了。
+            RuleFor(x => x.PerOrderLimit).Equal(1)
+                .WithMessage("每单限用固定为 1 张（订单一次只能使用一张券），不可修改");
             RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0).WithMessage("排序不能为负数");
             RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 启用 或 2 停用");
 

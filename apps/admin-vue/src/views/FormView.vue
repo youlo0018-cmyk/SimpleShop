@@ -28,7 +28,7 @@
               :placeholder="f.placeholder"
               :multiple="f.multiple"
               :filterable="f.filterable"
-              :disabled="isEdit && f.readonlyInEdit"
+              :disabled="isLocked(f)"
               clearable
             >
               <el-option
@@ -42,7 +42,7 @@
             <el-color-picker
               v-else-if="f.type === 'color'"
               v-model="model[f.field]"
-              :disabled="isEdit && f.readonlyInEdit"
+              :disabled="isLocked(f)"
             />
 
             <el-input
@@ -52,7 +52,7 @@
               :rows="f.rows || 4"
               class="form__control"
               :placeholder="f.placeholder"
-              :disabled="isEdit && f.readonlyInEdit"
+              :disabled="isLocked(f)"
             />
 
             <el-input
@@ -61,7 +61,7 @@
               type="number"
               class="form__control"
               :placeholder="f.placeholder"
-              :disabled="isEdit && f.readonlyInEdit"
+              :disabled="isLocked(f)"
             />
 
             <el-date-picker
@@ -71,7 +71,7 @@
               class="form__control"
               placeholder="选择日期时间"
               value-format="YYYY-MM-DDTHH:mm:ss"
-              :disabled="isEdit && f.readonlyInEdit"
+              :disabled="isLocked(f)"
             />
 
             <el-input
@@ -81,7 +81,7 @@
               :type="f.secret ? 'password' : 'text'"
               :show-password="!!f.secret"
               :placeholder="f.placeholder"
-              :disabled="isEdit && f.readonlyInEdit"
+              :disabled="isLocked(f)"
             />
 
             <p v-if="f.help" class="form__help">{{ f.help }}</p>
@@ -139,6 +139,20 @@ const router = useRouter();
 const config = computed(() => props.config);
 const entityId = computed(() => props.id || route.params.id || 0);
 const isEdit = computed(() => String(entityId.value) !== '0' && String(entityId.value).length > 0);
+
+/**
+ * 这个字段当前是否不可编辑。
+ *
+ * `readonlyInEdit` 只在编辑态锁定（编码这类「创建后不可改」的字段）；
+ * `disabled` 则新建与编辑都锁定 —— 用于**根本没有第二个合法取值**的字段，
+ * 比如券模板的「每单限用」按规格恒为 1。
+ *
+ * 之前只有前者，于是那种字段在新建时仍然能填：填了保存，
+ * 后端也收，但实际不生效 —— 一个配了却不生效的旋钮比没有旋钮更糟。
+ */
+function isLocked(f: any): boolean {
+  return Boolean(f.disabled) || (isEdit.value && Boolean(f.readonlyInEdit));
+}
 
 const loading = ref(false);
 const saving = ref(false);

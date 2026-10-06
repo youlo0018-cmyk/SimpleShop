@@ -176,7 +176,9 @@ export const FORMS = {
       { field: 'validDays', label: '领取后有效天数', type: 'number', required: true, min: 1, max: 3650, default: 30 },
       { field: 'totalQuantity', label: '总发行量', type: 'number', min: 0, default: 0, help: '0 表示不限量' },
       { field: 'perUserLimit', label: '每人限领', type: 'number', min: 1, max: 100, default: 1 },
-      { field: 'perOrderLimit', label: '每单限用', type: 'number', min: 1, default: 1, help: '订单级只能使用一张券，通常保持 1' },
+    // 固定 1，不给改：订单一次只能使用一张券（BUSINESS.md 12.1），
+    // 底层按订单号唯一占用天然保证。做成可编辑只会让人以为配大了能多减几张。
+    { field: 'perOrderLimit', label: '每单限用', type: 'number', min: 1, max: 1, default: 1, readonlyInEdit: true, disabled: true, help: '固定 1 张，一笔订单只能用一张券' },
       { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0, help: '数字越小越靠前' },
       { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
     ],
