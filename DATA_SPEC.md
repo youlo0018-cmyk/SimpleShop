@@ -475,7 +475,7 @@ workerId 空间只有 64 个，开发机一天重启十几次服务，跑满 64 
 | 商品列表 | `BrandName`、`CategoryName`、`MinPrice`、`MaxPrice`、`FinalPrice`（到手价）、`ActivityTagText`、`CouponTagText`、`EvaluationScore`、`EvaluationCount` |
 | 退款单 | `OrderNo`、`PlatformName`、`MerchantName`、`CustomerName`、逐行 `ProductName` |
 | 评价列表 | `ProductName`（SPU 名）、`SkuSpecTextList`、`ReplyContent`、`IsAnonymous` |
-| 积分流水 | `OrderNo`、`BizTypeText` |
+| 积分流水 | `BizNo`（业务号，订单积分就是订单号；签到是日期）+ `ActionName`（动作中文名）。C 端与后台**都要带文案**：只给 `action` 编码的话小程序得自己写对照表（4.5 禁止），后端加新动作就有一处漏改 |
 | 秒杀管理 | `SessionName`、`ProductName`、`SkuSpecText`、`SoldCount` |
 | 工作台报表 | 每个指标带 `Label` 与 `Value`，**前端不写死文案** |
 | 日志列表 | `OperatorName`、`ModuleText` |

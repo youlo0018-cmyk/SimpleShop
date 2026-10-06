@@ -315,7 +315,8 @@ public sealed class QueryPointRecordsHandler : IRequestHandler<QueryPointRecords
             customerId, Math.Max(1, request.Page), Math.Clamp(request.PageSize, 1, 100), ct);
 
         var list = items.Select(a => new PointRecordItem(
-            a.Id.ToString(), a.BizNo, a.Action, a.Quantity,
+            // 动作中文名由后端下发（DATA_SPEC 4.5），小程序不维护对照表
+            a.Id.ToString(), a.BizNo, a.Action, PointActions.NameOf(a.Action), a.Quantity,
             a.BeforeAvailable, a.AfterAvailable, a.BeforeFrozen, a.AfterFrozen,
             a.Remark, a.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"))).ToList();
 

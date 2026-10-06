@@ -181,6 +181,23 @@ Invoke-Case 'API-PNT-060' '流水可查，每个动作都有变动前后余额' 
     return $r.success -and $r.data.Count -ge 8
 }
 
+Invoke-Case 'API-PNT-063' '🔴 C 端流水带**动作中文名**（枚举文案由后端下发，前端不硬编码）' {
+    # DATA_SPEC 4.3 / 4.5：流水要有业务号 + 动作文案。只给 action 编码的话，
+    # 小程序只能自己写一张对照表，后端加了新动作就会有一处漏改、界面显示裸字符串。
+    $r = Invoke-RestMethod "$PointService/points/Records?customerId=$($script:alice)&page=1&pageSize=50" -TimeoutSec 30
+    $rows = @($r.data)
+    if ($rows.Count -eq 0) { return $false }
+
+    # 每一条都要有文案，且不能等于原始编码
+    $missing = @($rows | Where-Object { [string]::IsNullOrWhiteSpace($_.actionName) })
+    $raw = @($rows | Where-Object { $_.actionName -eq $_.action })
+
+    Write-Host ("        首条：动作 = {0} → {1}；业务号 = {2}" -f `
+        $rows[0].action, $rows[0].actionName, $rows[0].bizNo) -ForegroundColor DarkGray
+
+    return $missing.Count -eq 0 -and $raw.Count -eq 0
+}
+
 Invoke-Case 'API-PNT-061' '🔴 幂等的重复请求不会在流水里留下重复记录' {
     $r = Invoke-RestMethod "$PointService/points/Records?customerId=$($script:alice)&page=1&pageSize=50" -TimeoutSec 30
     $locks = @($r.data | Where-Object { $_.action -eq 'lock' -and $_.bizNo -eq 'ORD-A' })

@@ -114,8 +114,22 @@ public sealed record PointSignInResult(
     long CustomerId, int Streak, long Reward, long Available, bool AlreadySigned, string Message);
 
 /// <summary>积分流水项。</summary>
+/// <param name="Id">流水 Id。</param>
+/// <param name="BizNo">业务号（订单号 / 签到日期等），前端直接展示。</param>
+/// <param name="Action">动作编码，见 <c>PointActions</c>。</param>
+/// <param name="ActionName">
+/// 动作中文名。**必须下发**：DATA_SPEC 4.5 要求「枚举文案由后端下发，前端禁止硬编码」，
+/// 只给编码的话小程序只能自己写一张映射表，加了新动作就有一处漏改。
+/// </param>
+/// <param name="Quantity">变动数量（正负）。</param>
+/// <param name="AvailableBefore">变动前可用积分。</param>
+/// <param name="AvailableAfter">变动后可用积分。</param>
+/// <param name="FrozenBefore">变动前冻结积分。</param>
+/// <param name="FrozenAfter">变动后冻结积分。</param>
+/// <param name="Remark">备注。</param>
+/// <param name="CreatedAt">发生时间。</param>
 public record PointRecordItem(
-    string Id, string BizNo, string Action, long Quantity,
+    string Id, string BizNo, string Action, string ActionName, long Quantity,
     long AvailableBefore, long AvailableAfter, long FrozenBefore, long FrozenAfter,
     string Remark, string CreatedAt);
 
