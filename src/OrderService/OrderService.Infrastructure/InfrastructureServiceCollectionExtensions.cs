@@ -75,6 +75,11 @@ public static class InfrastructureServiceCollectionExtensions
         AddDownstream<ILogisticsCompanyPort, HttpLogisticsCompanyPort>(
             services, configuration, "Services:ProductServiceBaseUrl", "商品服务");
 
+        // 运费是平台级配置（BUSINESS.md 6.2），配置在商户平台服务里，算账在订单服务。
+        // 少这个端口的话运费就只能由客户端上报，平台把运费配成 10 元也一分钱收不到。
+        AddDownstream<IPlatformPort, HttpPlatformPort>(
+            services, configuration, "Services:MerchantPlatformServiceBaseUrl", "商户平台服务");
+
         return services;
     }
 

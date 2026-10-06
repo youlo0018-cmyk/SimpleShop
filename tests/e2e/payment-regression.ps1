@@ -129,12 +129,23 @@ function Get-ErrText($Resp) {
     return (@($errs.PSObject.Properties | ForEach-Object { $_.Value }) -join ' ')
 }
 
-# 建一笔待支付订单。$DeliveryType 决定后面的退款窗口判定：
-# 1 实物快递（全程可退）/ 2 虚拟（仅 20、30 可退）
-function New-PendingOrder([string]$Tag, [int]$DeliveryType = 1, [decimal]$Freight = 0) {
+<#
+.SYNOPSIS
+    建一笔待支付订单。
+.DESCRIPTION
+    $DeliveryType 决定后面的退款窗口判定：1 实物快递（全程可退）/ 2 虚拟（仅 20、30 可退）。
+
+    <b>$Freight 只是照抄进请求体，用来证明它会被忽略</b> —— 运费现在由服务端按平台配置算
+    （order-regression 的 ORD-131~136 才是验证运费算对了的地方）。
+    真要一笔**确实带运费**的订单，用 $PlatformId / $SkuId 指到「运费平台」那套商品上。
+#>
+function New-PendingOrder([string]$Tag, [int]$DeliveryType = 1, [decimal]$Freight = 0,
+        [long]$PlatformId = 0, [long]$SkuId = 0, [long]$SpuId = 0) {
+    if ($SkuId -le 0) { $SkuId = $script:skuIds[0] }
+    if ($SpuId -le 0) { $SpuId = $script:productId }
     $line = @{
-        spuId = $script:productId
-        skuId = $script:skuIds[0]
+        spuId = $SpuId
+        skuId = $SkuId
         quantity = 2
         unitPrice = $script:price
         productName = "支付商品$($script:suffix)"
@@ -143,7 +154,7 @@ function New-PendingOrder([string]$Tag, [int]$DeliveryType = 1, [decimal]$Freigh
     }
     $body = @{
         customerId = $script:customerId
-        platformId = 0
+        platformId = $PlatformId
         merchantId = 0
         idempotencyKey = "PAY-$Tag-$($script:suffix)"
         receiverName = '张三'
@@ -248,11 +259,64 @@ Invoke-Case 'API-PAY-023' '已支付的订单不能再模拟支付（状态不�
 
 Write-Host "`n=== PAY 退款：窗口 + 累计限额 + 两段式审批 ===" -ForegroundColor Cyan
 
+Invoke-Case 'API-PAY-029' '建一个配了 10 元运费的平台 + 其下的实物快递商品' {
+    # 「整单退款含运费」这条断言需要一笔**确实带运费**的订单。
+    # 运费改由服务端按平台配置算之后，光在请求体里写 freight = 10 是没用的 ——
+    # 那正是被忽略的那个字段。这里造一个真正配了运费的平台来产生它。
+    $code = -join ((1..6) | ForEach-Object { [char](65 + (Get-Random -Max 26)) })
+    $plat = Invoke-RestMethod "$Gateway/gateway/platforms/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{
+            platformName = "退运费$($script:suffix)"; mallName = "退运费商城$($script:suffix)"
+            platformCode = $code; contactName = '测试'; contactPhone = '13800000000'
+            shippingFee = 10; freeShippingThreshold = 0; status = 1
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30
+    if (-not $plat.success) { Write-Host ("        建平台失败: " + $plat.message) -ForegroundColor DarkYellow; return $false }
+    $script:feePlatformId = [long]$plat.data
+
+    $f1 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = 0; categoryName = "退运费$($script:suffix)"; platformId = $script:feePlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $f2 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $f1; categoryName = "退运费$($script:suffix)"; platformId = $script:feePlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $f3 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $f2; categoryName = "退运费$($script:suffix)"; platformId = $script:feePlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+
+    $newId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
+        -Body (@{
+            productId = 0; spuName = "退运费商品$($script:suffix)"; categoryId = $f3
+            platformId = $script:feePlatformId
+            deliveryType = 1; mainImage = 'https://cdn.example.com/m.png'
+            specs = @(@{ specName = '颜色'; specValues = @('红') })
+            skus = @(@{ skuCode = "PAY-F$($script:suffix)"; specValues = @('红'); price = $script:price; stock = 200; status = 1 })
+        } | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $newId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $newId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $d = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$newId" -Headers $script:adminHeaders -TimeoutSec 30
+    $script:feeProductId = $newId
+    $script:feeSkuId = [long](@($d.data.skus | Where-Object { $_.skuCode -eq "PAY-F$($script:suffix)" })[0].id)
+    $script:feeCategoryIds = @($f1, $f2, $f3)
+    return $script:feeSkuId -gt 0
+}
+
 Invoke-Case 'API-PAY-030' '准备：一张已支付、状态 20 待发货的实物订单（含 10 元运费）' {
-    $o = New-PendingOrder 'B' -DeliveryType 1 -Freight 10
+    $o = New-PendingOrder 'B' -DeliveryType 1 -Freight 10 `
+        -PlatformId $script:feePlatformId -SkuId $script:feeSkuId -SpuId $script:feeProductId
     $script:orderB = $o.orderNo
     PayPost '/payments/Simulate' @{ orderNo = $script:orderB; success = $true } | Out-Null
-    return (Get-OrderStatus $script:orderB) -eq 20
+    # 顺手确认这笔单真的带上了 10 元运费：否则下面「整单退含运费」会在运费为 0 的单上
+    # 空跑通过，看起来验证了规则，其实什么都没验证。
+    $det = (Invoke-RestMethod "$Order/orders/Detail?orderNo=$($script:orderB)&customerId=$($script:customerId)" `
+        -TimeoutSec 30).data
+    Write-Host ("        实付={0} 运费={1} 商品总额={2}" -f $det.payableAmount, $det.freight, $det.goodsTotal) -ForegroundColor DarkGray
+    return (Get-OrderStatus $script:orderB) -eq 20 -and $det.freight -eq 10.00
 }
 
 Invoke-Case 'API-PAY-031' '🔴 P0 退款窗口：实物订单 20 待发货**可退**' {
@@ -381,6 +445,23 @@ Invoke-Case 'API-PAY-090' '删商品 → 删分类' {
     foreach ($id in [array]($script:categoryIds | Sort-Object -Descending)) {
         Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:adminHeaders `
             -Body (@{ categoryId = $id } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    # 运费平台同样要删：它配了 10 元运费，留着会让后面别的脚本凭空多收一笔运费，
+    # 而报错会指向完全无关的用例。
+    if ($script:feeProductId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:feeProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 60 | Out-Null
+    }
+    foreach ($id in [array]($script:feeCategoryIds | Sort-Object -Descending)) {
+        Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ categoryId = $id } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    if ($script:feePlatformId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/platforms/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ platformId = $script:feePlatformId } | ConvertTo-Json) `
             -ContentType 'application/json' -TimeoutSec 30 | Out-Null
     }
     return $true

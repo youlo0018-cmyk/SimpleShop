@@ -1135,6 +1135,196 @@ Invoke-Case 'API-ORD-113' '🔴 orderId <= 0 被校验挡住（不查库直接�
     return (-not $r.success) -and ($r.errors.PSObject.Properties.Name -contains 'OrderId')
 }
 
+Write-Host "`n=== ORD 运费：服务端按平台配置算，不采信客户端 ===" -ForegroundColor Cyan
+
+$script:feePlatformId = 0
+$script:feeProductIds = @{}
+
+Invoke-Case 'API-ORD-130' '建平台（运费 10 / 包邮门槛 100）并上架四种配送方式的商品' {
+    # 运费是**平台级配置**（BUSINESS.md 6.2），所以要先有一个配了运费的平台。
+    # 平台自营（platformId = 0）没有对应的 platform 行，拿不到运费配置，
+    # 因此这里单独建一个平台来验证「配置真的生效」，而不是复用自营那套。
+    $code = -join ((1..6) | ForEach-Object { [char](65 + (Get-Random -Max 26)) })
+    $plat = Invoke-RestMethod "$Gateway/gateway/platforms/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{
+            platformName = "运费$($script:suffix)"; mallName = "运费商城$($script:suffix)"
+            platformCode = $code; contactName = '测试'; contactPhone = '13800000000'
+            shippingFee = 10; freeShippingThreshold = 100; status = 1
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30
+    if (-not $plat.success) { Write-Host ("        建平台失败: " + $plat.message) -ForegroundColor DarkYellow; return $false }
+    $script:feePlatformId = [long]$plat.data
+
+    # 分类要挂在同一个平台下：跨平台引用分类会让「运费按哪个平台算」这件事失去意义。
+    $p1 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = 0; categoryName = "运费$($script:suffix)"; platformId = $script:feePlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $p2 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $p1; categoryName = "运费$($script:suffix)"; platformId = $script:feePlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $p3 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $p2; categoryName = "运费$($script:suffix)"; platformId = $script:feePlatformId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+
+    # 四种组合：快递 / 虚拟 / 自提，以及一件就够包邮的高价快递商品。
+    # 配送方式挂在 SPU 上（BUSINESS.md 6.1），所以每个都要单独建一个商品。
+    $specs = @(
+        @{ key = 'express';   deliveryType = 1; price = 25.50; qty = 200; code = "FR-E$($script:suffix)" }
+        @{ key = 'virtual';   deliveryType = 2; price = 25.50; qty = 200; code = "FR-V$($script:suffix)" }
+        @{ key = 'pickup';    deliveryType = 3; price = 25.50; qty = 200; code = "FR-P$($script:suffix)" }
+        @{ key = 'expressBig'; deliveryType = 1; price = 120.00; qty = 20; code = "FR-B$($script:suffix)" }
+    )
+    foreach ($s in $specs) {
+        # 刻意不叫 $pid：PowerShell 的 $PID 是只读的内置变量（当前进程 Id），
+        # 给它赋值会直接抛「Cannot overwrite variable PID」，而且报错完全看不出是命名撞了。
+        $newProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
+            -Body (@{
+                productId = 0; spuName = "运费$($s.key)$($script:suffix)"; categoryId = $p3
+                platformId = $script:feePlatformId
+                deliveryType = $s.deliveryType; mainImage = 'https://cdn.example.com/m.png'
+                specs = @(@{ specName = '颜色'; specValues = @('红') })
+                skus = @(@{ skuCode = $s.code; specValues = @('红'); price = $s.price; stock = $s.qty; status = 1 })
+            } | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+        # 与 API-ORD-000 同一个道理：必须审核通过 + 上架，否则下单链路会拒单。
+        Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $newProductId; auditStatus = 20 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $newProductId; status = 1 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+        $d = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$newProductId" -Headers $script:adminHeaders -TimeoutSec 30
+        $script:feeProductIds[$s.key] = @{
+            productId = $newProductId
+            skuId = [long](@($d.data.skus | Where-Object { $_.skuCode -eq $s.code })[0].id)
+            price = $s.price
+            deliveryType = $s.deliveryType
+        }
+    }
+    $script:feeCategoryIds = @($p1, $p2, $p3)
+    return $script:feePlatformId -gt 0 -and $script:feeProductIds.Count -eq 4
+}
+
+<#
+.SYNOPSIS
+    用运费平台的商品下一单。
+.DESCRIPTION
+    <b>clientFreight</b> 就是要故意写进请求体的运费值 ——
+    本组用例的全部意义就是证明它被**忽略**，所以必须能自由地传各种垃圾值。
+#>
+function New-FeeOrder([string]$Key, [string]$Tag, [decimal]$ClientFreight = 0, [int]$Qty = 2, [int]$ClaimedDeliveryType = 0) {
+    $p = $script:feeProductIds[$Key]
+    return OrderPost 'Create' @{
+        customerId = $script:customerId; platformId = $script:feePlatformId; merchantId = 0
+        idempotencyKey = (New-IdempotencyKey $Tag)
+        receiverName = '张三'; receiverPhone = '13800000000'; receiverAddress = '某地某小区 1 号楼 101'
+        lines = @(@{
+            spuId = [long]$p.productId; skuId = [long]$p.skuId; quantity = $Qty
+            unitPrice = [decimal]$p.price
+            productName = "运费商品$Key"; skuSpecText = '红'
+            deliveryType = if ($ClaimedDeliveryType -gt 0) { $ClaimedDeliveryType } else { [int]$p.deliveryType }
+        })
+        freight = $ClientFreight
+        remark = "运费$Tag"
+    }
+}
+
+Invoke-Case 'API-ORD-131' '🔴 P0 客户端报运费 0，服务端仍按平台配置收 10 元' {
+    $r = New-FeeOrder 'express' 'fee0' -ClientFreight 0
+    if (-not $r.success) { Write-Host ("        下单失败: " + $r.message) -ForegroundColor DarkYellow; return $false }
+    $script:feeOrderA = $r.data.orderNo
+    $d = Get-Order $r.data.orderNo
+
+    Write-Host ("        客户端报运费 0 → 订单运费={0} 实付={1}" -f $d.freight, $d.payableAmount) -ForegroundColor DarkGray
+
+    # 2 × 25.50 = 51.00，加运费 10 → 实付 61.00。
+    # 前端至今把 freight 硬编码成 0，采信它就等于平台运费永远收不到。
+    return $d.freight -eq 10.00 -and $d.payableAmount -eq 61.00
+}
+
+Invoke-Case 'API-ORD-132' '🔴 客户端报运费 9999 也无效（不能自己抬价）' {
+    $r = New-FeeOrder 'express' 'fee9999' -ClientFreight 9999
+    if (-not $r.success) { return $false }
+    $d = Get-Order $r.data.orderNo
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
+
+    # 运费既能压到 0（平台白送），也能抬到 9999（平台凭空收钱）。
+    # 金额字段由客户端说了算，从来都不是「算错」，是压根没算。
+    return $d.freight -eq 10.00
+}
+
+Invoke-Case 'API-ORD-133' '满额包邮：商品实付 120 ≥ 门槛 100 时免运费' {
+    $r = New-FeeOrder 'expressBig' 'feeFree' -ClientFreight 0 -Qty 1
+    if (-not $r.success) { Write-Host ("        下单失败: " + $r.message) -ForegroundColor DarkYellow; return $false }
+    $d = Get-Order $r.data.orderNo
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
+
+    return $d.freight -eq 0.00 -and $d.payableAmount -eq 120.00
+}
+
+Invoke-Case 'API-ORD-134' '🔴 虚拟商品不收运费（平台配了 10 元也不收）' {
+    $r = New-FeeOrder 'virtual' 'feeVirtual' -ClientFreight 0
+    if (-not $r.success) { Write-Host ("        下单失败: " + $r.message) -ForegroundColor DarkYellow; return $false }
+    $d = Get-Order $r.data.orderNo
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
+
+    # BUSINESS.md 6.2「只对实物快递收运费；虚拟商品与自提恒为 0」。
+    return $d.freight -eq 0.00 -and $d.payableAmount -eq 51.00
+}
+
+Invoke-Case 'API-ORD-135' '🔴 自提商品不收运费' {
+    $r = New-FeeOrder 'pickup' 'feePickup' -ClientFreight 0
+    if (-not $r.success) { Write-Host ("        下单失败: " + $r.message) -ForegroundColor DarkYellow; return $false }
+    $d = Get-Order $r.data.orderNo
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
+
+    return $d.freight -eq 0.00
+}
+
+Invoke-Case 'API-ORD-136' '🔴 把自提商品谎报成快递也收不到运费' {
+    # 配送方式决定要不要收运费，所以它和单价一样不能由客户端说了算：
+    # 谎报成快递能凭空多收 10 元，谎报成自提能白嫖免运费。
+    $r = New-FeeOrder 'pickup' 'feeSpoof' -ClientFreight 0 -ClaimedDeliveryType 1
+    if (-not $r.success) { Write-Host ("        下单失败: " + $r.message) -ForegroundColor DarkYellow; return $false }
+    $d = Get-Order $r.data.orderNo
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
+
+    return $d.freight -eq 0.00 -and $d.payableAmount -eq 51.00
+}
+
+Invoke-Case 'API-ORD-137' '运费与商品金额恒等式仍然成立：实付 = 商品总额 + 运费' {
+    $d = Get-Order $script:feeOrderA
+    return $d.payableAmount -eq ($d.goodsTotal + $d.freight)
+}
+
+Invoke-Case 'API-ORD-138' '取消运费单把库存还回去' {
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $script:feeOrderA } | Out-Null
+    return $true
+}
+
+Invoke-Case 'API-ORD-139' '清理运费测试的平台与商品' {
+    foreach ($k in $script:feeProductIds.Keys) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:feeProductIds[$k].productId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    # 分类与平台同样要删：运费活动的有效期可能很长，留着会让「平台运费」在别的
+    # 用例里继续生效，表现是别的单凭空多收一笔运费，而报错指向完全无关的用例。
+    foreach ($cid in @($script:feeCategoryIds | Sort-Object -Descending)) {
+        if ($cid -gt 0) {
+            Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:adminHeaders `
+                -Body (@{ categoryId = $cid } | ConvertTo-Json) `
+                -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        }
+    }
+    if ($script:feePlatformId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/platforms/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ platformId = $script:feePlatformId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    return $script:feeProductIds.Count -eq 4 -and $script:feePlatformId -gt 0
+}
+
 Write-Host "`n=== ORD 清理 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-ORD-120' '清理测试商品与分类' {

@@ -174,6 +174,10 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     $cfg['Services:OrderServiceBaseUrl']       = $serviceUrls['OrderService']
     $cfg['Services:PaymentServiceBaseUrl']     = $serviceUrls['PaymentService']
     $cfg['Services:EvaluateServiceBaseUrl']    = $serviceUrls['EvaluateService']
+    # 订单服务算运费要读平台级运费配置（BUSINESS.md 6.2），配置存在商户平台服务里。
+    # 少这一项时订单服务会 fail-fast 拒绝启动 —— 这是故意的：
+    # 宁可启动时立刻报错，也不要「起来了但运费恒为 0」，那种故障要到对账才发现。
+    $cfg['Services:MerchantPlatformServiceBaseUrl'] = $serviceUrls['MerchantPlatformService']
 
     # 自提取货码的 RSA 私钥路径。密钥文件由 ./scripts/generate-pickup-rsa.ps1 生成，
     # 不入库、不进发布包；这里只给路径。取货码 = 公钥加密后的订单号，

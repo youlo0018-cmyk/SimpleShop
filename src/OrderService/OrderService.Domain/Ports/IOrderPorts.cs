@@ -59,8 +59,51 @@ public interface IProductPort
 /// <param name="SpuApproved">所属 SPU 是否审核通过。</param>
 /// <param name="SpuOnShelf">所属 SPU 是否已上架。</param>
 /// <param name="MerchantId">归属商户 Id。</param>
+/// <param name="DeliveryType">
+/// 配送方式，挂在 SPU 上（BUSINESS.md 6.1）。1 实物快递 / 2 虚拟商品 / 3 实物自提。
+/// </param>
+/// <remarks>
+/// 带上配送方式是因为**运费只对「实物快递」收**（BUSINESS.md 6.2），
+/// 而配送方式此前同样由客户端上报：把自提商品报成快递就能凭空收一笔运费，
+/// 反过来把快递报成自提就能白嫖免运费。
+/// </remarks>
 public readonly record struct SkuPriceInfo(
-    long SkuId, decimal Price, bool Enabled, bool SpuApproved, bool SpuOnShelf, long MerchantId);
+    long SkuId, decimal Price, bool Enabled, bool SpuApproved, bool SpuOnShelf, long MerchantId,
+    int DeliveryType = DeliveryTypeIds.PhysicalExpress);
+
+/// <summary>平台端口。运费是平台级配置，算运费的职责在订单服务，配置本身归商户平台服务。</summary>
+public interface IPlatformPort
+{
+    /// <summary>取某平台的运费配置。</summary>
+    /// <param name="platformId">平台 Id；0 表示平台自营。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>平台运费与满额包邮门槛。</returns>
+    /// <remarks>
+    /// <para><b>运费必须由服务端算</b>。运费是订单金额的一部分，客户端报多少就是多少的话，
+    /// 小程序把 <c>freight</c> 硬编码成 0（当前前端正是如此），平台运费就一分钱都收不到 ——
+    /// 后台把运费配成 10 元，顾客结算时看到的仍然是 0。</para>
+    /// </remarks>
+    Task<ShippingConfig> GetShippingConfigAsync(long platformId, CancellationToken ct = default);
+}
+
+/// <summary>平台运费配置。</summary>
+/// <param name="ShippingFee">平台运费，仅对实物快递收取，两位小数。</param>
+/// <param name="FreeShippingThreshold">满额包邮门槛，按商品实付判定；0 表示不启用。</param>
+public readonly record struct ShippingConfig(decimal ShippingFee, decimal FreeShippingThreshold);
+
+/// <summary>配送方式取值。挂在 SPU 上，一个 SPU 只有一种（BUSINESS.md 6.1）。</summary>
+public static class DeliveryTypeIds
+{
+    /// <summary>实物快递：按平台配置收运费，商户手动发货并必填物流公司与运单号。</summary>
+    public const int PhysicalExpress = 1;
+
+    /// <summary>虚拟商品：运费恒为 0，商户手动点发货且不填任何物流信息。</summary>
+    public const int Virtual = 2;
+
+    /// <summary>实物自提：运费恒为 0，商户点备货完成，走取货码核销。</summary>
+    public const int SelfPickup = 3;
+}
+
 
 /// <summary>券端口。占券 / 核销 / 回退，与活动优惠（<see cref="IActivityPort"/>）分开。</summary>
 public interface ICouponPort

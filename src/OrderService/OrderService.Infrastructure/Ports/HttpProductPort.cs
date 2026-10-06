@@ -75,7 +75,7 @@ public sealed class HttpProductPort : IProductPort
         {
             result[a.SkuId] = new SkuPriceInfo(
                 a.SkuId, a.Price, a.SkuEnabled == 1,
-                a.SpuApproved, a.SpuOnShelf, a.MerchantId);
+                a.SpuApproved, a.SpuOnShelf, a.MerchantId, a.DeliveryType);
         }
 
         return result;
@@ -89,6 +89,7 @@ public sealed class HttpProductPort : IProductPort
     /// <param name="SpuApproved">SPU 是否审核通过。</param>
     /// <param name="SpuOnShelf">SPU 是否已上架。</param>
     /// <param name="MerchantId">归属商户 Id。</param>
+    /// <param name="DeliveryType">配送方式，挂在 SPU 上。</param>
     private sealed record SkuPricingResponse(
         [property: JsonPropertyName("skuId")] long SkuId,
         [property: JsonPropertyName("productId")] long ProductId,
@@ -96,5 +97,6 @@ public sealed class HttpProductPort : IProductPort
         [property: JsonPropertyName("skuEnabled")] int SkuEnabled,
         [property: JsonPropertyName("spuApproved")] bool SpuApproved,
         [property: JsonPropertyName("spuOnShelf")] bool SpuOnShelf,
-        [property: JsonPropertyName("merchantId")] long MerchantId);
+        [property: JsonPropertyName("merchantId")] long MerchantId,
+        [property: JsonPropertyName("deliveryType")] int DeliveryType);
 }

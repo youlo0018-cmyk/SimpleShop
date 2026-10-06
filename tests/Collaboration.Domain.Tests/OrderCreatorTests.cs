@@ -40,7 +40,8 @@ public class OrderCreatorTests
     // 换成假实现就等于把「0 元单有没有结清占用」这件事从测试里抹掉了。
     private static OrderCreator Build(
         FakeCouponPort coupons, FakePointPort points, FakeInventoryPort inventory, FakeOrderStore store,
-        FakeOrderCreateLock? createLock = null, FakeProductPort? products = null)
+        FakeOrderCreateLock? createLock = null, FakeProductPort? products = null,
+        FakePlatformPort? platforms = null)
     {
         var completer = new OrderPaymentCompleter(
             store, inventory, points, coupons, NullLogger<OrderPaymentCompleter>.Instance);
@@ -48,6 +49,7 @@ public class OrderCreatorTests
         return new OrderCreator(
             coupons, points, inventory, new FakeActivityPort(),
             products ?? new FakeProductPort(),
+            platforms ?? new FakePlatformPort(),
             store, createLock ?? new FakeOrderCreateLock(),
             completer, NullLogger<OrderCreator>.Instance);
     }
@@ -95,6 +97,98 @@ public class OrderCreatorTests
         Assert.Null(store.Saved);
         Assert.Empty(store.SavedItems);
         Assert.Empty(store.SavedOrders);
+    }
+
+    [Fact]
+    public async Task 运费按平台配置收取而不是客户端报的值()
+    {
+        var store = new FakeOrderStore();
+
+        // 客户端报运费 0（前端至今硬编码 0），平台配置运费 10。
+        var req = Request(couponId: 0, lineCount: 1) with
+        {
+            Freight = new FreightRule(0m, 0m),
+        };
+
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            platforms: new FakePlatformPort { ShippingFee = 10m }).CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+
+        // 2 件 × 25.50 = 51.00，运费 10 → 实付 61.00。
+        // 采信客户端的 0 就会得到 51.00 —— 那正是「平台运费永远收不到」的现状。
+        Assert.Equal(10m, store.Saved!.Freight);
+        Assert.Equal(61.00m, store.Saved.PayableAmount);
+    }
+
+    [Fact]
+    public async Task 商品实付达到包邮门槛时免运费()
+    {
+        var store = new FakeOrderStore();
+        var req = Request(couponId: 0, lineCount: 1);   // 2 件 = 51.00
+
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            platforms: new FakePlatformPort { ShippingFee = 10m, FreeShippingThreshold = 50m })
+            .CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(0m, store.Saved!.Freight);
+        Assert.Equal(51.00m, store.Saved.PayableAmount);
+    }
+
+    [Theory]
+    [InlineData(DeliveryTypeIds.Virtual)]
+    [InlineData(DeliveryTypeIds.SelfPickup)]
+    public async Task 虚拟与自提不收运费且不为此多打一次跨服务调用(int deliveryType)
+    {
+        var store = new FakeOrderStore();
+        var platforms = new FakePlatformPort { ShippingFee = 10m };
+        var req = Request(couponId: 0, lineCount: 1);
+
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            products: new FakeProductPort { DeliveryType = deliveryType },
+            platforms: platforms).CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+
+        // 运费恒为 0：BUSINESS.md 6.2「只对实物快递收运费；虚拟商品与自提恒为 0」。
+        Assert.Equal(0m, store.Saved!.Freight);
+
+        // 不该为用不上的配置多打一次跨服务调用，
+        // 否则商户平台服务一抖，虚拟商品与自提单会一起下不了。
+        Assert.Equal(0, platforms.QueryCount);
+    }
+
+    [Fact]
+    public async Task 客户端把自提商品报成快递也收不到运费()
+    {
+        var store = new FakeOrderStore();
+        var platforms = new FakePlatformPort { ShippingFee = 10m };
+
+        // 客户端把自提商品谎报成实物快递，并顺手报上 0 元运费。
+        var req = Request(couponId: 0, lineCount: 1) with
+        {
+            Freight = new FreightRule(0m, 0m),
+            Lines = [new OrderLineRequest(
+                SpuId: 100, SkuId: 1000, Quantity: 2, UnitPrice: 25.50m,
+                ProductName: "自提商品", SkuSpecText: "红色 / M",
+                DeliveryType: DeliveryTypeIds.PhysicalExpress)],
+        };
+
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            products: new FakeProductPort { DeliveryType = DeliveryTypeIds.SelfPickup },
+            platforms: platforms).CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+
+        // 商品服务说是自提，运费就是 0。采信客户端报的方式就能凭空多收一笔。
+        Assert.Equal(0m, store.Saved!.Freight);
+        Assert.Equal(51.00m, store.Saved.PayableAmount);
+        Assert.Equal(0, platforms.QueryCount);
     }
 
     [Fact]
@@ -500,6 +594,9 @@ public class OrderCreatorTests
         /// <summary>让回查返回「查不到」，用来验证服务不可用时是否拒单。</summary>
         public bool ReturnEmpty { get; set; }
 
+        /// <summary>权威配送方式，默认实物快递。用于验证运费只对快递收取。</summary>
+        public int DeliveryType { get; set; } = DeliveryTypeIds.PhysicalExpress;
+
         /// <summary>被回查过的 SKU 集合。</summary>
         public List<long> Queried { get; } = [];
 
@@ -517,10 +614,31 @@ public class OrderCreatorTests
             {
                 result[id] = new SkuPriceInfo(
                     id, AuthoritativePrice ?? 25.50m,
-                    Enabled: true, SpuApproved: true, SpuOnShelf: true, MerchantId: 0);
+                    Enabled: true, SpuApproved: true, SpuOnShelf: true, MerchantId: 0,
+                    DeliveryType);
             }
 
             return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(result);
+        }
+    }
+
+    /// <summary>平台运费配置端口的替身。默认运费 0，与「平台自营未配运费」一致。</summary>
+    private sealed class FakePlatformPort : IPlatformPort
+    {
+        /// <summary>平台运费。</summary>
+        public decimal ShippingFee { get; set; }
+
+        /// <summary>满额包邮门槛，0 表示不启用。</summary>
+        public decimal FreeShippingThreshold { get; set; }
+
+        /// <summary>被查询的次数，用来断言「虚拟/自提单不该为此多打一次跨服务调用」。</summary>
+        public int QueryCount { get; private set; }
+
+        /// <inheritdoc />
+        public Task<ShippingConfig> GetShippingConfigAsync(long platformId, CancellationToken ct = default)
+        {
+            QueryCount++;
+            return Task.FromResult(new ShippingConfig(ShippingFee, FreeShippingThreshold));
         }
     }
 
