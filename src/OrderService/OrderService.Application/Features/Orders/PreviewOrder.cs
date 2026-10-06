@@ -93,18 +93,21 @@ public sealed class PreviewOrderHandler
     private readonly OrderPricingResolver _resolver;
     private readonly IActivityPort _activities;
     private readonly ICouponPort _coupons;
+    private readonly IPointPort _points;
 
     /// <summary>构造处理器。</summary>
     /// <param name="resolver">定价解析器。</param>
     /// <param name="activities">活动优惠试算端口。</param>
     /// <param name="coupons">券端口，只用只读试算。</param>
+    /// <param name="points">积分端口，取抵扣汇率（规则里的一项，后台可改）。</param>
     public PreviewOrderHandler(
         OrderPricingResolver resolver, IActivityPort activities,
-        ICouponPort coupons)
+        ICouponPort coupons, IPointPort points)
     {
         _resolver = resolver;
         _activities = activities;
         _coupons = coupons;
+        _points = points;
     }
 
     /// <summary>执行试算。</summary>
@@ -182,7 +185,13 @@ public sealed class PreviewOrderHandler
         // 而界面上「可用 500 积分」与「抵扣 10000 积分」摆在一起，非常费解。
         // ⚠️ 单位：GoodsTotal 是**元**，积分是**分**，必须 ×100。
         // 与 OrderCreator 的同一处算法保持一致，两边少一次乘就出现「试算能抵 1 元、下单只认 1 分」。
-        var maxPoints = (long)Math.Floor(beforePoints.GoodsTotal * 100m);
+        // 抵扣汇率来自积分规则（后台可改），只有真用积分时才多打一次跨服务调用。
+        // 与下单链路取的是同一个接口，两边不可能算出不同的抵扣额。
+        var pointsPerYuan = request.PointsToUse > 0
+            ? await _points.GetDeductionRateAsync(ct).ConfigureAwait(false)
+            : OrderAmountCalculator.DefaultPointsPerYuan;
+
+        var maxPoints = (long)Math.Floor(beforePoints.GoodsTotal * pointsPerYuan);
         var pointsToUse = Math.Clamp(request.PointsToUse, 0L, maxPoints);
 
         var amount = OrderAmountCalculator.Calculate(
@@ -190,7 +199,8 @@ public sealed class PreviewOrderHandler
             OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
             activityDiscounts,
             freight,
-            pointsToUse);
+            pointsToUse,
+            pointsPerYuan);
 
         var result = new PreviewOrderResult(
             resolved.Select((line, i) => new PreviewOrderLine(

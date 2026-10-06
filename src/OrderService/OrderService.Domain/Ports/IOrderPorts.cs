@@ -196,6 +196,16 @@ public interface IPointPort
     /// </remarks>
     Task EarnByOrderAsync(long customerId, string orderNo, decimal paidAmount, CancellationToken ct = default);
 
+    /// <summary>取抵扣汇率：多少积分抵 1.00 元。</summary>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>汇率。</returns>
+    /// <remarks>
+    /// <b>汇率必须问积分服务</b>：它是积分规则里的一项（后台可改）。
+    /// 订单服务自己写死 100 的话，运营改了汇率也不会生效 ——
+    /// 结算页与实付对不上，而且不会有任何报错。
+    /// </remarks>
+    Task<long> GetDeductionRateAsync(CancellationToken ct = default);
+
     /// <summary>退款按比例回收该单已扣积分（向上取整，退回原冻结批次）。</summary>
     /// <param name="customerId">客户 Id。</param>
     /// <param name="orderNo">订单号，幂等键的一部分。</param>

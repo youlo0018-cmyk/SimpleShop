@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Collaboration.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OrderService.Domain.Ports;
+using OrderService.Domain.Services;
 
 namespace OrderService.Infrastructure.Ports;
 
@@ -73,6 +74,40 @@ public sealed class HttpPointPort : IPointPort
             new EarnByOrderRequest(customerId, orderNo, paidAmount, "订单完成发放"),
             ct).ConfigureAwait(false);
     }
+
+    /// <inheritdoc />
+    public async Task<long> GetDeductionRateAsync(CancellationToken ct = default)
+    {
+        const string path = "internal/points/DeductionRate";
+
+        try
+        {
+            var body = await _http
+                .GetFromJsonAsync<ApiResponse<DeductionRateResponse>>(path, ct)
+                .ConfigureAwait(false);
+
+            if (body is null || !body.Success || body.Data is null || body.Data.PointsPerYuan <= 0)
+            {
+                // 拿不到就用兜底汇率并告警。**不能抛**：汇率只影响积分抵扣的换算，
+                // 为它让整单下不了，代价比「这一单按默认汇率算」大得多。
+                _logger.LogWarning("读取积分抵扣汇率失败（{Message}），本次按默认 100 计算",
+                    body?.Message ?? "响应为空");
+                return OrderAmountCalculator.DefaultPointsPerYuan;
+            }
+
+            return body.Data.PointsPerYuan;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "调用积分服务读取抵扣汇率异常，本次按默认 100 计算");
+            return OrderAmountCalculator.DefaultPointsPerYuan;
+        }
+    }
+
+    /// <summary>抵扣汇率响应数据。</summary>
+    /// <param name="PointsPerYuan">多少积分抵 1.00 元。</param>
+    private sealed record DeductionRateResponse(
+        [property: JsonPropertyName("pointsPerYuan")] long PointsPerYuan);
 
     /// <inheritdoc />
     public async Task RecoverByRefundAsync(

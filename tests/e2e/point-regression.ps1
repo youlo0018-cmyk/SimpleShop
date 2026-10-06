@@ -258,14 +258,20 @@ Invoke-Case 'API-PNT-076' '🔴 注册赠送的金额由积分规则决定，改
         -Body '{}' -TimeoutSec 20).data
 
     try {
-        # 把注册赠送改成 250
+        # 把注册赠送改成 250、抵扣汇率改成 200
         Invoke-RestMethod "$PointService/points/SaveRules" -Method Post -ContentType 'application/json' `
             -Body (@{
                 balanceCap = $before.balanceCap; validDays = $before.validDays
                 registerGift = 250; firstEvaluateGift = $before.firstEvaluateGift
-                pointsPerYuan = $before.pointsPerYuan; earnPointsPerYuan = $before.earnPointsPerYuan
+                pointsPerYuan = 200; earnPointsPerYuan = $before.earnPointsPerYuan
                 signInRewards = $before.signInRewards
             } | ConvertTo-Json -Depth 6) -TimeoutSec 20 | Out-Null
+
+        # 抵扣汇率同样要跟着规则走：订单服务算「积分抵了多少钱」时必须问这里，
+        # 不能自己写死 100 —— 写死的话运营改了汇率不会生效，而且不会有任何报错。
+        $rate = (Invoke-RestMethod "$PointService/internal/points/DeductionRate" -TimeoutSec 20).data.pointsPerYuan
+        Write-Host ("        规则里的抵扣汇率 = {0}（期望 200）" -f $rate) -ForegroundColor DarkGray
+        if ($rate -ne 200) { return $false }
 
         $customerId = 790000000 + $script:suffix
         $r = Invoke-RestMethod "$PointService/internal/points/EarnRegisterGift" -Method Post `

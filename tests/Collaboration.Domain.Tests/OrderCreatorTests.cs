@@ -194,6 +194,45 @@ public class OrderCreatorTests
     }
 
     [Fact]
+    public async Task 抵扣汇率跟着积分规则走_不是写死的100()
+    {
+        // 🔴 抵扣汇率是积分规则里的一项（PointRuleConfig 的 points_per_yuan，后台可改），
+        // 但金额计算一度写死 `/ 100m` —— 运营把汇率改成 200 也不会生效，
+        // 结算页与实付对不上，而且不会有任何报错。
+        //
+        // 现在汇率由积分服务给出（IPointPort.GetDeductionRateAsync），
+        // 下单与试算取的是同一个接口，两边不可能算出不同的抵扣额。
+        var points = new FakePointPort { DeductionRate = 200 };
+        var store = new FakeOrderStore();
+
+        // 商品实付 102.00；汇率 200 时 5100 分只能抵 25.50（不是 51.00）
+        var result = await Build(
+            new FakeCouponPort { CouponId = 0, Discount = 0m }, points,
+            new FakeInventoryPort(), store)
+            .CreateAsync(Request(couponId: 0, points: 5100));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(25.50m, store.Saved!.PointsDeduction);
+        Assert.Equal(76.50m, store.Saved.PayableAmount);
+    }
+
+    [Fact]
+    public async Task 不用积分时不去问抵扣汇率()
+    {
+        // 汇率只影响积分抵扣。不用积分的单不该为它多打一次跨服务调用 ——
+        // 积分服务抖动时，那些单本来完全不受影响。
+        var points = new FakePointPort();
+        var store = new FakeOrderStore();
+
+        await Build(
+            new FakeCouponPort { CouponId = 0, Discount = 0m }, points,
+            new FakeInventoryPort(), store)
+            .CreateAsync(Request(couponId: 0, points: 0));
+
+        Assert.Equal(0, points.RateQueryCount);
+    }
+
+    [Fact]
     public async Task 抵扣积分被夹到商品实付的100_不会白送积分()
     {
         var points = new FakePointPort();
@@ -979,6 +1018,19 @@ public class OrderCreatorTests
 
         /// <summary>最近一次按订单发放的实付金额。没调用过就是 -1。</summary>
         public decimal LastEarnedAmount = -1m;
+
+        /// <summary>抵扣汇率。默认 100（= 1 分积分抵 1 分钱），与规格默认值一致。</summary>
+        public long DeductionRate { get; set; } = OrderAmountCalculator.DefaultPointsPerYuan;
+
+        /// <summary>取过几次抵扣汇率，用来断言「没用积分就不该多打这一次调用」。</summary>
+        public int RateQueryCount { get; private set; }
+
+        /// <inheritdoc />
+        public Task<long> GetDeductionRateAsync(CancellationToken ct = default)
+        {
+            RateQueryCount++;
+            return Task.FromResult(DeductionRate);
+        }
 
         public Task EarnByOrderAsync(
             long customerId, string orderNo, decimal paidAmount, CancellationToken ct = default)

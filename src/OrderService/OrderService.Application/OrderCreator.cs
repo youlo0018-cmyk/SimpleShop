@@ -283,7 +283,12 @@ public sealed class OrderCreator
             default,
             pointsToUse: 0).GoodsTotal;
 
-        var maxPoints = (long)Math.Floor(goodsPayable * 100m);
+        // 抵扣汇率来自积分规则（后台可改），只有真用积分时才多打一次跨服务调用。
+        var pointsPerYuan = request.PointsToUse > 0
+            ? await _points.GetDeductionRateAsync(ct).ConfigureAwait(false)
+            : OrderAmountCalculator.DefaultPointsPerYuan;
+
+        var maxPoints = (long)Math.Floor(goodsPayable * pointsPerYuan);
         var wantedPoints = Math.Clamp(request.PointsToUse, 0L, maxPoints);
         if (wantedPoints < request.PointsToUse)
         {
@@ -361,7 +366,8 @@ public sealed class OrderCreator
                 OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
                 activityDiscounts,
                 freightRule,
-                pointsUsed);
+                pointsUsed,
+                pointsPerYuan);
 
             var order = new Order
             {

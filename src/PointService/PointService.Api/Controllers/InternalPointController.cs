@@ -50,6 +50,18 @@ public sealed class InternalPointController : ControllerBase
         [FromBody] GrantEvaluateGiftCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>取抵扣汇率：多少积分抵 1.00 元（由积分规则决定）。</summary>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>汇率。</returns>
+    /// <remarks>
+    /// 订单服务算「积分抵扣了多少钱」时必须问这里，不能自己写死 100 ——
+    /// 抵扣汇率是积分规则里的一项，运营改了之后订单侧照旧按 100 算，
+    /// 结算页与实付就会对不上，而且不会有任何报错。
+    /// </remarks>
+    [HttpGet("DeductionRate")]
+    public Task<ApiResponse<PointDeductionRate>> DeductionRate(CancellationToken ct)
+        => _mediator.Send(new QueryPointDeductionRateCommand(), ct);
+
     /// <summary>下单冻结积分。</summary>
     /// <param name="command">冻结命令。</param>
     /// <param name="ct">取消令牌。</param>

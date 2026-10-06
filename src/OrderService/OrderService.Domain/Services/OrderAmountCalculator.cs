@@ -51,6 +51,15 @@ public readonly record struct FreightRule(decimal Freight, decimal FreeShippingT
 /// </remarks>
 public static class OrderAmountCalculator
 {
+    /// <summary>
+    /// 抵扣汇率的兜底值（多少积分抵 1.00 元）。
+    /// </summary>
+    /// <remarks>
+    /// 只在拿不到积分规则时使用（积分服务不可用、规则没配）。
+    /// 正常路径由 <c>IPointPort</c> 从积分服务取真实汇率 —— 见 <c>Calculate</c> 的参数说明。
+    /// </remarks>
+    public const long DefaultPointsPerYuan = 100;
+
     /// <summary>全系统统一的舍入口径（BUSINESS.md 8.4）。</summary>
     /// <param name="value">原始金额。</param>
     /// <returns>两位小数、四舍五入。</returns>
@@ -81,7 +90,8 @@ public static class OrderAmountCalculator
         IReadOnlyList<decimal> lineCouponDiscounts,
         IReadOnlyList<decimal> lineActivityDiscounts,
         FreightRule freightRule = default,
-        long pointsToUse = 0)
+        long pointsToUse = 0,
+        long pointsPerYuan = DefaultPointsPerYuan)
     {
         if (lineCouponDiscounts.Count != lines.Count || lineActivityDiscounts.Count != lines.Count)
         {
@@ -134,8 +144,14 @@ public static class OrderAmountCalculator
             freight = 0m;
         }
 
-        // 7) 积分抵扣 = 抵扣积分数 ÷ 100。整数积分天然两位小数，不舍入。
-        var pointsDeduction = pointsToUse / 100m;
+        // 7) 积分抵扣 = 抵扣积分数 ÷ 汇率。
+        //
+        // 🔴 汇率**不是常量 100**：它是积分规则里的一项（PointRuleConfig 的
+        // points_per_yuan，后台可改）。这里写死 100 的话，运营把汇率改成 200，
+        // 订单侧照旧按 100 算 —— 结算页与实付对不上，而且不会有任何报错。
+        // 汇率由积分服务给出，调用方从 IPointPort 取。
+        var rate = pointsPerYuan > 0 ? pointsPerYuan : DefaultPointsPerYuan;
+        var pointsDeduction = pointsToUse / (decimal)rate;
         if (pointsDeduction < 0m) pointsDeduction = 0m;
 
         // 8) 实付 = 商品总额 + 运费 − 积分抵扣，下限 0.00

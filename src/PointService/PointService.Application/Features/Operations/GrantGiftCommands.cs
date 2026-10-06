@@ -57,6 +57,44 @@ public static class GrantGiftValidators
     }
 }
 
+/// <summary>查询抵扣汇率（多少积分抵 1.00 元）。</summary>
+public record QueryPointDeductionRateCommand : IRequest<ApiResponse<PointDeductionRate>>;
+
+/// <summary>抵扣汇率。</summary>
+/// <param name="PointsPerYuan">多少积分抵 1.00 元。</param>
+public sealed record PointDeductionRate(long PointsPerYuan);
+
+/// <summary>查询抵扣汇率的处理器。</summary>
+/// <remarks>
+/// 订单服务算积分抵扣金额时调这里。汇率是积分规则的一部分，
+/// 归属方是积分服务 —— 让订单服务自己写死 100，运营改了规则也不会生效。
+/// </remarks>
+public sealed class QueryPointDeductionRateHandler
+    : IRequestHandler<QueryPointDeductionRateCommand, ApiResponse<PointDeductionRate>>
+{
+    private readonly IPointRuleProvider _rules;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="rules">积分规则提供器。</param>
+    public QueryPointDeductionRateHandler(IPointRuleProvider rules) => _rules = rules;
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>抵扣汇率。</returns>
+    public async Task<ApiResponse<PointDeductionRate>> Handle(
+        QueryPointDeductionRateCommand request, CancellationToken ct)
+    {
+        var rules = await _rules.GetAsync(ct).ConfigureAwait(false);
+
+        // 规则校验里限定了 >= 1，这里再兜一次：除以 0 会直接抛异常，
+        // 而那是配置问题，不该变成订单服务里一个看不懂的 500。
+        var rate = rules.PointsPerYuan > 0 ? rules.PointsPerYuan : 100;
+
+        return ApiResults.Ok(new PointDeductionRate(rate));
+    }
+}
+
 /// <summary>发放注册赠送积分的处理器。</summary>
 public sealed class GrantRegisterGiftHandler
     : IRequestHandler<GrantRegisterGiftCommand, ApiResponse<PointBalance>>
