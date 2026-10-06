@@ -1302,6 +1302,121 @@ Invoke-Case 'API-ORD-138' '取消运费单把库存还回去' {
     return $true
 }
 
+Invoke-Case 'API-ORD-140' '🔴 P0 试算金额与真实下单逐分一致（含运费与优惠）' {
+    # 这是整个试算接口存在的意义：小程序此前在前端自己算「商品金额 − 券优惠」，
+    # 既不含运费也不含活动与积分，页面显示的「预计应付」与真实下单金额对不上。
+    # 只断言「试算返回了一个数字」毫无意义 —— 必须拿它和真下单的金额逐分比。
+    $p = $script:feeProductIds['express']
+    $preview = Invoke-Api "$Order/orders/Preview" 'Post' @{
+        customerId = $script:customerId; platformId = $script:feePlatformId; merchantId = 0
+        lines = @(@{ spuId = [long]$p.productId; skuId = [long]$p.skuId; quantity = 2 })
+        couponId = 0; pointsToUse = 0
+    }
+    if (-not $preview.success) {
+        Write-Host ("        试算失败: " + $preview.message) -ForegroundColor DarkYellow
+        return $false
+    }
+
+    $r = New-FeeOrder 'express' 'previewMatch' -ClientFreight 0
+    if (-not $r.success) { return $false }
+    $d = Get-Order $r.data.orderNo
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
+
+    $pv = $preview.data
+    Write-Host ("        试算 实付={0} 运费={1} | 下单 实付={2} 运费={3}" -f `
+        $pv.payableAmount, $pv.freight, $d.payableAmount, $d.freight) -ForegroundColor DarkGray
+
+    return $pv.payableAmount -eq $d.payableAmount `
+        -and $pv.freight -eq $d.freight `
+        -and $pv.goodsTotal -eq $d.goodsTotal `
+        -and $pv.payableAmount -eq 61.00
+}
+
+Invoke-Case 'API-ORD-141' '试算不占用任何资源：券、积分、库存都不动' {
+    $p = $script:feeProductIds['express']
+    $before = Get-Stock ([long]$p.skuId)
+
+    $preview = Invoke-Api "$Order/orders/Preview" 'Post' @{
+        customerId = $script:customerId; platformId = $script:feePlatformId; merchantId = 0
+        lines = @(@{ spuId = [long]$p.productId; skuId = [long]$p.skuId; quantity = 2 })
+        couponId = $script:couponId; pointsToUse = 100
+    }
+    if (-not $preview.success) { return $false }
+
+    $after = Get-Stock ([long]$p.skuId)
+
+    # 试算是纯查询。连看一眼结算页就把券锁掉 / 把库存冻住是不能接受的 ——
+    # 用户反复进出结算页会把资源占得死死的。
+    return $after.available -eq $before.available -and $after.locked -eq $before.locked
+}
+
+Invoke-Case 'API-ORD-142' '试算返回可用券并标出最优（K9）' {
+    $p = $script:feeProductIds['express']
+    $preview = Invoke-Api "$Order/orders/Preview" 'Post' @{
+        customerId = $script:customerId; platformId = $script:feePlatformId; merchantId = 0
+        lines = @(@{ spuId = [long]$p.productId; skuId = [long]$p.skuId; quantity = 2 })
+        couponId = 0; pointsToUse = 0
+    }
+    if (-not $preview.success) { return $false }
+
+    $opts = @($preview.data.couponOptions)
+    if ($opts.Count -eq 0) {
+        Write-Host '        该平台没有可用券（券是平台 0 的，跨平台不通用）' -ForegroundColor DarkGray
+        return $true
+    }
+
+    # 「最优惠」只能有一个，且必须真的在列表里 —— 前端默认选中它。
+    return @($opts | Where-Object { $_.isBest }).Count -eq 1 `
+        -and ($opts | Where-Object { $_.isBest }).couponId -eq $preview.data.bestCouponId
+}
+
+Invoke-Case 'API-ORD-143' '试算的积分上限 = 应付商品金额的 100%（元→分）' {
+    $p = $script:feeProductIds['express']
+    $preview = Invoke-Api "$Order/orders/Preview" 'Post' @{
+        customerId = $script:customerId; platformId = $script:feePlatformId; merchantId = 0
+        lines = @(@{ spuId = [long]$p.productId; skuId = [long]$p.skuId; quantity = 2 })
+        couponId = 0; pointsToUse = 0
+    }
+    if (-not $preview.success) { return $false }
+
+    # 商品实付 51.00 元 → 最多抵 5100 分。
+    # 这里最容易被写成 51（漏了 ×100），症状是「积分怎么都抵不完」，
+    # 而界面上只显示一个 maxPointsToUse，看不出单位错了。
+    return $preview.data.maxPointsToUse -eq 5100
+}
+
+Invoke-Case 'API-ORD-144' '游客也能试算（只是没有券与积分）' {
+    $p = $script:feeProductIds['express']
+    $preview = Invoke-Api "$Order/orders/Preview" 'Post' @{
+        customerId = 0; platformId = $script:feePlatformId; merchantId = 0
+        lines = @(@{ spuId = [long]$p.productId; skuId = [long]$p.skuId; quantity = 2 })
+        couponId = 0; pointsToUse = 0
+    }
+    return $preview.success -and $preview.data.payableAmount -eq 61.00 -and $preview.data.couponOptions.Count -eq 0
+}
+
+Invoke-Case 'API-ORD-145' '试算会拦下未过审 / 已下架的商品（而不是算出一个假的价）' {
+    $p = $script:feeProductIds['express']
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $p.productId; status = 2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $preview = Invoke-Api "$Order/orders/Preview" 'Post' @{
+        customerId = $script:customerId; platformId = $script:feePlatformId; merchantId = 0
+        lines = @(@{ spuId = [long]$p.productId; skuId = [long]$p.skuId; quantity = 2 })
+        couponId = 0; pointsToUse = 0
+    }
+
+    # 恢复上架，否则后面的清理用例会因为商品不可售而表现异常
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $p.productId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    # 试算要报「已下架」，而不是照常返回一个金额 ——
+    # 后者会让用户看着一个算得出的价点下去，然后被下单接口拒绝。
+    return (-not $preview.success) -and ($preview.message -match '下架')
+}
+
 Invoke-Case 'API-ORD-139' '清理运费测试的平台与商品' {
     foreach ($k in $script:feeProductIds.Keys) {
         Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `

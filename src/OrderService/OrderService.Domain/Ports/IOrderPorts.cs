@@ -132,7 +132,30 @@ public interface ICouponPort
     /// <param name="ct">取消令牌。</param>
     /// <returns>异步任务。</returns>
     Task ConsumeAsync(long customerId, string orderNo, CancellationToken ct = default);
+
+    /// <summary>只读试算：列出当前可用券与各自的优惠额，<b>绝不占用</b>。</summary>
+    /// <param name="customerId">客户 Id。</param>
+    /// <param name="lines">订单行。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>可用券及优惠额；没有可用券时返回空集合。</returns>
+    /// <remarks>
+    /// 结算页要在下单**之前**把「有哪些券能用、各减多少、哪张最优惠」告诉用户
+    /// （用户需求 K9），所以这里必须是只读的。
+    /// 复用 <c>OccupyAsync</c> 来试算会在用户每看一眼结算页时就锁掉一张券 ——
+    /// 看了三次页面，客户的券就被占没了。
+    /// </remarks>
+    Task<IReadOnlyList<CouponQuoteOption>> QuoteAsync(
+        long customerId, IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default);
 }
+
+/// <summary>一张可用券在当前订单下的试算结果。</summary>
+/// <param name="CouponId">用户券 Id。</param>
+/// <param name="CouponTypeName">券类型中文名（满减 / 折扣）。</param>
+/// <param name="DiscountAmount">该券在本单可减的金额，两位小数。</param>
+/// <param name="ExpireAt">过期时间，用于「同等优惠优先临期」的排序展示。</param>
+/// <param name="IsBest">是否是最优券（同等优惠优先临期）。</param>
+public readonly record struct CouponQuoteOption(
+    long CouponId, string CouponTypeName, decimal DiscountAmount, string ExpireAt, bool IsBest);
 
 /// <summary>② 积分端口。</summary>
 public interface IPointPort

@@ -88,8 +88,7 @@ public sealed class OrderCreator
     private readonly IPointPort _points;
     private readonly IInventoryPort _inventory;
     private readonly IActivityPort _activities;
-    private readonly IProductPort _products;
-    private readonly IPlatformPort _platforms;
+    private readonly OrderPricingResolver _resolver;
     private readonly IOrderStore _store;
     private readonly IOrderCreateLock _createLock;
     private readonly OrderPaymentCompleter _completer;
@@ -100,15 +99,14 @@ public sealed class OrderCreator
     /// <param name="points">积分端口。</param>
     /// <param name="inventory">库存端口。</param>
     /// <param name="activities">活动优惠试算端口，用于把结算页看到的满减落到订单上。</param>
-    /// <param name="products">商品端口，用于回查 SKU 的权威售价与可售状态。</param>
-    /// <param name="platforms">平台端口，用于读平台级运费配置。</param>
+    /// <param name="resolver">定价解析器，回查权威售价、配送方式与运费配置。</param>
     /// <param name="store">落单端口。</param>
     /// <param name="createLock">客户级下单锁。</param>
     /// <param name="completer">支付收尾服务，用于实付 0 元的单在下单当场结清占用。</param>
     /// <param name="logger">日志器。</param>
     public OrderCreator(
         ICouponPort coupons, IPointPort points, IInventoryPort inventory,
-        IActivityPort activities, IProductPort products, IPlatformPort platforms,
+        IActivityPort activities, OrderPricingResolver resolver,
         IOrderStore store, IOrderCreateLock createLock,
         OrderPaymentCompleter completer, ILogger<OrderCreator> logger)
     {
@@ -116,8 +114,7 @@ public sealed class OrderCreator
         _points = points;
         _inventory = inventory;
         _activities = activities;
-        _products = products;
-        _platforms = platforms;
+        _resolver = resolver;
         _store = store;
         _createLock = createLock;
         _completer = completer;
@@ -170,59 +167,15 @@ public sealed class OrderCreator
         var orderNo = NewOrderNo();
 
         // ---------- ⓪⓪ 回查权威售价与可售状态 ----------
-        // 这是下单链路**最关键**的一步：unitPrice 来自客户端，此前全程直接采信，
-        // 于是把 25.50 的商品按 0.01 元下单也能成交，整条金额链路由客户端说了算。
-        // 这里一律改用商品服务给的售价，并顺带拦住「未审核 / 已下架 / 已停用」的商品。
-        var skuIds = request.Lines.Select(a => a.SkuId).Distinct().ToArray();
-        var pricing = await _products.GetSkuPricesAsync(skuIds, ct).ConfigureAwait(false);
-
-        var resolved = new List<OrderLineRequest>(request.Lines.Count);
-        foreach (var line in request.Lines)
+        // 纠正逻辑放在 OrderPricingResolver 里，与结算试算共用同一份：
+        // 两边各写一遍的话，改了一处另一处会静默停留在旧算法上。
+        var outcome0 = await _resolver.ResolveAsync(request.Lines, ct).ConfigureAwait(false);
+        if (!outcome0.Succeeded)
         {
-            if (!pricing.TryGetValue(line.SkuId, out var sku))
-            {
-                _logger.LogError("下单被拒：SKU {SkuId} 查不到或商品服务不可用", line.SkuId);
-                return OrderCreateOutcome.Fail(
-                    4, $"商品 {line.SkuId} 不存在或暂不可售，请刷新后重试");
-            }
-
-            if (!sku.Enabled)
-            {
-                return OrderCreateOutcome.Fail(4, $"商品规格「{line.SkuId}」已停用");
-            }
-
-            if (!sku.SpuApproved)
-            {
-                return OrderCreateOutcome.Fail(4, $"商品「{line.SkuId}」尚未通过审核");
-            }
-
-            if (!sku.SpuOnShelf)
-            {
-                return OrderCreateOutcome.Fail(4, $"商品「{line.SkuId}」已下架");
-            }
-
-            if (line.Quantity <= 0)
-            {
-                return OrderCreateOutcome.Fail(4, "购买数量必须大于 0");
-            }
-
-            // 用权威售价覆盖客户端报的价格。
-            // 不因为「报得不一样」就报错 —— 客户端可能拿着旧缓存，
-            // 直接纠正即可；只有 SKU 不存在 / 不可售才拒单。
-            //
-            // ⚠️ 秒杀行例外：它的单价来自场次，不是商品售价，
-            // 拿售价覆盖会把秒杀单变成原价单（TEST_CASES API-SEC-002）。
-            // 秒杀价的权威性由营销服务保证，这里只校验可售状态。
-            var isSeckill = line.SourceType == OrderSourceTypes.Seckill;
-            resolved.Add(line with
-            {
-                UnitPrice = isSeckill ? line.UnitPrice : sku.Price,
-
-                // 配送方式同样以商品服务为准。运费只对「实物快递」收，
-                // 而客户端把自提商品报成快递就能凭空多收一笔运费。
-                DeliveryType = sku.DeliveryType,
-            });
+            return OrderCreateOutcome.Fail(4, outcome0.Error);
         }
+
+        var resolved = outcome0.Lines;
 
         var amountLines = request.Lines
             .Select((a, i) => new OrderLineInput(
@@ -239,7 +192,7 @@ public sealed class OrderCreator
         //
         // 只有含实物快递行时才去读配置：虚拟 / 自提单的运费恒为 0，
         // 没必要为它们多一次跨服务调用，也就不该被商户平台服务的抖动拖住。
-        var freightRule = await ResolveFreightRuleAsync(request.PlatformId, resolved, ct)
+        var freightRule = await _resolver.ResolveFreightAsync(request.PlatformId, resolved, ct)
             .ConfigureAwait(false);
 
         var couponLines = request.Lines
@@ -302,18 +255,43 @@ public sealed class OrderCreator
 
         // ---------- ② 锁定积分 ----------
         var pointsUsed = 0L;
-        if (request.PointsToUse > 0)
+
+        // 积分抵扣**上限是应付商品金额的 100%**（BUSINESS.md 8.2），1 分积分抵 1 分钱。
+        // 这里必须先夹住再锁：不夹的话，一个有 10000 积分的客户可以在 51 元的订单上
+        // 抵扣 100 元，实付被截到 0 —— 多出来的 49 元积分**永久消失**，换回来的
+        // 只是「本来就能用券抵掉的那部分」。钱没多省，积分却白送出去一大笔。
+        //
+        // ⚠️ goodsPayable 的单位是**元**，积分的单位是**分**，所以要 ×100。
+        // 漏掉这个 100 的话上限会变成 1.02 元 —— 积分基本等于不能用，
+        // 而且症状是「实付怎么都降不下来」，很难联想到是这里少了 100 倍。
+        var goodsPayable = OrderAmountCalculator.Calculate(
+            amountLines,
+            OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
+            activityDiscounts,
+            default,
+            pointsToUse: 0).GoodsTotal;
+
+        var maxPoints = (long)Math.Floor(goodsPayable * 100m);
+        var wantedPoints = Math.Clamp(request.PointsToUse, 0L, maxPoints);
+        if (wantedPoints < request.PointsToUse)
+        {
+            _logger.LogInformation(
+                "② 抵扣积分被夹到上限：客户要 {Wanted} 分，商品实付 {Goods} 元，最多抵 {Capped} 分",
+                request.PointsToUse, goodsPayable, wantedPoints);
+        }
+
+        if (wantedPoints > 0)
         {
             try
             {
-                if (!await _points.LockAsync(request.CustomerId, orderNo, request.PointsToUse, ct))
+                if (!await _points.LockAsync(request.CustomerId, orderNo, wantedPoints, ct))
                 {
                     _logger.LogWarning("② 锁定积分失败（余额不足），回滚 ①");
                     await RollbackCouponAsync(request.CustomerId, orderNo, couponId);
                     return OrderCreateOutcome.Fail(2, "可用积分不足");
                 }
 
-                pointsUsed = request.PointsToUse;
+                pointsUsed = wantedPoints;
             }
             catch (Exception ex)
             {
@@ -475,34 +453,6 @@ public sealed class OrderCreator
 
             return OrderCreateOutcome.Fail(4, "创建订单失败：" + ex.Message);
         }
-    }
-
-    /// <summary>按平台配置算出本单该收多少运费（BUSINESS.md 6.2）。</summary>
-    /// <param name="platformId">平台 Id。</param>
-    /// <param name="lines">已用权威数据纠正过的订单行。</param>
-    /// <param name="ct">取消令牌。</param>
-    /// <returns>运费规则；无实物快递行时返回全 0。</returns>
-    /// <remarks>
-    /// <b>刻意忽略 <c>request.Freight</c></b>：它来自客户端，前端目前直接写 0。
-    /// 采信它，后台把平台运费配成 10 元也一分钱收不到。
-    /// </remarks>
-    private async Task<FreightRule> ResolveFreightRuleAsync(
-        long platformId, IReadOnlyList<OrderLineRequest> lines, CancellationToken ct)
-    {
-        // 没有实物快递行 → 运费恒为 0，不去读平台配置。
-        // 虚拟商品与自提都是「点了发货/核销就完成」，没有任何物流环节，
-        // 让它们为一次用不上的跨服务调用买单没有道理。
-        if (lines.All(a => a.DeliveryType != DeliveryTypeIds.PhysicalExpress))
-        {
-            return new FreightRule(0m, 0m);
-        }
-
-        var config = await _platforms.GetShippingConfigAsync(platformId, ct).ConfigureAwait(false);
-
-        _logger.LogInformation("运费按平台配置计算：平台 {PlatformId} 运费 {Fee} 包邮门槛 {Threshold}",
-            platformId, config.ShippingFee, config.FreeShippingThreshold);
-
-        return new FreightRule(config.ShippingFee, config.FreeShippingThreshold);
     }
 
     /// <summary>逆序回滚的第一步：释放已锁库存。</summary>

@@ -58,6 +58,22 @@ public sealed class HttpCouponPort : ICouponPort
             "coupons/Consume", new ReleaseRequest(customerId, orderNo), ct).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<CouponQuoteOption>> QuoteAsync(
+        long customerId, IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
+    {
+        var body = await PostAsync<SettleCouponResponse>(
+            "coupons/Settle",
+            new SettleRequest(customerId, lines.Select(a => new Line(a.SpuId, a.SkuId, a.Amount)).ToArray()),
+            ct).ConfigureAwait(false);
+
+        var options = body.Data?.Options ?? [];
+        return options
+            .Select(a => new CouponQuoteOption(
+                a.CouponId, a.CouponTypeName, a.DiscountAmount, a.ExpireAt, a.IsBest))
+            .ToList();
+    }
+
     /// <summary>统一发 POST 并检查业务结果。</summary>
     /// <typeparam name="T">下游数据类型。</typeparam>
     /// <param name="path">相对路径。</param>
@@ -130,6 +146,33 @@ public sealed class HttpCouponPort : ICouponPort
     /// <param name="CustomerId">客户 Id。</param>
     /// <param name="OrderNo">订单号。</param>
     private sealed record ReleaseRequest(long CustomerId, string OrderNo);
+
+    /// <summary>只读试算请求体。字段名与营销服务的 <c>SettleCouponsCommand</c> 对齐。</summary>
+    /// <param name="CustomerId">客户 Id。</param>
+    /// <param name="Lines">订单行。</param>
+    private sealed record SettleRequest(long CustomerId, Line[] Lines);
+
+    /// <summary>试算响应数据。</summary>
+    /// <param name="HasCoupon">是否有可用券。</param>
+    /// <param name="Best">最优券；无可用券时为 null。</param>
+    /// <param name="Options">全部可用券及各自优惠额。</param>
+    private sealed record SettleCouponResponse(
+        [property: JsonPropertyName("hasCoupon")] bool HasCoupon,
+        [property: JsonPropertyName("best")] SettleCouponOption? Best,
+        [property: JsonPropertyName("options")] SettleCouponOption[]? Options);
+
+    /// <summary>一张可用券的试算结果。</summary>
+    /// <param name="CouponId">用户券 Id。</param>
+    /// <param name="CouponTypeName">券类型中文名。</param>
+    /// <param name="DiscountAmount">优惠金额。</param>
+    /// <param name="ExpireAt">过期时间。</param>
+    /// <param name="IsBest">是否最优。</param>
+    private sealed record SettleCouponOption(
+        [property: JsonPropertyName("couponId")] long CouponId,
+        [property: JsonPropertyName("couponTypeName")] string CouponTypeName,
+        [property: JsonPropertyName("discountAmount")] decimal DiscountAmount,
+        [property: JsonPropertyName("expireAt")] string ExpireAt,
+        [property: JsonPropertyName("isBest")] bool IsBest);
 }
 
 /// <summary>下游服务调用失败。</summary>

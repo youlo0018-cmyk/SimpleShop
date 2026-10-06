@@ -222,6 +222,7 @@ public static class OrderValidators
     public static void AddOrderValidators(IServiceCollection services)
     {
         services.AddScoped<IValidator<CreateOrderCommand>, CreateOrderValidator>();
+        services.AddScoped<IValidator<PreviewOrderCommand>, PreviewOrderValidator>();
         services.AddScoped<IValidator<QueryMyOrdersCommand>, QueryMyOrdersValidator>();
         services.AddScoped<IValidator<CancelOrderCommand>, OrderScopedValidator<CancelOrderCommand>>();
         services.AddScoped<IValidator<ConfirmReceiptCommand>, OrderScopedValidator<ConfirmReceiptCommand>>();

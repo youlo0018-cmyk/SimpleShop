@@ -13,13 +13,20 @@
 
       <view class="panel goods">
         <view class="section-title">商品明细</view>
-        <view v-for="line in lines" :key="line.skuId" class="goods__line">
+        <view v-for="line in previewLines" :key="line.skuId" class="goods__line">
           <view>
             <text class="goods__name">{{ line.productName }}</text>
             <text class="goods__spec">{{ line.skuSpecText }} × {{ line.quantity }}</text>
           </view>
-          <text class="amount">¥{{ amount(Number(line.unitPrice) * Number(line.quantity)) }}</text>
+          <view class="goods__right">
+            <text class="amount">¥{{ amount(line.payableAmount) }}</text>
+            <!-- 行优惠不为 0 才显示原价，否则每行都挂一条灰字，页面噪声极大 -->
+            <text v-if="line.originalAmount !== line.payableAmount" class="goods__origin">
+              ¥{{ amount(line.originalAmount) }}
+            </text>
+          </view>
         </view>
+        <view v-if="previewError" class="preview-error">{{ previewError }}</view>
       </view>
 
       <view class="panel coupons">
@@ -30,12 +37,12 @@
             :key="option.couponId"
             class="coupon-option"
             :class="{ 'coupon-option--active': selectedCouponId === String(option.couponId) }"
-            @tap="selectedCouponId = String(option.couponId)"
+            @tap="selectCoupon(option.couponId)"
           >
             <text>{{ option.couponTypeName }} · 减 ¥{{ amount(option.discountAmount) }}</text>
             <text v-if="option.isBest" class="coupon-option__best">最优惠</text>
           </view>
-          <view class="coupon-option coupon-option--none" @tap="selectedCouponId = '0'">
+          <view class="coupon-option coupon-option--none" @tap="selectCoupon(0)">
             不使用优惠券
           </view>
         </view>
@@ -46,27 +53,56 @@
         <view class="section-title">积分抵扣</view>
         <view class="points__row">
           <text>可用 {{ pointBalance }} 积分</text>
-          <input v-model="form.pointsToUse" class="points__input" type="number" placeholder="0" />
+          <input
+            v-model="form.pointsToUse"
+            class="points__input"
+            type="number"
+            placeholder="0"
+            @blur="applyPoints"
+          />
         </view>
-        <text class="muted">积分是最后一道优惠，抵扣上限为应付商品金额的 100%</text>
+        <text class="muted">
+          积分是最后一道优惠，本单最多可抵 {{ preview?.maxPointsToUse || 0 }} 积分
+        </text>
       </view>
 
       <view class="amount-summary">
         <view class="amount-summary__row">
           <text>商品金额</text>
-          <text>¥{{ amount(goodsAmount) }}</text>
+          <text>¥{{ amount(preview?.goodsTotal) }}</text>
         </view>
-        <view class="amount-summary__row">
+        <view v-if="preview?.activityDiscount" class="amount-summary__row">
+          <text>活动优惠</text>
+          <text>-¥{{ amount(preview.activityDiscount) }}</text>
+        </view>
+        <view v-if="preview?.couponDiscount" class="amount-summary__row">
           <text>券优惠</text>
-          <text>-¥{{ amount(selectedCoupon?.discountAmount || 0) }}</text>
+          <text>-¥{{ amount(preview.couponDiscount) }}</text>
+        </view>
+        <!-- 运费为 0 时不显示这一行（BUSINESS.md 6.2） -->
+        <view v-if="preview?.freight" class="amount-summary__row">
+          <text>运费</text>
+          <text>¥{{ amount(preview.freight) }}</text>
+        </view>
+        <view v-if="preview?.pointsDeduction" class="amount-summary__row">
+          <text>积分抵扣</text>
+          <text>-¥{{ amount(preview.pointsDeduction) }}</text>
         </view>
         <view class="amount-summary__row amount-summary__row--strong">
-          <text>预计应付</text>
-          <text class="amount">¥{{ amount(estimatedPayable) }}</text>
+          <text>应付</text>
+          <text class="amount">¥{{ amount(preview?.payableAmount) }}</text>
         </view>
+        <text v-if="previewError" class="preview-error">{{ previewError }}</text>
       </view>
 
-      <button class="button-primary checkout-submit" :loading="submitting" @tap="submit">提交订单</button>
+      <button
+        class="button-primary checkout-submit"
+        :loading="submitting"
+        :disabled="submitting || !preview || !!previewError"
+        @tap="submit"
+      >
+        提交订单
+      </button>
     </template>
   </view>
 </template>
@@ -87,6 +123,17 @@ const couponOptions = ref<any[]>([]);
 const selectedCouponId = ref('0');
 const pointBalance = ref(0);
 const idempotencyKey = ref('');
+
+/**
+ * 服务端算出的结算结果。
+ *
+ * 金额**一律**以它为准：运费、满减、券、积分全在里面。
+ * 之前这个页面在前端自己算「商品金额 − 券优惠」，既不含运费也不含活动与积分，
+ * 于是页面显示的「预计应付」和真实下单金额对不上，而界面上没有任何地方解释差额。
+ */
+const preview = ref<any>(null);
+const previewError = ref('');
+const previewLines = computed<any[]>(() => preview.value?.lines || []);
 const form = reactive({
   receiverName: '',
   receiverPhone: '',
@@ -95,15 +142,57 @@ const form = reactive({
   remark: '',
 });
 
-const goodsAmount = computed(() =>
-  lines.value.reduce((sum, line) => sum + Number(line.unitPrice) * Number(line.quantity), 0),
-);
-const selectedCoupon = computed(() =>
-  couponOptions.value.find((item) => String(item.couponId) === selectedCouponId.value),
-);
-const estimatedPayable = computed(() =>
-  Math.max(0, goodsAmount.value - Number(selectedCoupon.value?.discountAmount || 0)),
-);
+/**
+ * 拉一次服务端试算。
+ *
+ * 切券、改积分都要重算：券与活动互斥、积分受「商品实付 100%」上限约束，
+ * 前端不复算一遍就只能显示一个过期的金额。
+ */
+async function refreshPreview() {
+  if (!lines.value.length) return;
+  previewError.value = '';
+  try {
+    const result = await request<any>('/gateway/orders/Preview', {
+      method: 'POST',
+      data: {
+        customerId: session.profile?.customerId || '0',
+        platformId: '0',
+        merchantId: '0',
+        lines: lines.value.map((line: any) => ({
+          spuId: line.spuId,
+          skuId: line.skuId,
+          quantity: line.quantity,
+        })),
+        couponId: selectedCouponId.value,
+        pointsToUse: Number(form.pointsToUse || 0),
+      },
+    });
+    preview.value = result;
+    couponOptions.value = result?.couponOptions || [];
+  } catch (error: any) {
+    // 试算失败就让提交按钮禁用：宁可明确告诉用户算不出来，
+    // 也不要显示一个前端算的「预计应付」然后让下单接口拒绝。
+    preview.value = null;
+    previewError.value = error?.message || '结算试算失败，请稍后重试';
+  }
+}
+
+function selectCoupon(couponId: number) {
+  selectedCouponId.value = String(couponId);
+  refreshPreview();
+}
+
+/** 积分输入失焦时才试算：边打字边打接口既吵又贵。 */
+function applyPoints() {
+  const max = Number(preview.value?.maxPointsToUse || 0);
+  const wanted = Number(form.pointsToUse || 0);
+  if (wanted > max) {
+    form.pointsToUse = String(max);
+    uni.showToast({ title: `本单最多可抵 ${max} 积分`, icon: 'none' });
+  }
+  if (wanted < 0) form.pointsToUse = '0';
+  refreshPreview();
+}
 
 async function prepare() {
   session.restore();
@@ -136,19 +225,14 @@ async function prepare() {
     }));
 
     if (lines.value.length) {
-      const settleLines = lines.value.map((line) => ({
-        spuId: line.spuId,
-        skuId: line.skuId,
-        quantity: line.quantity,
-        unitPrice: line.unitPrice,
-      }));
-      const settle = await request<any>('/gateway/coupons/Settle', {
-        method: 'POST',
-        data: { customerId: session.profile.customerId, lines: settleLines },
-        silent: true,
-      }).catch(() => null);
-      couponOptions.value = settle?.options || [];
-      selectedCouponId.value = String(settle?.best?.couponId || 0);
+      // 第一次试算不带券，拿到服务端推荐的最优券（K9：默认选最优惠），
+      // 再用这张券重算一次 —— 用户看到的「应付」从一开始就是最终价。
+      await refreshPreview();
+      const best = Number(preview.value?.bestCouponId || 0);
+      if (best > 0) {
+        selectedCouponId.value = String(best);
+        await refreshPreview();
+      }
     }
 
     const balance = await request<any>('/gateway/points/Balance', {
@@ -173,6 +257,11 @@ async function submit() {
 
   submitting.value = true;
   try {
+    // 提交前再确认一次试算成功：金额算不出来就不该让人下单。
+    if (!preview.value) {
+      uni.showToast({ title: previewError.value || '结算试算失败，请重试', icon: 'none' });
+      return;
+    }
     const created = await request<any>('/gateway/orders/Create', {
       method: 'POST',
       data: {
@@ -186,7 +275,6 @@ async function submit() {
         lines: lines.value,
         couponId: selectedCouponId.value,
         pointsToUse: Number(form.pointsToUse || 0),
-        freight: 0,
         remark: form.remark.trim(),
       },
     });
@@ -259,6 +347,26 @@ onLoad(() => {
   display: block;
   margin-top: 6rpx;
   color: $text-2;
+  font-size: $font-note;
+}
+
+.goods__right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4rpx;
+}
+
+.goods__origin {
+  color: $text-2;
+  font-size: $font-note;
+  text-decoration: line-through;
+}
+
+.preview-error {
+  display: block;
+  margin-top: $space-2;
+  color: $danger;
   font-size: $font-note;
 }
 

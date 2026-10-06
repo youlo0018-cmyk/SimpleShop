@@ -48,8 +48,10 @@ public class OrderCreatorTests
 
         return new OrderCreator(
             coupons, points, inventory, new FakeActivityPort(),
-            products ?? new FakeProductPort(),
-            platforms ?? new FakePlatformPort(),
+            new OrderPricingResolver(
+                products ?? new FakeProductPort(),
+                platforms ?? new FakePlatformPort(),
+                NullLogger<OrderPricingResolver>.Instance),
             store, createLock ?? new FakeOrderCreateLock(),
             completer, NullLogger<OrderCreator>.Instance);
     }
@@ -189,6 +191,29 @@ public class OrderCreatorTests
         Assert.Equal(0m, store.Saved!.Freight);
         Assert.Equal(51.00m, store.Saved.PayableAmount);
         Assert.Equal(0, platforms.QueryCount);
+    }
+
+    [Fact]
+    public async Task 抵扣积分被夹到商品实付的100_不会白送积分()
+    {
+        var points = new FakePointPort();
+        var store = new FakeOrderStore();
+
+        // 商品实付 102.00 元 → 最多抵 10200 分。客户要 99999 分（余额充足），
+        // 只能抵 10200，实付 0。
+        var result = await Build(
+            new FakeCouponPort { CouponId = 0, Discount = 0m }, points,
+            new FakeInventoryPort(), store)
+            .CreateAsync(Request(couponId: 0, points: 99999));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(10200L, points.LastLockedPoints);
+
+        // 🔴 这条是重点：BUSINESS.md 8.2 规定抵扣上限是应付商品金额的 100%。
+        // 不夹住的话会锁 99999 分、扣 999.99 元，而实付同样被截到 0 ——
+        // 多出来的 897.99 元积分**永久消失**，一分钱也没多省。
+        Assert.Equal(0m, store.Saved!.PayableAmount);
+        Assert.Equal(102.00m, store.Saved.PointsDeduction);
     }
 
     [Fact]
@@ -575,6 +600,20 @@ public class OrderCreatorTests
             ConsumeCount++;
             return Task.CompletedTask;
         }
+
+        /// <summary>可用的券试算结果，默认只有一张「默认券」。</summary>
+        public List<CouponQuoteOption> QuoteOptions { get; } =
+            [new CouponQuoteOption(77, "满减", 5m, "2026-12-31", true)];
+
+        /// <summary>被试算的次数。结算试算是只读的，占用次数不该因此增加。</summary>
+        public int QuoteCount { get; private set; }
+
+        public Task<IReadOnlyList<CouponQuoteOption>> QuoteAsync(
+            long customerId, IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
+        {
+            QuoteCount++;
+            return Task.FromResult<IReadOnlyList<CouponQuoteOption>>(QuoteOptions);
+        }
     }
 
     /// <summary>商品定价端口的替身。</summary>
@@ -681,12 +720,19 @@ public class OrderCreatorTests
         /// <summary>最近一次退款回收用的比例，供用例断言「按本次退款额算比例」。</summary>
         public decimal LastRecoverRatio;
 
+        /// <summary>
+        /// 最近一次<b>实际</b>锁定的积分数。断言它而不是断言请求值：
+        /// 「夹到上限」这件事发生在编排器里，端口只看到夹完之后的数字。
+        /// </summary>
+        public long LastLockedPoints;
+
         /// <summary>还冻着的积分数。实扣后必须归零，否则就是一笔悬空占用。</summary>
         public long Frozen;
 
         public Task<bool> LockAsync(long customerId, string orderNo, long points, CancellationToken ct = default)
         {
             LockCount++;
+            LastLockedPoints = points;
             Frozen += points;
             return Task.FromResult(!ReturnFalseOnLock);
         }

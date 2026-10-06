@@ -44,6 +44,7 @@ public static class ApiServiceCollectionExtensions
         // Development 的 ValidateOnBuild 阶段直接启动失败——
         // 单例吃 Scoped 服务意味着这个单例会一直持有第一个请求的仓储，跨请求串数据。
         services.AddScoped<OrderCreator>();
+        services.AddScoped<OrderPricingResolver>();
         services.AddScoped<OrderPaymentCompleter>();
         services.AddScoped<OrderCompletionReward>();
         services.AddScoped<OrderCancellationService>();
