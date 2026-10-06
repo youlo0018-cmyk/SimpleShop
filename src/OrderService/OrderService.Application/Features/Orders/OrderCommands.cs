@@ -168,6 +168,7 @@ public sealed record OrderSkuForEvaluateDto(long SkuId, string SkuSpecText, long
 /// <param name="ShippedAt">发货时间，未发货为空。</param>
 /// <param name="RefundedAmount">已退金额合计。后台据此显示「还能退多少」。</param>
 /// <param name="RemainingRefundable">剩余可退金额，后台退款表单的金额上限。</param>
+/// <param name="ActivityDiscount">整单活动优惠合计（各行之和）。</param>
 public sealed record OrderDetailDto(
     long OrderId, string OrderNo, int Status, string StatusName, bool CanCancel, bool CanConfirmReceipt,
     decimal GoodsTotal, decimal Freight, decimal PointsDeduction, decimal PayableAmount,
@@ -176,7 +177,8 @@ public sealed record OrderDetailDto(
     string Remark, string CreatedAt, IReadOnlyList<OrderItemDto> Items,
     long LogisticsCompanyId = 0, string LogisticsCompanyName = "",
     string TrackingNo = "", string ShippedAt = "",
-    decimal RefundedAmount = 0m, decimal RemainingRefundable = 0m);
+    decimal RefundedAmount = 0m, decimal RemainingRefundable = 0m,
+    decimal ActivityDiscount = 0m);
 
 /// <summary>订单行。</summary>
 /// <param name="OrderItemId">订单行 Id。<b>部分退款按它定位退哪一行</b>，缺了这个字段部分退款无从下手。</param>

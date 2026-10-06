@@ -326,6 +326,67 @@ Write-Host "`n=== ORD 基础下单（不占券不用积分）===" -ForegroundCol
 
 $script:basicOrderNo = ''
 
+Invoke-Case 'API-ORD-009b' '🔴🔴 P0 带满减活动的单：实付必须等于结算页报价' {
+    # 结算试算（FinalPrice）会算出活动优惠，但**下单接口收不到它**：
+    # 小程序只传 couponId / pointsToUse / freight，OrderCreator 里
+    # activityDiscount 直接写成全 0（注释写着「活动优惠尚未落地，先全 0」）。
+    # 于是结算页显示 46、点下单却按 51 收 —— 少算的活动优惠变成了实收。
+    $now = [DateTime]::UtcNow
+    $act = Invoke-RestMethod "$Marketing/marketing/activities/Create" -Method Post `
+        -Body (@{
+            activityName = "ORD满减$($script:suffix)"; activityType = 1
+            thresholdAmount = 40; discountAmount = 5
+            giftTemplateId = 0; targetType = 1; targets = '[]'
+            startTime = $now.AddDays(-1).ToString('o'); endTime = $now.AddDays(1).ToString('o')
+            perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+            platformId = $script:platformId; merchantId = 0
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30
+    if (-not $act.success) { Write-Host ("        建活动失败: " + $act.message) -ForegroundColor DarkYellow; return $false }
+
+    # 记下 Id 供用例结束时删掉：活动在整个用例集里持续生效，
+    # 后面那些「实付 = 25.50 × 2」的断言会被它莫名其妙减掉 5 块。
+    $script:promoActivityId = [long]$act.data
+
+    # 结算试算：本单两件共 51.00 → 满 40 减 5 → 应报 46.00
+    $quote = Invoke-RestMethod "$Marketing/marketing/activities/FinalPrice" -Method Post `
+        -Body (@{
+            customerId = $script:customerId
+            lines = @(@{ spuId = [long]$script:productId; skuId = [long]$script:skuIds[0]; amount = 51.00 })
+            sessionId = 0; platformId = $script:platformId
+        } | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
+
+    # 必须用结算页**推荐的那张券**去下单，否则两边根本不是同一笔：
+    # FinalPrice 会自动挑最优券，而下单不传券就等于「没用券」，
+    # 报价与实付当然对不上 —— 那是用例没对齐，不是产品算错。
+    $chosen = [long]$quote.data.couponId
+    $ord = OrderPost 'Create' (New-OrderBody 'promo' 1 2 $chosen 0)
+    $det = Get-Order $ord.data.orderNo
+
+    Write-Host ("        结算报价={0}  订单实付={1}  订单行优惠={2}" -f `
+        $quote.data.finalPrice, $det.payableAmount, $det.activityDiscount) -ForegroundColor DarkGray
+
+    # 把这单取消掉把库存还回去：不还的话后面几条按「下单后库存」的断言
+    # 会被多锁出来的 2 件打偏，而那几条跟本用例毫无关系。
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $det.orderNo } | Out-Null
+
+    # 同样要把活动删掉：它在整个用例集里持续生效，
+    # 后面那些「实付 = 25.50 × 2」的断言会被它莫名其妙减掉 5 块，
+    # 报错指向完全无关的用例，排查起来极其费劲。
+    # 包 try/catch：清理失败**不该让用例判红**。
+    # 本用例要证明的是「报价 == 实付」，清理只是善后；
+    # 清理报错而断言失败，会让人以为是优惠没对齐，其实是删活动没删掉。
+    try {
+        Invoke-RestMethod "$Marketing/marketing/activities/Delete" -Method Post `
+            -Body (@{ activityId = $script:promoActivityId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    } catch {
+        Write-Host ("        活动清理失败（不影响本用例结论）: {0} | body={1}" -f `
+            $_.Exception.Message, $_.ErrorDetails.Message) -ForegroundColor DarkYellow
+    }
+
+    return $quote.data.finalPrice -eq $det.payableAmount
+}
+
 Invoke-Case 'API-ORD-010' '下单成功：实付 = 25.50 × 2，状态待支付' {
     $r = OrderPost 'Create' (New-OrderBody 'basic')
     $script:basicOrderNo = $r.data.orderNo

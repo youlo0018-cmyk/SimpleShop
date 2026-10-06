@@ -46,7 +46,8 @@ public class OrderCreatorTests
             store, inventory, points, coupons, NullLogger<OrderPaymentCompleter>.Instance);
 
         return new OrderCreator(
-            coupons, points, inventory, store, createLock ?? new FakeOrderCreateLock(),
+            coupons, points, inventory, new FakeActivityPort(),
+            store, createLock ?? new FakeOrderCreateLock(),
             completer, NullLogger<OrderCreator>.Instance);
     }
 
@@ -433,6 +434,34 @@ public class OrderCreatorTests
         {
             ConsumeCount++;
             return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>活动优惠试算端口的替身。默认「没有活动优惠」，用例需要时自行赋值。</summary>
+    private sealed class FakeActivityPort : IActivityPort
+    {
+        /// <summary>逐 SKU 的活动优惠，供用例构造「有满减」场景。</summary>
+        public Dictionary<long, decimal> BySku { get; } = [];
+
+        /// <summary>报价被调用的次数，用来断言下单确实去算了。</summary>
+        public int CallCount { get; private set; }
+
+        /// <summary>被传入的已选券 Id，用来验证活动与券互斥时传对了。</summary>
+        public long LastCouponId { get; private set; }
+
+        /// <inheritdoc />
+        public Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
+            long customerId, long platformId, long sessionId, long couponId,
+            IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
+            CancellationToken ct = default)
+        {
+            CallCount++;
+            LastCouponId = couponId;
+
+            return Task.FromResult<IReadOnlyList<(long, decimal)>>(
+                lines.Where(a => BySku.TryGetValue(a.SkuId, out var d) && d != 0m)
+                    .Select(a => (a.SkuId, BySku[a.SkuId]))
+                    .ToList());
         }
     }
 

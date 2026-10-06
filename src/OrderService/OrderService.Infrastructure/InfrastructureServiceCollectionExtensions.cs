@@ -47,6 +47,11 @@ public static class InfrastructureServiceCollectionExtensions
         // 免得改券逻辑的时候顺手把库存给改了。
         AddDownstream<ISeckillPort, HttpSeckillPort>(
             services, configuration, "Services:MarketingServiceBaseUrl", "营销服务");
+
+        // 下单时的活动优惠试算，同样打营销服务。
+        // 少了它，结算页看到的满减不会落到订单上（报价 41、实收 51）。
+        AddDownstream<IActivityPort, HttpActivityPort>(
+            services, configuration, "Services:MarketingServiceBaseUrl", "营销服务");
         AddDownstream<IPointPort, HttpPointPort>(
             services, configuration, "Services:PointServiceBaseUrl", "积分服务");
         AddDownstream<IInventoryPort, HttpInventoryPort>(

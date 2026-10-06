@@ -39,5 +39,10 @@ public static class OrderDetailAssembler
             order.RefundedAmount,
             // 剩余可退给到分位就当 0：差 0.004 元还提示「还能退 0.00 元」很奇怪
             Math.Max(0m, decimal.Round(
-                order.PayableAmount - order.RefundedAmount, 2, MidpointRounding.AwayFromZero)));
+                order.PayableAmount - order.RefundedAmount, 2, MidpointRounding.AwayFromZero)),
+            // 活动优惠合计由行汇总：金额恒等式里它与行优惠是一回事，
+            // 单独存一个整单字段是为了让详情页能直接显示「省了多少」，
+            // 而不必让前端自己把行加一遍。
+            decimal.Round(
+                items.Sum(a => a.ActivityDiscount), 2, MidpointRounding.AwayFromZero));
 }

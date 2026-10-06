@@ -220,6 +220,7 @@ public static class PromotionValidators
         services.AddScoped<IValidator<DeletePromotionActivityCommand>, DeletePromotionValidator>();
         services.AddScoped<IValidator<GetPromotionActivityCommand>, GetPromotionValidator>();
         services.AddScoped<IValidator<CalculateFinalPriceCommand>, FinalPriceValidator>();
+        services.AddScoped<IValidator<QuoteOrderDiscountCommand>, QuoteOrderDiscountValidator>();
         services.AddScoped<IValidator<CalculateFinalPriceBatchCommand>, FinalPriceBatchValidator>();
     }
 

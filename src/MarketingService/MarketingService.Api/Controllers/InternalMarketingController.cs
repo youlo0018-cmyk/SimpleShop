@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using MarketingService.Application.Features.Seckill;
+using MarketingService.Application.Features.Promotion;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
@@ -48,5 +49,18 @@ public sealed class InternalMarketingController : ControllerBase
     [HttpPost("seckill/grabs/Release")]
     public Task<ApiResponse<ReleaseGrabResult>> ReleaseGrab(
         [FromBody] ReleaseSeckillGrabCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>下单时按行试算活动优惠（订单服务调用）。</summary>
+    /// <param name="command">试算命令，含客户、订单行、平台与已选券。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>逐行活动优惠。</returns>
+    /// <remarks>
+    /// 少了这个接口，结算页看到的满减不会落到订单上 ——
+    /// 报价与实收对不上，而页面全程无报错。
+    /// </remarks>
+    [HttpPost("activities/Quote")]
+    public Task<ApiResponse<QuoteOrderDiscountResult>> QuoteOrderDiscount(
+        [FromBody] QuoteOrderDiscountCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 }

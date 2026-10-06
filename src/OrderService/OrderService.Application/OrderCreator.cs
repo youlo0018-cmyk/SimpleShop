@@ -87,6 +87,7 @@ public sealed class OrderCreator
     private readonly ICouponPort _coupons;
     private readonly IPointPort _points;
     private readonly IInventoryPort _inventory;
+    private readonly IActivityPort _activities;
     private readonly IOrderStore _store;
     private readonly IOrderCreateLock _createLock;
     private readonly OrderPaymentCompleter _completer;
@@ -96,18 +97,21 @@ public sealed class OrderCreator
     /// <param name="coupons">营销端口。</param>
     /// <param name="points">积分端口。</param>
     /// <param name="inventory">库存端口。</param>
+    /// <param name="activities">活动优惠试算端口，用于把结算页看到的满减落到订单上。</param>
     /// <param name="store">落单端口。</param>
     /// <param name="createLock">客户级下单锁。</param>
     /// <param name="completer">支付收尾服务，用于实付 0 元的单在下单当场结清占用。</param>
     /// <param name="logger">日志器。</param>
     public OrderCreator(
         ICouponPort coupons, IPointPort points, IInventoryPort inventory,
+        IActivityPort activities,
         IOrderStore store, IOrderCreateLock createLock,
         OrderPaymentCompleter completer, ILogger<OrderCreator> logger)
     {
         _coupons = coupons;
         _points = points;
         _inventory = inventory;
+        _activities = activities;
         _store = store;
         _createLock = createLock;
         _completer = completer;
@@ -163,6 +167,21 @@ public sealed class OrderCreator
             .ToArray();
         var couponLines = request.Lines
             .Select(a => new CouponPortLine(a.SpuId, a.SkuId, OrderAmountCalculator.Round2(a.UnitPrice * a.Quantity)))
+            .ToArray();
+
+        // ---------- ⓪ 活动优惠试算 ----------
+        // 刻意放在**占券之前**：活动与券互斥（BUSINESS 11.3），
+        // 而占券之后这张券已经锁住、不在「可用券」列表里，
+        // 试算就会当客户没用券 → 活动又算一遍 → 券和活动优惠叠加，
+        // 结算页算一套、下单算另一套。
+        var activityBySku = await _activities.QuoteAsync(
+            request.CustomerId, request.PlatformId, 0,
+            request.CouponId,
+            couponLines.Select(a => (a.SpuId, a.SkuId, a.Amount)).ToArray(),
+            ct).ConfigureAwait(false);
+
+        var activityDiscounts = couponLines
+            .Select(a => activityBySku.FirstOrDefault(b => b.SkuId == a.SkuId).ActivityDiscount)
             .ToArray();
 
         // ---------- ① 营销占券 ----------
@@ -271,7 +290,7 @@ public sealed class OrderCreator
             var amount = OrderAmountCalculator.Calculate(
                 amountLines,
                 OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
-                new decimal[amountLines.Length],   // 活动优惠尚未落地，先全 0
+                activityDiscounts,
                 request.Freight,
                 pointsUsed);
 

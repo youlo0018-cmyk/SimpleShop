@@ -7,6 +7,32 @@ namespace OrderService.Domain.Ports;
 /// 这三个端口对应下单链路的前三步（BUSINESS.md 8.1 链路 7）：
 /// ① 营销占券 ② 锁定积分 ③ 锁定库存。④ 落单是本地写入。
 /// </remarks>
+/// <summary>活动优惠试算端口（下单时按行算满减 / 满折 / 满赠）。</summary>
+public interface IActivityPort
+{
+    /// <summary>按订单行试算活动优惠。</summary>
+    /// <param name="customerId">客户 Id，0 表示游客。</param>
+    /// <param name="platformId">平台 Id，0 表示不限。</param>
+    /// <param name="sessionId">秒杀场次 Id，0 表示非秒杀单。</param>
+    /// <param name="couponId">客户已选的券 Id，0 表示不用券。</param>
+    /// <param name="lines">订单行（SPU / SKU / 金额）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>逐行活动优惠额；算不到时返回全 0，<b>不抛异常</b>。</returns>
+    /// <remarks>
+    /// 结算试算会算活动优惠给前端看，但下单链路拿不到它 ——
+    /// 结果是「报价 41、实收 51」，优惠凭空消失而页面无任何报错。
+    ///
+    /// <para><b>刻意吞掉异常</b>：营销服务不可用时按「无活动优惠」继续下单，
+    /// 而不是让下单整个失败。理由是实付金额仍由订单服务按行金额自己算，
+    /// 少算优惠只是少给折扣，多算才是资损。</para>
+    /// </remarks>
+    Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
+        long customerId, long platformId, long sessionId, long couponId,
+        IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
+        CancellationToken ct = default);
+}
+
+/// <summary>券端口。定义在 Domain，编排逻辑才能在不依赖网络的情况下被单元测试。</summary>
 public interface ICouponPort
 {
     /// <summary>① 占券。</summary>
