@@ -49,6 +49,7 @@ public sealed class QueryShopProductsHandler
             Keyword = request.Keyword ?? string.Empty,
             CategoryId = request.CategoryId,
             BrandId = request.BrandId,
+            MerchantId = request.MerchantId,
 
             // 前台只看「审核通过 + 已上架」，写死在服务端
             AuditStatus = AuditStatuses.Approved,

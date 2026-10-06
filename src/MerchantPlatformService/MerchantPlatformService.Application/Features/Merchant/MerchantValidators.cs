@@ -21,6 +21,8 @@ public static class MerchantValidators
         services.AddScoped<IValidator<DeleteMerchantCommand>, DeleteMerchantValidator>();
         services.AddScoped<IValidator<ResubmitMerchantCommand>, ResubmitMerchantValidator>();
         services.AddScoped<IValidator<ChangeMerchantStatusCommand>, ChangeMerchantStatusValidator>();
+        services.AddScoped<IValidator<QueryPublicShopsCommand>, QueryPublicShopsValidator>();
+        services.AddScoped<IValidator<QueryPublicShopDetailCommand>, QueryPublicShopDetailValidator>();
         services.AddScoped<IValidator<QueryMerchantsCommand>, QueryMerchantsValidator>();
     }
 
@@ -121,5 +123,28 @@ public static class MerchantValidators
             RuleFor(x => x.Page).GreaterThanOrEqualTo(1).WithMessage("页码不正确");
             RuleFor(x => x.PageSize).InclusiveBetween(1, 100).WithMessage("每页条数不正确");
         }
+    }
+
+    /// <summary>小程序店铺列表校验。</summary>
+    private sealed class QueryPublicShopsValidator : AbstractValidator<QueryPublicShopsCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public QueryPublicShopsValidator()
+        {
+            RuleFor(x => x.PlatformId).GreaterThanOrEqualTo(0).WithMessage("平台 Id 不正确");
+            RuleFor(x => x.Keyword).MaximumLength(64).WithMessage("关键词最多 64 个字符");
+            RuleFor(x => x.Page).GreaterThanOrEqualTo(1).WithMessage("页码不正确");
+            // 上限 50：前台一屏翻不完 50 条之外的，再多也是白查
+            RuleFor(x => x.PageSize).InclusiveBetween(1, 50).WithMessage("每页条数不正确");
+        }
+    }
+
+    /// <summary>小程序店铺详情校验。</summary>
+    private sealed class QueryPublicShopDetailValidator
+        : AbstractValidator<QueryPublicShopDetailCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public QueryPublicShopDetailValidator()
+            => RuleFor(x => x.MerchantId).GreaterThan(0).WithMessage("店铺信息不正确");
     }
 }

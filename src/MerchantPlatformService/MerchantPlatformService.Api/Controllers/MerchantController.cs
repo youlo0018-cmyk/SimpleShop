@@ -110,4 +110,35 @@ public sealed class MerchantController : ControllerBase
         var result = await _mediator.Send(new QueryMerchantOptionsQuery(platformId), ct);
         return Ok(result);
     }
+
+    /// <summary>小程序店铺列表（无需登录）。</summary>
+    /// <param name="platformId">限定平台，0 表示不限。</param>
+    /// <param name="keyword">按店铺名模糊搜索。</param>
+    /// <param name="page">页码，从 1 起。</param>
+    /// <param name="pageSize">每页条数。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>店铺分页，只含审核通过且已启用的店铺。</returns>
+    /// <remarks>
+    /// 「审核通过 + 已启用」写死在服务端，不提供开关参数 ——
+    /// 能被前台传进来的筛选条件，迟早会被传错。
+    /// </remarks>
+    [HttpGet("Shop")]
+    public Task<ApiResponse<PagedPublicShopDtos>> Shop(
+        // 两个筛选项都要默认值：ASP.NET 的 [FromQuery] 对非可空 string 会当成
+        // **必填**，于是不传 keyword 的 /merchants/Shop 直接 400 ——
+        // 而「不筛选」本来就是这个接口最常见的用法。
+        [FromQuery] long platformId = 0, [FromQuery] string keyword = "",
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+        => _mediator.Send(
+            new QueryPublicShopsCommand(platformId, keyword ?? string.Empty, page, pageSize), ct);
+
+    /// <summary>小程序店铺详情（无需登录）。</summary>
+    /// <param name="merchantId">商户 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>店铺信息；未过审或已停用回 404。</returns>
+    [HttpGet("Shop/{merchantId:long}")]
+    public Task<ApiResponse<PublicShopDto>> ShopDetail(
+        [FromRoute] long merchantId, CancellationToken ct)
+        => _mediator.Send(new QueryPublicShopDetailCommand(merchantId), ct);
 }

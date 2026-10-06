@@ -10,6 +10,10 @@ namespace ProductService.Application.Features.Shop;
 /// <param name="Keyword">按商品名模糊搜索。</param>
 /// <param name="CategoryId">按分类过滤，0 不限。</param>
 /// <param name="BrandId">按品牌过滤，0 不限。</param>
+/// <param name="MerchantId">
+/// 按店铺过滤，0 表示不限，店铺页用它列本店商品。
+/// 没有它的话店铺页只能拿到全站商品 —— 小程序「店铺页」退化成「商品列表换个标题」。
+/// </param>
 /// <param name="Page">页码。</param>
 /// <param name="PageSize">每页条数。</param>
 /// <param name="SortBy">排序方式，见 <see cref="ShopSorts"/>。</param>
@@ -18,6 +22,7 @@ public record QueryShopProductsCommand(
     string Keyword = "",
     long CategoryId = 0,
     long BrandId = 0,
+    long MerchantId = 0,
     int Page = 1,
     int PageSize = 20,
     int SortBy = ShopSorts.Default) : IRequest<ApiResponse<ShopProductPage>>;

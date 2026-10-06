@@ -199,6 +199,32 @@ Invoke-Case 'API-GTW-037' '通配修复不能误伤：超管读日志 / 报表�
     return (Get-Status 'POST' '/gateway/reports/Report' $h @{ range = 4 }) -eq 200
 }
 
+Invoke-Case 'API-GTW-038' '🔴 P0 游客可搜索商品（匿名白名单漏登记会直接 401）' {
+    # 规格 1.2：游客能浏览商品。搜索也是浏览能力。
+    # 之前 /shop/products/Search 没登记进匿名白名单，于是「游客能逛列表、不能搜」，
+    # 症状像是搜索功能坏了，根本查不到是网关这一层漏了。
+    #
+    # 刻意**不带任何 Authorization 头** —— 带上低权限令牌就测不出匿名开放了。
+    $r = Invoke-RestMethod "$Gateway/gateway/shop/products/Search" -Method Post `
+        -Body (@{ keyword = '商品'; page = 1; pageSize = 5 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    return $r.success
+}
+
+Invoke-Case 'API-GTW-039' '🔴 P0 游客可浏览店铺列表与店铺详情' {
+    # 店铺浏览是 C 端必需能力（BUSINESS 1.2 把店铺页列入游客可浏览范围）。
+    # 列表与详情是两条路径：白名单只登记精确路径的话详情会 401，
+    # 症状是「列表能看、点进去 401」，很容易被当成前端路由问题。
+    $list = Invoke-RestMethod "$Gateway/gateway/merchants/Shop?page=1&pageSize=5" -TimeoutSec 30
+    if (-not $list.success) { return $false }
+
+    $hit = @($list.data.items)[0]
+    if (-not $hit) { return $true }   # 没有可用店铺时列表可达即算通过
+
+    $detail = Invoke-RestMethod "$Gateway/gateway/merchants/Shop/$($hit.merchantId)" -TimeoutSec 30
+    return $detail.success -and $detail.data.merchantId -eq $hit.merchantId
+}
+
 Invoke-Case 'API-GTW-040' '清理低权限测试账号' {
     if ($script:merchantAccountId -le 0) { return $true }
 

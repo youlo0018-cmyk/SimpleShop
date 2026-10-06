@@ -34,6 +34,10 @@ public sealed class GatewayOptions
         "/gateway/auth/Token",
         "/gateway/shop/products/List",
         "/gateway/shop/products/Detail",
+        // 搜索同样是游客可用的浏览能力（规格 1.2：游客能浏览商品）。
+        // 之前漏在这里，于是游客搜商品直接 401，而游客看列表却是 200 ——
+        // 症状是「能逛不能搜」，很容易被误当成搜索功能坏了。
+        "/gateway/shop/products/Search",
         "/gateway/shop/catalog/CategoryTree",
         "/gateway/shop/catalog/Brands",
         "/gateway/design/Store",
@@ -43,8 +47,19 @@ public sealed class GatewayOptions
         "/gateway/coupons/Available"
     ];
 
-    /// <summary>无需登录、但需要 RBAC 校验的路径前缀（登录后才能访问、只看公共数据）。</summary>
-    public string[] AnonymousPathPrefixes { get; set; } = ["/gateway/files/Content/"];
+    /// <summary>无需登录的路径前缀（登录后也能访问，只看公共数据）。</summary>
+    public string[] AnonymousPathPrefixes { get; set; } =
+    [
+        "/gateway/files/Content/",
+
+        // 店铺浏览走**前缀**而不是精确路径：列表是 /merchants/Shop，
+        // 详情是 /merchants/Shop/{id}，两条都得放行匿名。
+        // 只登记精确路径的话详情会 401 —— 而症状是「店铺列表能看、点进去 401」，
+        // 很容易被当成前端路由问题，根本查不到网关这一层。
+        // 可见性（只返回审核通过 + 已启用的店铺，VIS-001 / VIS-002）
+        // 由商户服务写死筛选，这里只负责放行匿名 —— 两件事分开，各管一头。
+        "/gateway/merchants/Shop",
+    ];
 }
 
 /// <summary>后台令牌（RS256）配置。</summary>

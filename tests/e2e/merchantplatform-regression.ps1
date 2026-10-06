@@ -80,6 +80,18 @@ function MpGet([string]$Path) {
     return Invoke-RestMethod "$Gateway/gateway$Path" -Headers $script:adminHeaders -TimeoutSec 60
 }
 
+<#
+.SYNOPSIS
+    以**游客**身份调 C 端接口（刻意不带任何 Authorization 头）。
+.DESCRIPTION
+    刻意不带令牌：带上管理员令牌的话，网关会先认出它是后台身份，
+    「这个接口是否对游客开放」就完全测不出来了 ——
+    而匿名白名单漏登记恰恰是这里最容易出的错（症状是游客 401、登录后正常）。
+#>
+function MpPublicGet([string]$Path) {
+    return Invoke-RestMethod "$Gateway/gateway$Path" -TimeoutSec 60
+}
+
 function MpAdminPost([string]$Path, $Body) {
     # 商户审核的审核人现在由服务端从令牌租户上下文取（网关注入的 X-Claim-*），
     # 直连 $Merchant 就没有租户上下文，会被「登录状态已失效」挡掉。
@@ -359,6 +371,57 @@ Invoke-Case 'API-MP-028b' '已通过审核的商户可重新启用（幂等回�
     # 反过来（待审核时启用）由 ChangeMerchantStatusHandler 拒绝，两边合起来才是完整规则。
     $r = MpAdminPost '/merchants/ChangeStatus' @{ merchantId = $script:merchantId; status = 1 }
     return $r.success -and $r.message -match '启用'
+}
+
+Write-Host "`n=== MP C 端店铺可见性（VIS-001 / VIS-002）===" -ForegroundColor Cyan
+
+Invoke-Case 'API-MP-050' '🔴 P0 未审核商户 C 端店铺列表里看不到（VIS-001）' {
+    # 建一个**待审核**商户：它从没通过审核，绝不能出现在小程序里
+    $m = MpPost '/merchants/Create' @{
+        merchantName = "待审店$($script:suffix)"; platformId = $script:platformId
+        contactName = '李五'; contactPhone = '13900139000'
+    }
+    if (-not $m.success) { return $false }
+    $script:pendingMerchantId = [long]$m.data
+
+    $list = MpPublicGet "/merchants/Shop?page=1&pageSize=50"
+    $hit = @($list.data.items | Where-Object { $_.merchantId -eq "$($script:pendingMerchantId)" })
+    return $list.success -and $hit.Count -eq 0
+}
+
+Invoke-Case 'API-MP-051' '🔴 P0 待审核商户的 C 端店铺详情也取不到（不区分「不存在」与「没营业」）' {
+    $r = MpPublicGet "/merchants/Shop/$($script:pendingMerchantId)"
+    # 业务失败是 HTTP 200 + success=false（见 CODING_STANDARD），所以断言 success 而不是状态码
+    return (-not $r.success) -and $r.message -match '尚未营业'
+}
+
+Invoke-Case 'API-MP-052' '🔴 P0 审核通过 + 启用后，C 端能看到这家店（VIS-001 的反向）' {
+    $a = MpAdminPost '/merchants/Audit' @{
+        merchantId = $script:pendingMerchantId; auditStatus = 20; auditRemark = '资料齐全'
+    }
+    if (-not $a.success) { return $false }
+
+    $list = MpPublicGet '/merchants/Shop?page=1&pageSize=50'
+    $hit = @($list.data.items | Where-Object { $_.merchantId -eq "$($script:pendingMerchantId)" })
+    $detail = MpPublicGet "/merchants/Shop/$($script:pendingMerchantId)"
+    return $hit.Count -eq 1 -and $detail.success
+}
+
+Invoke-Case 'API-MP-053' '🔴 P0 停用商户 C 端立即不可见（VIS-002）' {
+    $d = MpAdminPost '/merchants/ChangeStatus' @{ merchantId = $script:pendingMerchantId; status = 2 }
+    if (-not $d.success) { return $false }
+
+    $list = MpPublicGet '/merchants/Shop?page=1&pageSize=50'
+    $hit = @($list.data.items | Where-Object { $_.merchantId -eq "$($script:pendingMerchantId)" })
+    $detail = MpPublicGet "/merchants/Shop/$($script:pendingMerchantId)"
+    return $hit.Count -eq 0 -and (-not $detail.success)
+}
+
+Invoke-Case 'API-MP-054' '店铺列表返回平台名与评分，不是空串' {
+    $list = MpPublicGet '/merchants/Shop?page=1&pageSize=5'
+    if (-not $list.success -or @($list.data.items).Count -eq 0) { return $false }
+    $row = @($list.data.items)[0]
+    return $row.platformName -and [decimal]$row.rating -ge 0
 }
 
 Write-Host "`n=== MP 地区地址 ===" -ForegroundColor Cyan

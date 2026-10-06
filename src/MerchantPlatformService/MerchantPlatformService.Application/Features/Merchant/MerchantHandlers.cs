@@ -569,3 +569,106 @@ public sealed class QueryMerchantOptionsHandler
         return Task.FromResult(ApiResults.Ok(items));
     }
 }
+
+/// <summary>小程序店铺列表处理器（无需登录）。</summary>
+/// <remarks>
+/// 「审核通过 + 已启用」两个条件<b>写死在服务端</b>，不作为查询参数暴露：
+/// 一旦前台能传 <c>auditStatus=10</c>，改一个 URL 就能看到没过审的店铺，
+/// 而那种店点进去是空的。与其加权限校验，不如根本不提供这个开关。
+/// </remarks>
+public sealed class QueryPublicShopsHandler
+    : IRequestHandler<QueryPublicShopsCommand, ApiResponse<PagedPublicShopDtos>>
+{
+    private readonly IMerchantRepository _merchants;
+    private readonly IPlatformRepository _platforms;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="merchants">商户仓储。</param>
+    /// <param name="platforms">平台仓储（取平台名）。</param>
+    public QueryPublicShopsHandler(IMerchantRepository merchants, IPlatformRepository platforms)
+    {
+        _merchants = merchants;
+        _platforms = platforms;
+    }
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>店铺分页。</returns>
+    public async Task<ApiResponse<PagedPublicShopDtos>> Handle(
+        QueryPublicShopsCommand request, CancellationToken ct)
+    {
+        var page = Math.Max(1, request.Page);
+        var pageSize = Math.Clamp(request.PageSize, 1, 50);
+
+        var filter = new MerchantFilter(
+            request.PlatformId, request.Keyword,
+            MerchantAuditStatuses.Approved,   // VIS-001：没审过的不给看
+            PlatformStatuses.Enabled,         // VIS-002：停用的不给看
+            page, pageSize);
+
+        var result = await _merchants.PageAsync(filter, ct).ConfigureAwait(false);
+
+        var platforms = _platforms.ListEnabled().ToDictionary(a => a.Id, a => a.PlatformName);
+
+        var items = result.Items.Select(a => new PublicShopDto(
+            a.Id,
+            a.MerchantName,
+            a.Logo,
+            a.Description,
+            a.PlatformId,
+            platforms.TryGetValue(a.PlatformId, out var name) ? name : string.Empty,
+            // 评分库里存两位小数；0 表示还没有评价，前端按规格显示 5.0
+            a.Rating)).ToList();
+
+        return ApiResults.Ok(new PagedPublicShopDtos(items, result.Total, page, pageSize));
+    }
+}
+
+/// <summary>小程序店铺详情处理器（无需登录）。</summary>
+public sealed class QueryPublicShopDetailHandler
+    : IRequestHandler<QueryPublicShopDetailCommand, ApiResponse<PublicShopDto>>
+{
+    private readonly IMerchantRepository _merchants;
+    private readonly IPlatformRepository _platforms;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="merchants">商户仓储。</param>
+    /// <param name="platforms">平台仓储（取平台名）。</param>
+    public QueryPublicShopDetailHandler(IMerchantRepository merchants, IPlatformRepository platforms)
+    {
+        _merchants = merchants;
+        _platforms = platforms;
+    }
+
+    /// <summary>执行查询。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>店铺信息；不可见时回 404。</returns>
+    public async Task<ApiResponse<PublicShopDto>> Handle(
+        QueryPublicShopDetailCommand request, CancellationToken ct)
+    {
+        var merchant = await _merchants.GetByIdAsync(request.MerchantId, ct).ConfigureAwait(false);
+
+        // 不区分「不存在」与「没营业」：区分开等于告诉别人这家店存在，
+        // 只是现在不能看。
+        if (merchant is null
+            || merchant.AuditStatus != MerchantAuditStatuses.Approved
+            || merchant.Status != PlatformStatuses.Enabled)
+        {
+            return ApiResults.Fail<PublicShopDto>(
+                BaseApiResponseCode.NotFound, "店铺不存在或尚未营业");
+        }
+
+        var platform = await _platforms.GetByIdAsync(merchant.PlatformId, ct).ConfigureAwait(false);
+
+        return ApiResults.Ok(new PublicShopDto(
+            merchant.Id,
+            merchant.MerchantName,
+            merchant.Logo,
+            merchant.Description,
+            merchant.PlatformId,
+            platform?.PlatformName ?? string.Empty,
+            merchant.Rating));
+    }
+}
