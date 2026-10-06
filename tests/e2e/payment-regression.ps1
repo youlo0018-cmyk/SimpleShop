@@ -449,6 +449,50 @@ Invoke-Case 'API-PAY-035b' '🔴 P0 审批通过后库存必须回补（两段�
         -and $line.refundableAmount -eq 0
 }
 
+Invoke-Case 'API-PAY-035c' '🔴 P0 部分退款后订单**不能**被标成整单已退款（剩下的钱还要能退）' {
+    # 两段式退款以前**无条件**把订单转 60，于是「退了一件」等于「整单作废」：
+    # 实测退掉 60 / 实付 100 之后，订单状态直接变成 60，剩下 40 客户再也退不了。
+    # BUSINESS 10.2 明确支持按行部分退，单步退款那条路径也只退一行时不改状态。
+    #
+    # 这里在同一行上退一部分金额（51 元里退 20），等价于部分退款，
+    # 不需要再造一个 SKU。
+    $o = New-PendingOrder 'PART'
+    if (-not $o.orderNo) { return $false }
+    $no = $o.orderNo
+
+    PayPost '/payments/Simulate' @{ orderNo = $no; success = $true } | Out-Null
+    if ((Get-OrderStatus $no) -ne 20) { return $false }
+
+    $list = Invoke-RestMethod "$Gateway/gateway/admin/orders/List" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ keyword = $no; page = 1; pageSize = 5 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $oid = (@($list.data.items)[0]).orderId
+    $detail = Invoke-RestMethod "$Gateway/gateway/admin/orders/Detail" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ orderId = $oid } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 20
+    $line = @($detail.data.items)[0]
+    $paid = [decimal]$detail.data.payableAmount
+
+    $apply = PayPost '/refunds/Apply' @{
+        orderId = 0; orderNo = $no
+        items = @(@{ orderItemId = [long]$line.orderItemId; amount = 20.00 })
+        reason = '只退其中一部分，验证订单不会被整单关掉'
+    }
+    if (-not $apply.success) { Write-Host ("        申请失败: " + $apply.message) -ForegroundColor DarkYellow; return $false }
+    $approve = PayAdminPost '/refunds/Approve' @{ refundId = [long]$apply.data }
+    if (-not $approve.success) { Write-Host ("        审批失败: " + $approve.message) -ForegroundColor DarkYellow; return $false }
+
+    $status = Get-OrderStatus $no
+    $after = Invoke-RestMethod "$Gateway/gateway/admin/orders/Detail" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ orderId = $oid } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 20
+    $lineAfter = @($after.data.items)[0]
+
+    Write-Host ("        实付 {0}，退了 20.00；订单状态={1}，行可退={2}" -f `
+        $paid, $status, $lineAfter.refundableAmount) -ForegroundColor DarkGray
+
+    # 状态必须**不是** 60（整单已退款），剩下的钱还得能退
+    return $status -ne 60 -and $lineAfter.refundableAmount -eq ($line.payableAmount - 20.00)
+}
+
 Invoke-Case 'API-PAY-037' '🔴🔴 审批人取自令牌，伪造请求体里的 approverName 无效' {
     # 这是本轮修掉的审计缺陷：ApproveRefundCommand 的审批人曾直接取自请求体，
     # 调用方可以自称任意审批人，而「退款单审批人」是财务审计凭据。

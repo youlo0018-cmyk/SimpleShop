@@ -185,11 +185,23 @@ public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefunded
                 .ToList();
         }
 
+        // 只有**累计退满**才把订单转 60。
+        // 部分退款把整单标成「已退款」的话，剩下的钱客户再也退不了 ——
+        // BUSINESS 10.2 明确支持按行部分退，单步退款那条路径也是这么做的
+        // （只退一行时订单保持原状态）。两段式这条以前无条件转 60，
+        // 于是「退了一件」等于「整单作废」。
+        // 累计已退金额取**退款单主表的金额合计**，不是行明细合计 ——
+        // 整单退含运费，而行明细只记商品金额（规格 10.2：整单退含运费、部分退不退运费）。
+        // 用行明细去比实付，一笔含运费的整单退（商品 51 + 运费 10 = 61）永远比不满 61，
+        // 订单就永远转不成已退款。
+        var priorRefunds = await _store.ListRefundsAsync(order.Id, ct).ConfigureAwait(false);
+        var priorRefunded = priorRefunds.Sum(a => a.Refund.Amount);
+
+        var fullyRefunded = OrderRefundRules.Round2(priorRefunded + request.RefundAmount) >= order.PayableAmount;
+
         if (refundItems.Count > 0)
         {
             var refundedTotal = refundItems.Sum(a => a.Amount);
-            var priorTotal = (await _store.AggregateRefundedItemsAsync(order.Id, ct).ConfigureAwait(false))
-                .Values.Sum(a => a.Amount);
 
             var ledger = new OrderRefund
             {
@@ -206,7 +218,7 @@ public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefunded
                     : OrderRefundTypes.Partial,
                 // 累计退满才算整单退完。与单步退款那条路径同一个判据，
                 // 免得两条路径对「退完没退完」给出不同答案。
-                FullyRefunded = OrderRefundRules.Round2(priorTotal + refundedTotal) >= order.PayableAmount,
+                FullyRefunded = fullyRefunded,
                 Reason = "支付服务审批通过的退款",
                 OperatorId = 0,
                 OperatorName = "payment-service",
@@ -229,6 +241,15 @@ public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefunded
                 .ToList();
 
             await _store.SaveRefundAsync(ledger, ledgerItems, ct).ConfigureAwait(false);
+        }
+
+        if (!fullyRefunded)
+        {
+            _logger.LogInformation(
+                "订单 {OrderNo} 部分退款 {Amount} 元已生效，订单保持 {Status}，剩余仍可退",
+                order.OrderNo, request.RefundAmount, order.Status);
+
+            return ApiResponseFactory.Ok("退款已生效（部分退款，订单仍可继续退）");
         }
 
         var affected = await _store.TryTransitStatusAsync(order.Id, order.Status, OrderStatuses.Refunded, ct).ConfigureAwait(false);
