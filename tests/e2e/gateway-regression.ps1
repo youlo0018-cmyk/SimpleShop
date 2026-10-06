@@ -225,6 +225,49 @@ Invoke-Case 'API-GTW-039' '🔴 P0 游客可浏览店铺列表与店铺详情' {
     return $detail.success -and $detail.data.merchantId -eq $hit.merchantId
 }
 
+Write-Host "`n=== GTW 畸形令牌必须 401 而非 500（AUT-007 / AUT-008）===" -ForegroundColor Cyan
+
+# REVIEW 链路 0 第 2 步明确要求：解码异常**必须捕获**，不得冒泡成 500。
+# 500 看着像「服务器坏了」，实际是网关没兜住 —— 而且 500 常被网关默认重试/告警策略
+# 当成真故障处理，比 401 吵得多。
+$badTokens = @(
+    @{ name = '非 JWT 串';        token = 'Bearer hello-world' },
+    @{ name = '乱码三段';          token = 'Bearer aaa.bbb.ccc' },
+    @{ name = 'alg=none 空签';     token = 'Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIn0.' },
+    @{ name = '篡改载荷';          token = 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwicm9sZSI6InN1cGVyIn0.bad' },
+    @{ name = 'HS256 冒充 RS256';  token = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abc' },
+    @{ name = '空 Bearer';         token = 'Bearer ' }
+)
+
+$allBad401 = $true
+foreach ($t in $badTokens) {
+    try {
+        Invoke-WebRequest "$Gateway/gateway/users/List" -Method Get `
+            -Headers @{ Authorization = $t.token } -UseBasicParsing -TimeoutSec 15 | Out-Null
+        Write-Host ("        ✗ {0} 居然通过了" -f $t.name) -ForegroundColor Red
+        $allBad401 = $false
+    } catch {
+        $code = [int]$_.Exception.Response.StatusCode
+        if ($code -ne 401) {
+            Write-Host ("        ✗ {0} 返回 {1}（期望 401）" -f $t.name, $code) -ForegroundColor Red
+            $allBad401 = $false
+        }
+    }
+}
+
+# 用 scriptblock 闭包包住布尔值：Invoke-Case 的第三参是 scriptblock，
+# 直接传 $allBad401 会被当成非法的 scriptblock 而永远判失败。
+Invoke-Case 'API-GTW-041' '🔴🔴 P0 六种畸形 / 伪造令牌一律 401，无一冒泡成 500（AUT-007 / AUT-008）' { $allBad401 }
+
+Invoke-Case 'API-GTW-042' '完全不带头也回 401（而不是 404 或 500）' {
+    try {
+        Invoke-WebRequest "$Gateway/gateway/users/List" -Method Get -UseBasicParsing -TimeoutSec 15 | Out-Null
+        return $false
+    } catch {
+        return [int]$_.Exception.Response.StatusCode -eq 401
+    }
+}
+
 Invoke-Case 'API-GTW-040' '清理低权限测试账号' {
     if ($script:merchantAccountId -le 0) { return $true }
 
