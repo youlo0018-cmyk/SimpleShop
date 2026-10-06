@@ -293,6 +293,7 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | 收藏 | `pages/favorite/list`：商品摘要、已下架置灰、取消收藏；商品详情加收藏按钮 |
 | 评价 | `pages/evaluate/form`：星级 / 文字 / 最多 9 图 / 匿名；追评 30 天内最多 3 条；订单详情与「我的评价」都有入口 |
 | 退款 | `pages/refund/form`：整单退款 + 必填原因；网关按客户令牌放行 `/gateway/refunds/Apply`，服务端 `PaymentOwnership` 校验订单归属 |
+| 秒杀 | 秒杀频道接通「立即抢购」：登录 + 默认收货地址 → `/gateway/marketing/seckill/grab` → 成功跳订单详情；抢完 / 限购 / 失败按 `resultStatus` 提示 |
 | 地区库 | 新增匿名接口 `GET /gateway/regions/Public?platformCode=`，地址表单三级联动不再依赖后台令牌 |
 | 图片上传 | 网关新增 `CustomerAllowedPaths`，客户令牌可复用 `/gateway/files/Upload`（仍然先验签，只是跳过后台权限点） |
 
