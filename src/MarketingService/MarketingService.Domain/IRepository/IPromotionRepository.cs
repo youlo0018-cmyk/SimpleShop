@@ -111,6 +111,27 @@ public interface IPromotionRepository
     Task<(List<MarketingActivityRecord> Items, long Total)> PageParticipationAsync(
         long activityId, DateTime from, DateTime to, int page, int pageSize,
         CancellationToken ct = default);
+
+    /// <summary>列出超过指定时长仍未被确认存在订单的参与记录候选。</summary>
+    /// <param name="createdBefore">只取创建时间早于该时刻的记录（UTC）。</param>
+    /// <param name="limit">单轮最多返回多少条。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>按创建时间升序排列的候选记录。</returns>
+    /// <remarks>
+    /// 下单试算会先写参与记录、再落订单；进程死在两步之间时记录会变成孤儿。
+    /// 这里只负责「找候选」，是否真的不存在由订单服务的批量存在性接口确认，
+    /// 绝不能因为「查不到」就删除——订单服务抖动时那会把真实订单的记录清掉。
+    /// </remarks>
+    Task<List<MarketingActivityRecord>> ListParticipationOrphansAsync(
+        DateTime createdBefore, int limit, CancellationToken ct = default);
+
+    /// <summary>按订单号软删活动参与记录（孤儿清理用）。</summary>
+    /// <param name="orderNos">订单号集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。</returns>
+    /// <remarks>软删而不是物理删：保留「曾经记过又清掉」的痕迹，便于排查对账问题。</remarks>
+    Task<int> SoftDeleteParticipationByOrderNosAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default);
 }
 
 /// <summary>参与聚合结果。</summary>

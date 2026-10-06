@@ -189,7 +189,7 @@
 | **MerchantPlatform** | 5070 | 5070 | simpleshopmerchant | 平台/商户管理、地区地址配置、小程序装修配置（草稿 + 发布） |
 | **Point** | 5082 | 5083 | simpleshoppoint | 积分：账户、流水、冻结/扣减/回收/过期、每日签到 |
 | **Evaluate** | 5084 | 5084 | simpleshopevaluate | 评价：SPU 级评价、SKU 标记、图片、追评、商户/平台回复 |
-| **Scheduled** | - | - | simpleshopscheduled + 跨服务库 | 独立定时进程：支付超时关单、库存释放补偿、孤儿预留对账、积分过期、评价聚合重算 |
+| **Scheduled** | - | - | simpleshopscheduled + 跨服务库 | 独立定时进程：支付超时关单、库存释放补偿、孤儿预留对账、活动参与记录孤儿清理、积分过期、评价聚合重算 |
 | **Log** | 5088 | - | Elasticsearch | 消费 pv / operation / exception 日志 → ES（带 DLQ） |
 
 **共 17 个后端服务**（含 Gateway、Scheduled、Log）。

@@ -34,6 +34,7 @@ public static class ApiServiceCollectionExtensions
         AdminCouponValidators.AddAdminCouponValidators(services);
         CouponTemplateOptionValidators.AddCouponTemplateOptionValidators(services);
         PromotionValidators.AddPromotionValidators(services);
+        ActivityRecordCleanupValidators.AddActivityRecordCleanupValidators(services);
         SeckillValidators.AddSeckillValidators(services);
         SeckillSessionOptionValidators.AddSeckillSessionOptionValidators(services);
         GrabValidators.AddGrabValidators(services);

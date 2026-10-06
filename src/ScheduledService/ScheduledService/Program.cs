@@ -12,6 +12,8 @@ var builder = Host.CreateApplicationBuilder(args);
 // 孤儿对账要用两个不同 BaseAddress 的 HttpClient（见下方注册处）
 const string OrphanInventoryClient = "orphan_inventory";
 const string OrphanOrderClient = "orphan_order";
+const string ActivityCleanupMarketingClient = "activity_cleanup_marketing";
+const string ActivityCleanupOrderClient = "activity_cleanup_order";
 
 // ---------- 与其它服务同一条启动链：先从 AgileConfig 取配置，再连 Redis ----------
 // 定时任务没有数据库，所以显式豁免 ConnectionStrings:Default。
@@ -99,6 +101,26 @@ builder.Services.AddTransient(sp => new OrphanLockReconcileJob(
     sp.GetRequiredService<IHttpClientFactory>().CreateClient(OrphanInventoryClient),
     sp.GetRequiredService<IHttpClientFactory>().CreateClient(OrphanOrderClient),
     sp.GetRequiredService<ILogger<OrphanLockReconcileJob>>()));
+
+// 活动参与记录孤儿清理：同样要同时问营销服务（候选）与订单服务（是否存在）。
+builder.Services.AddHttpClient(ActivityCleanupMarketingClient, client =>
+{
+    client.BaseAddress = new Uri(marketingUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+
+builder.Services.AddHttpClient(ActivityCleanupOrderClient, client =>
+{
+    client.BaseAddress = new Uri(orderUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+
+builder.Services.AddTransient(sp => new ActivityRecordCleanupJob(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient(ActivityCleanupMarketingClient),
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient(ActivityCleanupOrderClient),
+    sp.GetRequiredService<ILogger<ActivityRecordCleanupJob>>()));
+
+builder.Services.AddTransient<IJob>(sp => sp.GetRequiredService<ActivityRecordCleanupJob>());
 
 builder.Services.AddHttpClient<ProductSearchIndexSyncJob>(client =>
 {

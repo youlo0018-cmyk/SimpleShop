@@ -15,6 +15,7 @@
 [CmdletBinding()]
 param(
     [string]$Marketing = 'http://127.0.0.1:5072',
+    [string]$Order = 'http://127.0.0.1:5064',
     [string]$Gateway = 'http://127.0.0.1:5008',
     [string]$Inventory = 'http://127.0.0.1:5062',
     [string]$AdminUser = 'codexadmin',
@@ -788,6 +789,47 @@ Invoke-Case 'API-RPT-047' '🔴 活动报表：参与订单数 / 参与金额 / 
         -and $row.orderCount -eq 1 `
         -and $row.orderAmount -eq ($script:gftPrice - $script:rptDiscount) `
         -and $row.discountTotal -eq $script:rptDiscount
+}
+
+Invoke-Case 'API-RPT-047b' '🔴 孤儿参与记录：订单不存在时对账软删，报表与下钻都不虚增' {
+    $fakeOrderNo = "ORPHAN$($script:suffix)"
+
+    # 1. 直接调内部试算接口写一条参与记录，模拟「试算成功、落单前进程退出」。
+    $quoteBody = @{
+        customerId = $script:rptCustomerId
+        lines = @(@{ spuId = 100; skuId = 1001; amount = 60; merchantId = 0 })
+        platformId = 0; sessionId = 0; couponId = 0; orderNo = $fakeOrderNo
+    }
+    $quote = Invoke-RestMethod "$Marketing/internal/marketing/activities/Quote" -Method Post `
+        -Body ($quoteBody | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30
+    if (-not $quote.success) { return $false }
+
+    # 2. 列候选：OlderThanMinutes=0 只用于测试，正式定时任务用 30 分钟。
+    $candidates = Post '/internal/marketing/activities/orphan-candidates' @{ olderThanMinutes = 0; limit = 200 }
+    $hit = @($candidates.data | Where-Object { $_.orderNo -eq $fakeOrderNo })
+    if ($hit.Count -ne 1) { return $false }
+
+    # 3. 订单服务确认这个订单号确实不存在（存在的话绝不能清）。
+    $existsBody = @{ orderNos = @($fakeOrderNo) }
+    $exists = Invoke-RestMethod "$Order/internal/orders/batch-exists" -Method Post `
+        -Body ($existsBody | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json' -TimeoutSec 30
+    if (@($exists.data.missing) -notcontains $fakeOrderNo) { return $false }
+
+    # 4. 软删，报表与下钻必须同时恢复一致。
+    $discardBody = @{ orderNos = @($fakeOrderNo) }
+    $discard = Invoke-RestMethod "$Marketing/internal/marketing/activities/discard-orphans" -Method Post `
+        -Body ($discardBody | ConvertTo-Json -Depth 6 -Compress) -ContentType 'application/json' -TimeoutSec 30
+    if (-not $discard.success -or $discard.data -lt 1) { return $false }
+
+    $r = Post '/reports/Marketing' @{ range = 1; merchantId = 0; platformId = 0 }
+    $row = @($r.data.activities | Where-Object { [long]$_.activityId -eq $script:rptActivityId })[0]
+    $drill = Post '/marketing/activities/Records' @{
+        activityId = $script:rptActivityId; range = 1; page = 1; pageSize = 20
+    }
+
+    return $row.orderCount -eq 1 `
+        -and $drill.data.total -eq 1 `
+        -and @($drill.data.items | Where-Object { $_.orderNo -eq $fakeOrderNo }).Count -eq 0
 }
 
 Invoke-Case 'API-RPT-003' '🔴 营销效果下钻：按活动查到订单明细，且时间口径与报表一致' {

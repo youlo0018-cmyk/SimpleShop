@@ -77,4 +77,28 @@ public sealed class InternalMarketingController : ControllerBase
     public Task<ApiResponse<GiftIssueResult>> IssueGiftGrants(
         [FromBody] IssueGiftGrantsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>列出活动参与记录里的孤儿候选（定时任务对账用）。</summary>
+    /// <param name="command">候选查询命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>创建超过指定时长的参与记录；是否真的没有对应订单由订单服务确认。</returns>
+    /// <remarks>
+    /// 下单试算会先写参与记录、再落订单，进程死在两步之间时记录会变成孤儿。
+    /// 这个接口只列候选，<b>不直接删除</b>：营销服务不能凭「查不到订单」就下结论，
+    /// 订单服务抖动时那会把真实订单的记录清掉。
+    /// </remarks>
+    [HttpPost("activities/orphan-candidates")]
+    public Task<ApiResponse<List<ActivityRecordOrphanItem>>> ListActivityRecordOrphans(
+        [FromBody] ListActivityRecordOrphansCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>软删已确认订单不存在的参与记录（定时任务对账用）。</summary>
+    /// <param name="command">清理命令，订单号必须已经过订单服务确认不存在。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。</returns>
+    /// <remarks>软删保留痕迹，避免把「曾经记过又清掉」的事实抹掉，便于排查对账问题。</remarks>
+    [HttpPost("activities/discard-orphans")]
+    public Task<ApiResponse<int>> DiscardActivityRecordOrphans(
+        [FromBody] DiscardActivityRecordOrphansCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 }

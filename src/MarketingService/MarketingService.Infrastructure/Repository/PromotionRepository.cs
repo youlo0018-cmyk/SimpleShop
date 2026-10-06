@@ -231,4 +231,41 @@ public sealed class PromotionRepository : IPromotionRepository
 
         return (items, total);
     }
+
+    /// <inheritdoc />
+    public async Task<List<MarketingActivityRecord>> ListParticipationOrphansAsync(
+        DateTime createdBefore, int limit, CancellationToken ct = default)
+        => await _db.Select<MarketingActivityRecord>()
+            .Where(a => !a.IsDeleted && a.CreatedAt < createdBefore)
+            // 升序：先清最老的记录，避免长期积压的孤儿永远排在队尾
+            .OrderBy(a => a.CreatedAt)
+            .OrderBy(a => a.Id)
+            .Limit(Math.Clamp(limit, 1, 1000))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<int> SoftDeleteParticipationByOrderNosAsync(
+        IReadOnlyCollection<string> orderNos, CancellationToken ct = default)
+    {
+        var list = orderNos
+            .Where(a => !string.IsNullOrWhiteSpace(a))
+            .Select(a => a.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (list.Length == 0) return 0;
+
+        var now = DateTime.UtcNow;
+        return await _db.Update<MarketingActivityRecord>()
+            .Where(a => list.Contains(a.OrderNo) && !a.IsDeleted)
+            .Set(a => new MarketingActivityRecord
+            {
+                IsDeleted = true,
+                DeletedAt = now,
+                UpdatedAt = now
+            })
+            .ExecuteAffrowsAsync(ct)
+            .ConfigureAwait(false);
+    }
 }
