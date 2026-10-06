@@ -391,6 +391,35 @@ Invoke-Case 'API-DS-048' '商户装修发布：版本 +1' {
     return $p.success -and $p.data -eq 1 -and $r.data.version -eq 1
 }
 
+Invoke-Case 'API-DS-048b' '🔴 商户装修发布不影响平台装修（两套配置互不干扰）' {
+    # 用户明确要求过：「小程序装修**按平台配置**，商户只是改商户自己的店铺装修，
+    # 不冲突」。所以商户发布一次，平台的版本号与内容都必须纹丝不动。
+    #
+    # 这条以前没有断言覆盖 —— 而一旦两者共用同一份存储（或者发布时误用了
+    # 平台的 key），症状是「某个商户装修完，全平台小程序的首页跟着变了」，
+    # 影响面是整站而不是一家店。
+    $before = MpGet "/design/Platform?platformId=$($script:platformId)"
+    $beforeMerchant = MpGet "/design/Merchant?merchantId=$($script:merchantId)"
+
+    # 商户再改一版并发布
+    $json = New-MerchantConfig | ConvertTo-Json -Depth 12
+    MpPost '/design/SaveMerchantDraft' @{ merchantId = $script:merchantId; configJson = $json } | Out-Null
+    $pub = MpPost '/design/PublishMerchant' @{ merchantId = $script:merchantId }
+    if (-not $pub.success) { Write-Host ("        商户发布失败: " + $pub.message) -ForegroundColor DarkYellow; return $false }
+
+    $after = MpGet "/design/Platform?platformId=$($script:platformId)"
+    $afterMerchant = MpGet "/design/Merchant?merchantId=$($script:merchantId)"
+
+    Write-Host ("        平台版本 {0} → {1}；商户版本 {2} → {3}" -f `
+        $before.data.version, $after.data.version, $beforeMerchant.data.version, $afterMerchant.data.version) -ForegroundColor DarkGray
+
+    # 平台：版本与配置 JSON 都不许变；商户：版本必须 +1
+    return $after.data.version -eq $before.data.version `
+        -and $after.data.configJson -eq $before.data.configJson `
+        -and $afterMerchant.data.version -eq ($beforeMerchant.data.version + 1) `
+        -and $afterMerchant.data.configJson -ne $after.data.configJson
+}
+
 Invoke-Case 'API-DS-049' '清理：删商品 → 删分类' {
     # 循环变量不能叫 $pid：PowerShell 里 $pid 是**只读**的进程 Id 变量，赋值会直接报错
     foreach ($productId in @($script:onShelfProductId, $script:offShelfProductId)) {
