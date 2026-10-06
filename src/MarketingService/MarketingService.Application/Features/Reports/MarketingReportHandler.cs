@@ -9,7 +9,10 @@ namespace MarketingService.Application.Features.Reports;
 /// <summary>活动报表的一行。</summary>
 /// <param name="ActivityId">活动 Id。</param>
 /// <param name="ActivityName">活动名快照。</param>
-/// <param name="OrderCount">参与订单数。</param>
+/// <param name="OrderCount">
+/// 参与订单数：<b>下单即计</b>（含未支付 / 已取消）。
+/// 这样下钻出来的行数与它逐行对得上；金额那一列只算已支付。
+/// </param>
 /// <param name="OrderAmount">参与金额：这些订单的实付合计（已支付、未取消、未退款）。</param>
 /// <param name="DiscountTotal">折扣总额：这些订单因该活动实际让利合计。</param>
 public sealed record ActivityReportRow(

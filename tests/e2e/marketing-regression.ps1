@@ -273,7 +273,7 @@ function New-Activity([hashtable]$over) {
         targetType = 1; targets = '[]'
         startTime = $script:now.AddDays(-1).ToString('o')
         endTime = $script:now.AddDays(1).ToString('o')
-        perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+        sortOrder = 0; status = 1
         platformId = $script:suffix          # 用 suffix 当平台号，天然隔离，不影响别的用例
         merchantId = 0
     }
@@ -462,6 +462,22 @@ Invoke-Case 'API-MKT-065' '清理本节所有活动' {
     return $true
 }
 
+Invoke-Case 'API-MKT-066' '旧客户端仍带 perOrderLimit / totalQuantity 时不报错（字段已从契约里去掉）' {
+    # 这两个字段不在 DATA_SPEC 5.11 的字段表里，而且配了不生效：
+    # 活动粒度是「一单命中一次」，任何 >=1 的每单限购都与 1 等价；活动也没有总量限制。
+    # 已从命令与表单里去掉，但**旧客户端还会带**，所以必须兼容（多余字段被忽略而不是 400）。
+    $id = (New-Activity @{
+        activityType = 1; thresholdAmount = 50; discountAmount = 10
+        perOrderLimit = 99; totalQuantity = 5
+        activityName = "旧字段$($script:suffix)"
+    }).data
+    if (-not $id) { return $false }
+
+    $r = FinalPrice 0 @([pscustomobject]@{ spuId = 100; skuId = 1001; amount = 100 })
+    Stop-Activity ([long]$id)
+    return $r.data.activityDiscount -eq 10
+}
+
 Write-Host "`n=== GFT 满赠发券（下单承诺 → 支付兑现）===" -ForegroundColor Cyan
 
 # 满赠的判定发生在**下单**那一刻（活动时间窗、门槛、赠送张数都按下单当时算），
@@ -560,7 +576,7 @@ Invoke-Case 'API-GFT-000' '准备：60 元商品 + 赠品券模板（满 50 减 
         targetType = 1; targets = '[]'
         startTime = $script:now.AddDays(-1).ToString('o')
         endTime = $script:now.AddDays(1).ToString('o')
-        perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+        sortOrder = 0; status = 1
         platformId = 0; merchantId = 0
     }).data
 
@@ -694,7 +710,7 @@ Invoke-Case 'API-RPT-046' '准备：满 50 减 10 的活动 + 一单实付 50（
         targetType = 1; targets = '[]'
         startTime = $script:now.AddDays(-1).ToString('o')
         endTime = $script:now.AddDays(1).ToString('o')
-        perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+        sortOrder = 0; status = 1
         platformId = 0; merchantId = 0
     }).data
     if ($script:rptActivityId -le 0) { return $false }

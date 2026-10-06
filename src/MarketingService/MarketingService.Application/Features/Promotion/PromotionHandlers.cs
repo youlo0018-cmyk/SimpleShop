@@ -76,8 +76,6 @@ public sealed class CreatePromotionActivityHandler
             Targets = (request.Targets ?? "[]").Trim(),
             StartTime = ToUtc(request.StartTime),
             EndTime = ToUtc(request.EndTime),
-            PerOrderLimit = request.PerOrderLimit,
-            TotalQuantity = request.TotalQuantity,
             SortOrder = request.SortOrder,
             Status = request.Status
         };
@@ -132,8 +130,6 @@ public sealed class UpdatePromotionActivityHandler
         existing.Targets = (request.Targets ?? "[]").Trim();
         existing.StartTime = CreatePromotionActivityHandler.ToUtc(request.StartTime);
         existing.EndTime = CreatePromotionActivityHandler.ToUtc(request.EndTime);
-        existing.PerOrderLimit = request.PerOrderLimit;
-        existing.TotalQuantity = request.TotalQuantity;
         existing.SortOrder = request.SortOrder;
         existing.Status = request.Status;
 

@@ -41,7 +41,7 @@ export const REPORTS = {
     desc: '活动的参与与让利、券的发放 / 领取 / 核销',
     endpoint: '/gateway/reports/Marketing',
     byRange: true,
-    note: '活动与券是并列的两段：活动下单即生效、券要先领。发放与领取也刻意分开看 —— 只有被领走的券才算触达。',
+    note: '活动与券是并列的两段：活动下单即生效、券要先领。参与订单数按下单计（含未支付），参与金额只算已支付；券的发放与领取也刻意分开看 —— 只有被领走的券才算触达。',
     metrics: [
       { field: 'activityOrderCount', label: '活动参与订单', format: 'count', strong: true },
       { field: 'activityOrderAmount', label: '活动参与金额', format: 'amount' },

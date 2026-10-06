@@ -19,8 +19,6 @@ namespace MarketingService.Application.Features.Promotion;
 /// <param name="Targets">适用范围的 JSON 文本，如 <c>[1001,1002]</c>。</param>
 /// <param name="StartTime">开始时间（UTC）。</param>
 /// <param name="EndTime">结束时间（UTC）。</param>
-/// <param name="PerOrderLimit">每单限购，0 表示不限。</param>
-/// <param name="TotalQuantity">总参与人次上限，0 表示不限。</param>
 /// <param name="SortOrder">排序。</param>
 /// <param name="Status">状态，1 启用 / 2 停用。</param>
 /// <param name="PlatformId">平台 Id。</param>
@@ -38,8 +36,6 @@ public record CreatePromotionActivityCommand(
     string Targets = "[]",
     DateTime StartTime = default,
     DateTime EndTime = default,
-    int PerOrderLimit = 0,
-    int TotalQuantity = 0,
     int SortOrder = 0,
     int Status = 1,
     long PlatformId = 0,
@@ -58,8 +54,6 @@ public record CreatePromotionActivityCommand(
 /// <param name="Targets">适用范围的 JSON 文本。</param>
 /// <param name="StartTime">开始时间（UTC）。</param>
 /// <param name="EndTime">结束时间（UTC）。</param>
-/// <param name="PerOrderLimit">每单限购。</param>
-/// <param name="TotalQuantity">总参与人次上限。</param>
 /// <param name="SortOrder">排序。</param>
 /// <param name="Status">状态。</param>
 public record UpdatePromotionActivityCommand(
@@ -75,8 +69,6 @@ public record UpdatePromotionActivityCommand(
     string Targets,
     DateTime StartTime,
     DateTime EndTime,
-    int PerOrderLimit,
-    int TotalQuantity,
     int SortOrder,
     int Status) : IRequest<ApiResponse>;
 
@@ -305,8 +297,6 @@ public static class PromotionValidators
             RuleFor(x => x.StartTime).NotEqual(default(DateTime)).WithMessage("请填写活动开始时间");
             RuleFor(x => x.EndTime).NotEqual(default(DateTime)).WithMessage("请填写活动结束时间");
             RuleFor(x => x.EndTime).GreaterThan(x => x.StartTime).WithMessage("活动结束时间必须晚于开始时间");
-            RuleFor(x => x.PerOrderLimit).InclusiveBetween(0, 100).WithMessage("每单限购次数不合法");
-            RuleFor(x => x.TotalQuantity).InclusiveBetween(0, 10_000_000).WithMessage("参与人次上限不合法");
             RuleFor(x => x.Status).Must(a => a is 1 or 2).WithMessage("状态不正确");
             RuleFor(x => x.MerchantId).GreaterThanOrEqualTo(0).WithMessage("商户 Id 不能为负数");
         }

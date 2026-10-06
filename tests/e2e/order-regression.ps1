@@ -403,7 +403,7 @@ Invoke-Case 'API-ORD-009b' '🔴🔴 P0 带满减活动的单：实付必须等�
             thresholdAmount = 40; discountAmount = 5
             giftTemplateId = 0; targetType = 1; targets = '[]'
             startTime = $now.AddDays(-1).ToString('o'); endTime = $now.AddDays(1).ToString('o')
-            perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+            sortOrder = 0; status = 1
             platformId = $script:platformId; merchantId = 0
         } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30
     if (-not $act.success) { Write-Host ("        建活动失败: " + $act.message) -ForegroundColor DarkYellow; return $false }

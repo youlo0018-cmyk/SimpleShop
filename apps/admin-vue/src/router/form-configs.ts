@@ -292,8 +292,6 @@ export const FORMS = {
       { field: 'giftQuantity', label: '赠送张数', type: 'number', min: 1, max: 100, default: 1, help: '满赠每单赠送张数，1 ~ 100' },
       { field: 'startTime', label: '开始时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
       { field: 'endTime', label: '结束时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
-      { field: 'perOrderLimit', label: '每单限用', type: 'number', min: 0, default: 0 },
-      { field: 'totalQuantity', label: '总限量', type: 'number', min: 0, default: 0, help: '0 表示不限量' },
       { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0 },
       { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0 },
       { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },

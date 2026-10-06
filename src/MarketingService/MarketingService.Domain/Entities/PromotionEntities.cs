@@ -72,15 +72,27 @@ public class PromotionActivity : AdminEntityBase
     [Column(Name = "end_time")]
     public DateTime EndTime { get; set; }
 
-    /// <summary>每单限购次数，0 表示不限。</summary>
+    /// <summary>每单限购次数。<b>不在 DATA_SPEC 5.11 的字段表里，也不参与任何计算。</b></summary>
+    /// <remarks>
+    /// <para>活动的粒度是「一单命中一次」：优惠引擎对整单选出<b>一个</b>活动并按作用域行分摊
+    /// （BUSINESS.md 11.2），所以任何大于等于 1 的取值与 1 完全等价 ——
+    /// 这是个<b>没有第二种语义</b>的旋钮。既然它配了也不会改变任何行为，
+    /// 就不该出现在活动表单上（「配了却不生效」比「没有这个配置」更糟）。</para>
+    /// <para>列保留只为兼容历史数据；接口与表单都不再接受这个字段。</para>
+    /// </remarks>
     [Column(Name = "per_order_limit")]
     public int PerOrderLimit { get; set; }
 
-    /// <summary>总参与人次上限，0 表示不限。</summary>
+    /// <summary>总参与人次上限。<b>不在 DATA_SPEC 5.11 的字段表里，也不参与任何计算。</b></summary>
+    /// <remarks>
+    /// 活动的「限量」在规格里只有秒杀（<c>seckill_item.SeckillStock</c>）与券（模板池子）两种。
+    /// 普通活动没有总量限制，所以这个字段与它旁边的 <see cref="UsedQuantity"/> 都不该出现在表单上。
+    /// 列保留只为兼容历史数据；接口与表单都不再接受这两个字段。
+    /// </remarks>
     [Column(Name = "total_quantity")]
     public int TotalQuantity { get; set; }
 
-    /// <summary>已参与人次。</summary>
+    /// <summary>已参与人次。<b>从未被写入过，也没有任何读取方</b>（见 <see cref="TotalQuantity"/>）。</summary>
     [Column(Name = "used_quantity")]
     public int UsedQuantity { get; set; }
 
