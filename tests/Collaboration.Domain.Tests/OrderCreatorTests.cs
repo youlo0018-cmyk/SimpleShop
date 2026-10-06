@@ -246,7 +246,7 @@ public class OrderCreatorTests
         // 跨平台凑一单：运费按哪个平台算都不对，结算与对账也说不清。
         // 必须在落库前拒掉 —— 落库之后再发现就只能靠人工拆单了。
         var req = Request(couponId: 0, lineCount: 2);
-        var productPort = new PerSkuPlatformProductPort(id => id == 1000L ? 100L : 200L);
+        var productPort = new PerSkuOwnerProductPort(id => id == 1000L ? (100L, 0L) : (200L, 0L));
 
         var result = await Build(
             new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
@@ -256,12 +256,48 @@ public class OrderCreatorTests
         Assert.Null(store.Saved);
     }
 
-    /// <summary>按 SKU 分别返回不同平台的端口替身，用来构造跨平台购物车。</summary>
-    private sealed class PerSkuPlatformProductPort : IProductPort
+    [Fact]
+    public async Task 订单归属商户按商品算而不是客户端报的0()
     {
-        private readonly Func<long, long> _platformOf;
+        var store = new FakeOrderStore();
 
-        public PerSkuPlatformProductPort(Func<long, long> platformOf) => _platformOf = platformOf;
+        // 客户端报 merchantId = 0 就会被记成「平台自营」——
+        // 商户结算少了一笔营业额，而订单列表看上去毫无异常。
+        var req = Request(couponId: 0, lineCount: 1) with { MerchantId = 0 };
+
+        var result = await Build(
+            new FakeCouponPort { CouponId = 0, Discount = 0m }, new FakePointPort(),
+            new FakeInventoryPort(), store,
+            products: new FakeProductPort { MerchantId = 777 }).CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(777L, store.Saved!.MerchantId);
+    }
+
+    [Fact]
+    public async Task 购物车里混了不同店铺的商品则拒单()
+    {
+        var store = new FakeOrderStore();
+        var req = Request(couponId: 0, lineCount: 2);
+
+        // 跨商户凑一单：结算要拆、售后要找谁发货，全说不清。
+        var productPort = new PerSkuOwnerProductPort(id => id == 1000L ? (100L, 11L) : (100L, 22L));
+
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            products: productPort).CreateAsync(req);
+
+        Assert.False(result.Succeeded);
+        Assert.Null(store.Saved);
+    }
+
+    /// <summary>按 SKU 分别返回不同平台 / 商户的端口替身，用来构造跨平台或跨店铺的购物车。</summary>
+    private sealed class PerSkuOwnerProductPort : IProductPort
+    {
+        private readonly Func<long, (long PlatformId, long MerchantId)> _ownerOf;
+
+        public PerSkuOwnerProductPort(Func<long, (long PlatformId, long MerchantId)> ownerOf)
+            => _ownerOf = ownerOf;
 
         public Task<IReadOnlyDictionary<long, SkuPriceInfo>> GetSkuPricesAsync(
             IReadOnlyCollection<long> skuIds, CancellationToken ct = default)
@@ -269,9 +305,10 @@ public class OrderCreatorTests
             var result = new Dictionary<long, SkuPriceInfo>();
             foreach (var id in skuIds)
             {
+                var (platformId, merchantId) = _ownerOf(id);
                 result[id] = new SkuPriceInfo(
                     id, 25.50m, Enabled: true, SpuApproved: true, SpuOnShelf: true,
-                    MerchantId: 0, PlatformId: _platformOf(id), DeliveryTypeIds.PhysicalExpress);
+                    merchantId, platformId, DeliveryTypeIds.PhysicalExpress);
             }
 
             return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(result);
@@ -701,6 +738,15 @@ public class OrderCreatorTests
         /// <summary>商品归属平台。订单归属与运费都按它算，不采信客户端传的 platformId。</summary>
         public long PlatformId { get; set; }
 
+        /// <summary>商品归属商户。0 表示平台自营。</summary>
+        public long MerchantId { get; set; }
+
+        /// <summary>权威商品名。为空时订单行沿用请求里的名称（老用例不做名称断言）。</summary>
+        public string SkuName { get; set; } = string.Empty;
+
+        /// <summary>权威规格文本。</summary>
+        public string SkuSpecText { get; set; } = string.Empty;
+
         /// <summary>被回查过的 SKU 集合。</summary>
         public List<long> Queried { get; } = [];
 
@@ -718,8 +764,8 @@ public class OrderCreatorTests
             {
                 result[id] = new SkuPriceInfo(
                     id, AuthoritativePrice ?? 25.50m,
-                    Enabled: true, SpuApproved: true, SpuOnShelf: true, MerchantId: 0,
-                    PlatformId, DeliveryType);
+                    Enabled: true, SpuApproved: true, SpuOnShelf: true, MerchantId,
+                    PlatformId, DeliveryType, SkuName, SkuSpecText);
             }
 
             return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(result);

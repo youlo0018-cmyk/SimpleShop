@@ -181,6 +181,12 @@ public sealed class OrderCreator
         // 照它算的话平台运费永远按「0 元平台」查，后台配了 10 元也收不到。
         var platformId = outcome0.PlatformId > 0 ? outcome0.PlatformId : request.PlatformId;
 
+        // 商户归属同样以商品为准。
+        // 采信请求里的 merchantId 的话，客户端报 0 就把商户的营业额记到「平台自营」头上 ——
+        // 商户结算少了一笔，而订单列表看上去毫无异常。
+        // 顺带堵掉「商户 A 的管理员下别家商品的单」：商品属于谁，单就记在谁名下。
+        var merchantId = outcome0.MerchantId;
+
         var amountLines = request.Lines
             .Select((a, i) => new OrderLineInput(
                 a.SkuId, a.Quantity, resolved[i].UnitPrice))
@@ -362,7 +368,9 @@ public sealed class OrderCreator
                 CustomerNo = request.CustomerNo,
                 // 归属平台同样以商品为准（见上面 platformId 的说明）
                 PlatformId = platformId,
-                MerchantId = request.MerchantId,
+
+                // 归属商户同样以商品为准（见上面 merchantId 的说明）
+                MerchantId = merchantId,
                 Status = amount.PayableAmount == 0m
                     ? OrderStatuses.PendingShipment    // 实付 0 元直接跳 20，跳过支付
                     : OrderStatuses.PendingPayment,

@@ -90,19 +90,31 @@ public sealed class OrderPricingResolver
                 // 客户端写什么就永久记什么的话，商家改完名之后
                 // 历史订单显示的是旧名、商品卡是新名，两边对不上。
                 // 秒杀行的名称场次里已经带了，也一并纠正 —— 场次快照同样来自商品服务。
-                ProductName = sku.SkuName,
-                SkuSpecText = sku.SkuSpecText,
+
+                // 刻意保留「权威值为空就沿用请求里的值」：下游万一没带这个字段，
+                // 直接覆盖会让每一张订单行的商品名变成空字符串 ——
+                // 那比「名字可能不准」严重得多，因为它会让所有商品在历史订单里无法辨认。
+                ProductName = string.IsNullOrWhiteSpace(sku.SkuName) ? line.ProductName : sku.SkuName,
+                SkuSpecText = string.IsNullOrWhiteSpace(sku.SkuSpecText)
+                    ? line.SkuSpecText
+                    : sku.SkuSpecText,
             });
         }
 
-        // 订单归属哪个平台由**商品**决定，不采信请求里的 platformId。
+        // 订单归属哪个平台、哪个商户，都由**商品**决定，不采信请求里传的值。
         //
         // 客户令牌里没有 platform_id（CustomerTokenService 只签 sub 与 tenant_type），
         // 小程序于是硬编码 platformId = 0。后果是平台运费永远按「0 元平台」去查 ——
         // 后台把运费配成 10 元，顾客结算与下单都显示 0 元，一分钱收不到。
-        // 而商品服务本来就知道每个 SPU 属于哪个平台，问它比问客户端可靠得多。
-        var platformIds = resolved.Select(a => a.SkuId)
+        //
+        // merchantId 同理：客户端报 0 就被记成「平台自营」，商户的营业额与结算
+        // 全跑到平台账上，而订单列表里那一单看上去毫无异常。
+        // 而商品服务本来就知道每个 SPU 属于谁，问它比问客户端可靠得多。
+        var skuIdsOf = resolved.Select(a => a.SkuId)
             .Distinct()
+            .ToArray();
+
+        var platformIds = skuIdsOf
             .Select(a => pricing[a].PlatformId)
             .Distinct()
             .ToArray();
@@ -115,7 +127,22 @@ public sealed class OrderPricingResolver
             return ResolveOutcome.Fail("购物车里有不同平台的商品，请分开结算");
         }
 
-        return ResolveOutcome.Ok(resolved, platformIds.Length == 1 ? platformIds[0] : 0);
+        var merchantIds = skuIdsOf
+            .Select(a => pricing[a].MerchantId)
+            .Distinct()
+            .ToArray();
+
+        if (merchantIds.Length > 1)
+        {
+            // 跨商户凑一单：结算要拆、售后要找谁发货，全说不清。
+            _logger.LogError("下单被拒：购物车里有跨商户商品（{MerchantIds}）", string.Join(",", merchantIds));
+            return ResolveOutcome.Fail("购物车里有不同店铺的商品，请分开结算");
+        }
+
+        return ResolveOutcome.Ok(
+            resolved,
+            platformIds.Length == 1 ? platformIds[0] : 0,
+            merchantIds.Length == 1 ? merchantIds[0] : 0);
     }
 
     /// <summary>按平台配置算出本单该收多少运费（BUSINESS.md 6.2）。</summary>
@@ -153,8 +180,13 @@ public sealed class OrderPricingResolver
 /// <param name="PlatformId">
 /// 订单归属的平台，<b>由商品决定</b>；不采信客户端传的 platformId。
 /// </param>
+/// <param name="MerchantId">
+/// 订单归属的商户，<b>由商品决定</b>；不采信客户端传的 merchantId。
+/// 0 表示平台自营（此时 <c>merchantId &lt;= 0</c> 是合法值，不能当成「查不到」）。
+/// </param>
 public readonly record struct ResolveOutcome(
-    bool Succeeded, IReadOnlyList<OrderLineRequest> Lines, string Error, long PlatformId = 0)
+    bool Succeeded, IReadOnlyList<OrderLineRequest> Lines, string Error,
+    long PlatformId = 0, long MerchantId = 0)
 {
     /// <summary>构造一个失败结果。</summary>
     /// <param name="error">失败原因。</param>
@@ -164,7 +196,8 @@ public readonly record struct ResolveOutcome(
     /// <summary>构造一个成功结果。</summary>
     /// <param name="lines">纠正后的行。</param>
     /// <returns>成功结果。</returns>
-    public static ResolveOutcome Ok(IReadOnlyList<OrderLineRequest> lines, long platformId = 0)
-        => new(true, lines, string.Empty, platformId);
+    public static ResolveOutcome Ok(
+        IReadOnlyList<OrderLineRequest> lines, long platformId = 0, long merchantId = 0)
+        => new(true, lines, string.Empty, platformId, merchantId);
 }
 
