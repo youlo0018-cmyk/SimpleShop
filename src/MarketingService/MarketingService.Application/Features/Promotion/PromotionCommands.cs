@@ -13,6 +13,7 @@ namespace MarketingService.Application.Features.Promotion;
 /// <param name="DiscountAmount">优惠金额（满减用）。</param>
 /// <param name="DiscountRate">折扣率（满折用），0.01 ~ 10，8.5 表示 85 折。</param>
 /// <param name="GiftTemplateId">满赠赠送的券模板 Id。</param>
+/// <param name="GiftQuantity">满赠每单赠送张数，1 ~ 100，非满赠忽略。</param>
 /// <param name="SessionId">场次 Id，普通活动传 0。</param>
 /// <param name="TargetType">适用范围类型，见 <see cref="TargetTypes"/>。</param>
 /// <param name="Targets">适用范围的 JSON 文本，如 <c>[1001,1002]</c>。</param>
@@ -31,6 +32,7 @@ public record CreatePromotionActivityCommand(
     decimal DiscountAmount = 0m,
     decimal DiscountRate = 0m,
     long GiftTemplateId = 0,
+    int GiftQuantity = 1,
     long SessionId = 0,
     int TargetType = TargetTypes.All,
     string Targets = "[]",
@@ -51,6 +53,7 @@ public record CreatePromotionActivityCommand(
 /// <param name="DiscountAmount">优惠金额。</param>
 /// <param name="DiscountRate">折扣率。</param>
 /// <param name="GiftTemplateId">满赠赠送的券模板 Id。</param>
+/// <param name="GiftQuantity">满赠每单赠送张数。</param>
 /// <param name="TargetType">适用范围类型。</param>
 /// <param name="Targets">适用范围的 JSON 文本。</param>
 /// <param name="StartTime">开始时间（UTC）。</param>
@@ -67,6 +70,7 @@ public record UpdatePromotionActivityCommand(
     decimal DiscountAmount,
     decimal DiscountRate,
     long GiftTemplateId,
+    int GiftQuantity,
     int TargetType,
     string Targets,
     DateTime StartTime,
@@ -149,11 +153,17 @@ public readonly record struct PromotionOrderLine(long SpuId, long SkuId, decimal
 /// <param name="EndTime">结束时间。</param>
 /// <param name="Status">状态。</param>
 /// <param name="StatusName">状态中文名。</param>
+/// <param name="GiftTemplateId">
+/// 满赠赠送的券模板 Id。**必须下发**：编辑页的「赠送券模板」下拉靠它回显，
+/// 少了这个字段下拉就是空的，运营一保存就把已配好的赠送模板清成 0。
+/// </param>
+/// <param name="GiftQuantity">满赠每单赠送张数。</param>
 public sealed record PromotionActivityDto(
     long Id, string ActivityName, int ActivityType, string TypeName,
     decimal ThresholdAmount, decimal DiscountAmount, decimal DiscountRate,
     int TargetType, string TargetName,
-    string StartTime, string EndTime, int Status, string StatusName);
+    string StartTime, string EndTime, int Status, string StatusName,
+    long GiftTemplateId, int GiftQuantity);
 
 /// <summary>活动分页结果。</summary>
 /// <param name="Items">当页活动。</param>
@@ -273,6 +283,11 @@ public static class PromotionValidators
             {
                 RuleFor(x => x.GiftTemplateId).GreaterThan(0)
                     .WithMessage("满赠活动必须选择赠送的券模板");
+
+                // 张数上限 100（DATA_SPEC 5.11）：不设上限的话，
+                // 一个手滑写成的 999999 会在每个命中订单上把券包打爆。
+                RuleFor(x => x.GiftQuantity).InclusiveBetween(1, 100)
+                    .WithMessage("满赠赠送张数必须在 1 ~ 100 之间");
             });
 
             RuleFor(x => x.TargetType).Must(a => a is >= TargetTypes.All and <= TargetTypes.BySku)
@@ -346,6 +361,9 @@ public static class PromotionValidators
             {
                 RuleFor(x => x.GiftTemplateId).GreaterThan(0)
                     .WithMessage("满赠活动必须选择赠送的券模板");
+
+                RuleFor(x => x.GiftQuantity).InclusiveBetween(1, 100)
+                    .WithMessage("满赠赠送张数必须在 1 ~ 100 之间");
             });
 
             RuleFor(x => x.TargetType).Must(a => a is >= TargetTypes.All and <= TargetTypes.BySku)

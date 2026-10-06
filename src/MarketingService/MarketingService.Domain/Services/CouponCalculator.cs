@@ -57,7 +57,14 @@ public static class CouponCalculator
 
         if (coupon.CouponType == Entities.CouponTypes.Gift)
         {
-            // 满赠不产生折扣额，只有在没有别的折扣可用时才命中
+            // 满赠不产生折扣额，只有在没有别的折扣可用时才命中。
+            // 但**门槛照样要判**：不判的话「满 200 送券」在 50 元的单上也会送出去 ——
+            // 运营配的门槛形同虚设，而且症状是「活动太容易中」，很难联想到是这里漏了判断。
+            if (!ReachedThreshold(coupon, applicable, out var giftReason))
+            {
+                return new CouponQuote(coupon.Id, coupon.CouponCode, 0m, applicable, false, true, giftReason);
+            }
+
             return new CouponQuote(coupon.Id, coupon.CouponCode, 0m, applicable, true, true,
                 "满赠券，折扣额为 0");
         }

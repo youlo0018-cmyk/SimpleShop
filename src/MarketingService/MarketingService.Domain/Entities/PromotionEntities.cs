@@ -40,6 +40,14 @@ public class PromotionActivity : AdminEntityBase
     [Column(Name = "gift_template_id")]
     public long GiftTemplateId { get; set; }
 
+    /// <summary>满赠时每单赠送的券张数，1 ~ 100（DATA_SPEC 5.11）。</summary>
+    /// <remarks>
+    /// 非满赠活动忽略此值。少了它就只能一次送一张，
+    /// 「满 500 送 3 张 20 元券」这类配置根本表达不出来。
+    /// </remarks>
+    [Column(Name = "gift_quantity")]
+    public int GiftQuantity { get; set; } = 1;
+
     /// <summary>限时抢购场次 Id。非秒杀活动固定为 0。</summary>
     /// <remarks>
     /// 所有查询都按这个字段寻址，「当前场次」只是查询条件之一。
@@ -115,4 +123,76 @@ public static class DiscountSources
 
     /// <summary>满赠：折扣额为 0，但仍是命中了活动，要显示「赠」。</summary>
     public const string Gift = "gift";
+}
+
+/// <summary>满赠待发券记录（<c>gift_grant</c>）。</summary>
+/// <remarks>
+/// <para><b>为什么要有这张表</b>：满赠的「命中」发生在<b>下单试算</b>那一刻
+/// （活动时间窗、行金额、活动配置都要按下单当时算），而券必须在<b>支付成功</b>时才发。
+/// 两者之间隔着用户付款这段时间：期间活动可能被改、被停、甚至过期。
+/// 支付时再重算一遍的话，用户会遇到「下单时显示送券、付完钱没有」——
+/// 而页面全程没有任何报错。</para>
+///
+/// <para>所以下单试算时就把「这单该送什么」写死成一条待发记录，
+/// 支付成功只负责按记录发券。<b>一条记录 = 一次发放承诺</b>，
+/// 唯一索引 <c>(order_no, source_type, source_id)</c> 保证重复试算不会重复承诺。</para>
+///
+/// <para>发券是<b>支付收尾的一步</b>（在改订单状态之前），失败就让整笔支付重试：
+/// 记录仍在「待发放」，重跑时因为状态判断与唯一索引都幂等，不会重复发。
+/// 这样就不存在「付了钱、券没发、谁也不知道」的静默丢失。</para>
+/// </remarks>
+[Table(Name = "gift_grant")]
+public class GiftGrant : EntityBase
+{
+    /// <summary>订单号。</summary>
+    [Column(Name = "order_no", StringLength = 64)]
+    public string OrderNo { get; set; } = string.Empty;
+
+    /// <summary>收券的客户 Id。</summary>
+    [Column(Name = "customer_id")]
+    public long CustomerId { get; set; }
+
+    /// <summary>来源类型，见 <see cref="GiftGrantSources"/>。</summary>
+    [Column(Name = "source_type")]
+    public int SourceType { get; set; }
+
+    /// <summary>来源 Id：活动 Id 或用户券 Id，随 <see cref="SourceType"/> 变化。</summary>
+    [Column(Name = "source_id")]
+    public long SourceId { get; set; }
+
+    /// <summary>赠送的券模板 Id（下单时快照，之后活动改配置也不影响）。</summary>
+    [Column(Name = "gift_template_id")]
+    public long GiftTemplateId { get; set; }
+
+    /// <summary>赠送张数。</summary>
+    [Column(Name = "quantity")]
+    public int Quantity { get; set; } = 1;
+
+    /// <summary>状态，见 <see cref="GiftGrantStatuses"/>。</summary>
+    [Column(Name = "status")]
+    public int Status { get; set; } = GiftGrantStatuses.Pending;
+
+    /// <summary>发放时间（UTC），未发放为空。</summary>
+    [Column(Name = "issued_at")]
+    public DateTime? IssuedAt { get; set; }
+}
+
+/// <summary>满赠待发券的来源。</summary>
+public static class GiftGrantSources
+{
+    /// <summary>满赠活动（活动类型 3）。</summary>
+    public const int Activity = 1;
+
+    /// <summary>满赠券（券类型 4）。用户主动用了这张券，付完钱送它承诺的券。</summary>
+    public const int Coupon = 2;
+}
+
+/// <summary>满赠待发券的状态。</summary>
+public static class GiftGrantStatuses
+{
+    /// <summary>待发放：下单时已承诺，等支付成功。</summary>
+    public const int Pending = 10;
+
+    /// <summary>已发放：券已进用户券包。</summary>
+    public const int Issued = 20;
 }

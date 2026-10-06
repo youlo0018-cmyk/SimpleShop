@@ -16,6 +16,10 @@ public interface IActivityPort
     /// <param name="sessionId">秒杀场次 Id，0 表示非秒杀单。</param>
     /// <param name="couponId">客户已选的券 Id，0 表示不用券。</param>
     /// <param name="lines">订单行（SPU / SKU / 金额）。</param>
+    /// <param name="orderNo">
+    /// 订单号。<b>真实下单必须传</b>：满赠的发放承诺按订单落在营销服务，
+    /// 支付成功时才能按当时的结论发券；结算试算传空串，不产生任何承诺。
+    /// </param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>逐行活动优惠额；算不到时返回全 0，<b>不抛异常</b>。</returns>
     /// <remarks>
@@ -29,7 +33,7 @@ public interface IActivityPort
     Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
         long customerId, long platformId, long sessionId, long couponId,
         IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
-        CancellationToken ct = default);
+        string orderNo = "", CancellationToken ct = default);
 }
 
 /// <summary>券端口。定义在 Domain，编排逻辑才能在不依赖网络的情况下被单元测试。</summary>
@@ -133,6 +137,17 @@ public interface ICouponPort
     /// <param name="ct">取消令牌。</param>
     /// <returns>异步任务。</returns>
     Task ConsumeAsync(long customerId, string orderNo, CancellationToken ct = default);
+
+    /// <summary>发放本单的满赠券（支付成功）。</summary>
+    /// <param name="orderNo">订单号。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    /// <remarks>
+    /// 满赠的发放承诺是<b>下单时</b>按当时的活动窗口与配置写下的（见营销服务的
+    /// <c>gift_grant</c>），这里只是触发兑现。营销服务对同一订单是幂等的：
+    /// 已经发过的记录不会再发一次，所以支付回调重投是安全的。
+    /// </remarks>
+    Task IssueGiftsAsync(string orderNo, CancellationToken ct = default);
 
     /// <summary>只读试算：列出当前可用券与各自的优惠额，<b>绝不占用</b>。</summary>
     /// <param name="customerId">客户 Id。</param>

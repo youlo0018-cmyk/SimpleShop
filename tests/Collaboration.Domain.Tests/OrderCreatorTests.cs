@@ -41,13 +41,13 @@ public class OrderCreatorTests
     private static OrderCreator Build(
         FakeCouponPort coupons, FakePointPort points, FakeInventoryPort inventory, FakeOrderStore store,
         FakeOrderCreateLock? createLock = null, IProductPort? products = null,
-        FakePlatformPort? platforms = null)
+        FakePlatformPort? platforms = null, FakeActivityPort? activities = null)
     {
         var completer = new OrderPaymentCompleter(
             store, inventory, points, coupons, NullLogger<OrderPaymentCompleter>.Instance);
 
         return new OrderCreator(
-            coupons, points, inventory, new FakeActivityPort(),
+            coupons, points, inventory, activities ?? new FakeActivityPort(),
             new OrderPricingResolver(
                 products ?? new FakeProductPort(),
                 platforms ?? new FakePlatformPort(),
@@ -449,6 +449,90 @@ public class OrderCreatorTests
         // 关键：绝不能再扣一次库存
         Assert.Equal(0, inventory.DeductCount);
     }
+
+    [Fact]
+    public async Task 支付成功必须触发满赠发券()
+    {
+        var store = new FakeOrderStore();
+        var inventory = new FakeInventoryPort();
+        var coupons = new FakeCouponPort();
+        var completer = new OrderPaymentCompleter(
+            store, inventory, new FakePointPort(), coupons,
+            NullLogger<OrderPaymentCompleter>.Instance);
+
+        var order = new Order
+        {
+            OrderNo = "GIFT-1",
+            CustomerId = CustomerId,
+            PayableAmount = 51m,
+            Status = OrderStatuses.PendingPayment,
+        };
+        store.Saved = order;
+        store.SavedItems.Add(new OrderItem
+        {
+            OrderNo = order.OrderNo, SkuId = 1000, Quantity = 2, Price = 25.50m,
+        });
+
+        var outcome = await completer.CompleteAsync(order);
+
+        Assert.True(outcome.Succeeded);
+
+        // 发券是支付收尾的一步：不调它，满赠券就永远躺在「待发放」，
+        // 用户看到的是「下单页写着送券、券包里没有」。
+        Assert.Equal(1, coupons.IssueGiftsCount);
+    }
+
+    [Fact]
+    public async Task 发券失败时支付不算完成_留给重试()
+    {
+        // 发券放在「改状态」之前，失败了订单还停在待支付。
+        // 这样重跑时（每一步都幂等）能把券补上；放到改状态之后的话，
+        // 状态一变就再也没人来补发，用户的券**永久消失**。
+        var store = new FakeOrderStore();
+        var inventory = new FakeInventoryPort();
+        var coupons = new FakeCouponPort { ThrowOnIssueGifts = true };
+        var completer = new OrderPaymentCompleter(
+            store, inventory, new FakePointPort(), coupons,
+            NullLogger<OrderPaymentCompleter>.Instance);
+
+        var order = new Order
+        {
+            OrderNo = "GIFT-2",
+            CustomerId = CustomerId,
+            PayableAmount = 51m,
+            Status = OrderStatuses.PendingPayment,
+        };
+        store.Saved = order;
+        store.SavedItems.Add(new OrderItem
+        {
+            OrderNo = order.OrderNo, SkuId = 1000, Quantity = 2, Price = 25.50m,
+        });
+
+        var outcome = await completer.CompleteAsync(order);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(4, outcome.FailedStep);
+        Assert.Equal(0, store.TransitCount);
+    }
+
+    [Fact]
+    public async Task 下单时活动试算要带上订单号()
+    {
+        // 满赠的发放承诺按订单落在营销服务，订单号不传就等于承诺记不下来，
+        // 付完钱也就发不出券。
+        var activities = new FakeActivityPort();
+        var store = new FakeOrderStore();
+
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            activities: activities)
+            .CreateAsync(Request(points: 0));
+
+        Assert.True(result.Succeeded);
+        Assert.False(string.IsNullOrWhiteSpace(activities.LastOrderNo));
+        Assert.Equal(result.OrderNo, activities.LastOrderNo);
+    }
+
     [Fact]
     public async Task 正常下单四步都执行并落单()
     {
@@ -834,6 +918,19 @@ public class OrderCreatorTests
             return Task.CompletedTask;
         }
 
+        /// <summary>满赠发券被调用的次数。支付收尾必须触发它。</summary>
+        public int IssueGiftsCount;
+
+        /// <summary>设为 true 时发券抛异常，用来验证失败会不会卡住支付。</summary>
+        public bool ThrowOnIssueGifts;
+
+        public Task IssueGiftsAsync(string orderNo, CancellationToken ct = default)
+        {
+            IssueGiftsCount++;
+            if (ThrowOnIssueGifts) throw new InvalidOperationException("营销服务不可用");
+            return Task.CompletedTask;
+        }
+
         /// <summary>可用的券试算结果，默认只有一张「默认券」。</summary>
         public List<CouponQuoteOption> QuoteOptions { get; } =
             [new CouponQuoteOption(77, "满减", 5m, "2026-12-31", true)];
@@ -944,14 +1041,18 @@ public class OrderCreatorTests
         /// <summary>被传入的已选券 Id，用来验证活动与券互斥时传对了。</summary>
         public long LastCouponId { get; private set; }
 
+        /// <summary>被传入的订单号，用来验证真实下单会带上它（满赠承诺按订单落库）。</summary>
+        public string LastOrderNo { get; private set; } = string.Empty;
+
         /// <inheritdoc />
         public Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
             long customerId, long platformId, long sessionId, long couponId,
             IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
-            CancellationToken ct = default)
+            string orderNo = "", CancellationToken ct = default)
         {
             CallCount++;
             LastCouponId = couponId;
+            LastOrderNo = orderNo;
 
             return Task.FromResult<IReadOnlyList<(long, decimal)>>(
                 lines.Where(a => BySku.TryGetValue(a.SkuId, out var d) && d != 0m)
@@ -1128,8 +1229,12 @@ public class OrderCreatorTests
             // 而报表的 GMV 全靠它，少一个时间戳就是一块金额凭空消失。
             LastPaidAt = paidAt;
             LastCompletedAt = completedAt;
+            TransitCount++;
             return Task.FromResult(1);
         }
+
+        /// <summary>状态迁移被调用的次数。发券失败时它必须仍是 0（订单要留在待支付等重试）。</summary>
+        public int TransitCount;
 
         /// <summary>最后一次状态迁移传入的支付时间。</summary>
         public DateTime? LastPaidAt;

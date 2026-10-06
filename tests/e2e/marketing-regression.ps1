@@ -462,6 +462,246 @@ Invoke-Case 'API-MKT-065' '清理本节所有活动' {
     return $true
 }
 
+Write-Host "`n=== GFT 满赠发券（下单承诺 → 支付兑现）===" -ForegroundColor Cyan
+
+# 满赠的判定发生在**下单**那一刻（活动时间窗、门槛、赠送张数都按下单当时算），
+# 券在**支付成功**时才发。两者之间隔着用户付款这段时间：支付时再重算一遍的话，
+# 活动一旦被改或过期，用户就会「下单页写着送券、付完钱没有」，而页面全程无报错。
+# 所以这一节必须端到端跑：下单 → 支付 → 回查券包。
+
+$script:gftProductId = 0
+$script:gftCategoryIds = @()
+$script:gftSkuId = 0
+$script:gftGiftTemplateId = 0
+$script:gftActivityId = 0
+$script:gftSecondGiftTemplateId = 0
+$script:gftCouponTemplateId = 0
+$script:gftCouponActivityId = 0
+$script:gftCustomerId = 720000000 + $script:suffix
+$script:gftCouponCustomerId = 730000000 + $script:suffix
+$script:gftPrice = 60.00
+
+# 直接打订单服务而不是走网关：下单接口是 C 端接口，网关那侧要客户令牌，
+# 而这里要验的是「金额与发券」，不是鉴权（鉴权由 auth / gateway 两个脚本盯）。
+function New-GftOrder([long]$CustomerId, [long]$CouponId, [string]$Tag) {
+    return Invoke-RestMethod 'http://127.0.0.1:5064/orders/Create' -Method Post `
+        -ContentType 'application/json' -TimeoutSec 60 `
+        -Body (@{
+            customerId = $CustomerId; platformId = 0; merchantId = 0
+            idempotencyKey = "GFT-$Tag-$($script:suffix)"
+            receiverName = '满赠测试'; receiverPhone = '13800000000'; receiverAddress = '某地 1 号'
+            lines = @(@{
+                spuId = [long]$script:gftProductId; skuId = [long]$script:gftSkuId
+                quantity = 1; unitPrice = $script:gftPrice
+                productName = "满赠商品$($script:suffix)"; skuSpecText = '红'; deliveryType = 1
+            })
+            couponId = $CouponId; pointsToUse = 0
+        } | ConvertTo-Json -Depth 8)
+}
+
+function Get-GftCoupons([long]$CustomerId, [long]$TemplateId) {
+    $r = Invoke-RestMethod "$Marketing/coupons/My" -Method Post -Headers $script:adminHeaders `
+        -ContentType 'application/json' -TimeoutSec 30 `
+        -Body (@{ customerId = $CustomerId; status = 0; page = 1; pageSize = 50 } | ConvertTo-Json)
+    return @($r.data.items | Where-Object { [long]$_.templateId -eq $TemplateId })
+}
+
+function Pay-GftOrder([string]$OrderNo) {
+    return Invoke-RestMethod "$Gateway/gateway/admin/orders/SimulatePayment" -Method Post `
+        -Headers $script:adminHeaders -ContentType 'application/json' -TimeoutSec 60 `
+        -Body (@{ orderNo = $OrderNo; succeed = $true; remark = '满赠回归' } | ConvertTo-Json)
+}
+
+Invoke-Case 'API-GFT-000' '准备：60 元商品 + 赠品券模板（满 50 减 10）+ 满赠活动（满 50 送 2 张）' {
+    $c1 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = 0; categoryName = "满赠$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $c2 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $c1; categoryName = "满赠$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $c3 = (Invoke-RestMethod "$Gateway/gateway/categories/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ parentId = $c2; categoryName = "满赠$($script:suffix)"; platformId = 0 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30).data
+    $script:gftCategoryIds = @($c1, $c2, $c3)
+
+    $body = @{
+        productId = 0; spuName = "满赠商品$($script:suffix)"; categoryId = $c3
+        deliveryType = 1; mainImage = 'https://cdn.example.com/g.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "GFT$($script:suffix)"; specValues = @('红'); price = $script:gftPrice; stock = 20; status = 1 })
+    }
+    $script:gftProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    (Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:gftProductId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+    (Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:gftProductId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+
+    $det = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:gftProductId)" `
+        -Headers $script:adminHeaders -TimeoutSec 30
+    $script:gftSkuId = [long](@($det.data.skus | Where-Object { $_.skuCode -eq "GFT$($script:suffix)" })[0].id)
+
+    # 赠品券：真正要送出去的那张
+    $script:gftGiftTemplateId = [long](Post '/marketing/coupon-templates/Create' @{
+        templateName = "赠品券$($script:suffix)"; couponType = 1; thresholdAmount = 50; discountAmount = 10
+        validDays = 30; totalQuantity = 100; perUserLimit = 5; perOrderLimit = 1
+        platformId = 0; status = 1
+    }).data
+
+    # 满赠活动：平台号必须给 0。订单的平台来自**商品**（商品是平台 0），
+    # 活动按平台过滤，配成别的平台号时这单根本看不见它。
+    $script:gftActivityId = [long](Post '/marketing/activities/Create' @{
+        activityName = "满50送2张$($script:suffix)"; activityType = 3
+        thresholdAmount = 50; discountAmount = 0; discountRate = 0
+        giftTemplateId = $script:gftGiftTemplateId; giftQuantity = 2
+        targetType = 1; targets = '[]'
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        perOrderLimit = 0; totalQuantity = 0; sortOrder = 0; status = 1
+        platformId = 0; merchantId = 0
+    }).data
+
+    return $script:gftSkuId -gt 0 -and $script:gftGiftTemplateId -gt 0 -and $script:gftActivityId -gt 0
+}
+
+Invoke-Case 'API-MKT-006' '🔴 满赠支付后发券（下单只承诺、支付才兑现，送满配的 2 张）' {
+    $order = New-GftOrder $script:gftCustomerId 0 'A'
+    if (-not $order.success) { Write-Host ("        下单失败：" + $order.message) -ForegroundColor DarkYellow; return $false }
+
+    # 下单时不该发券：券是支付成功才发的，提前发的话用户退单就白拿
+    $before = (Get-GftCoupons $script:gftCustomerId $script:gftGiftTemplateId).Count
+
+    $pay = Pay-GftOrder $order.data.orderNo
+    if (-not $pay.success) { Write-Host ("        支付失败：" + $pay.message) -ForegroundColor DarkYellow; return $false }
+
+    $after = (Get-GftCoupons $script:gftCustomerId $script:gftGiftTemplateId).Count
+
+    Write-Host ("        下单后 {0} 张 → 支付后 {1} 张" -f $before, $after) -ForegroundColor DarkGray
+    return $before -eq 0 -and $after -eq 2
+}
+
+Invoke-Case 'API-GFT-002' '🔴 发券幂等：重复触发不再发第二份' {
+    $order = New-GftOrder $script:gftCustomerId 0 'B'
+    Pay-GftOrder $order.data.orderNo | Out-Null
+
+    $afterPay = (Get-GftCoupons $script:gftCustomerId $script:gftGiftTemplateId).Count
+
+    # 支付回调会被网关重试、消息会重投，所以「再发一次」必须什么都不做。
+    # 直接把内部发券接口再调一次，比依赖支付重复回调更直接。
+    Invoke-RestMethod "$Marketing/internal/marketing/gifts/Issue" -Method Post `
+        -ContentType 'application/json' -TimeoutSec 30 `
+        -Body (@{ orderNo = $order.data.orderNo } | ConvertTo-Json) | Out-Null
+    $afterRepeat = (Get-GftCoupons $script:gftCustomerId $script:gftGiftTemplateId).Count
+
+    Write-Host ("        支付后 {0} 张 → 重复发券后 {1} 张" -f $afterPay, $afterRepeat) -ForegroundColor DarkGray
+    return $afterPay -eq 4 -and $afterRepeat -eq 4
+}
+
+Invoke-Case 'API-GFT-003' '🔴 满赠券（券类型 4）：用它下单 → 支付后送出承诺的那张券' {
+    # 先把满赠活动停掉：不停的话这一单同时命中活动与满赠券，
+    # 券包里会多出 2+1 张，断言就分不清是哪一个来源发的了。
+    Post '/marketing/activities/SetStatus' @{ activityId = $script:gftActivityId; status = 2 } | Out-Null
+
+    $script:gftSecondGiftTemplateId = [long](Post '/marketing/coupon-templates/Create' @{
+        templateName = "满赠券的赠品$($script:suffix)"; couponType = 1; thresholdAmount = 0; discountAmount = 5
+        validDays = 30; totalQuantity = 100; perUserLimit = 5; perOrderLimit = 1
+        platformId = 0; status = 1
+    }).data
+
+    $script:gftCouponTemplateId = [long](Post '/marketing/coupon-templates/Create' @{
+        templateName = "满赠券$($script:suffix)"; couponType = 4; thresholdAmount = 0; discountAmount = 0
+        giftTemplateId = $script:gftSecondGiftTemplateId
+        validDays = 30; totalQuantity = 100; perUserLimit = 5; perOrderLimit = 1
+        platformId = 0; status = 1
+    }).data
+
+    $script:gftCouponActivityId = [long](Post '/marketing/coupon-activities/Create' @{
+        activityName = "满赠券活动$($script:suffix)"; templateId = $script:gftCouponTemplateId
+        claimStartTime = $script:now.AddMinutes(-5).ToString('o')
+        claimEndTime = $script:now.AddDays(1).ToString('o')
+        claimQuantity = 50; perUserLimit = 5
+        targetType = 1; targets = '[]'; platformId = 0; status = 1
+    }).data
+
+    $claim = Post '/coupons/Claim' @{
+        customerId = $script:gftCouponCustomerId; activityId = $script:gftCouponActivityId; quantity = 1
+    }
+    if (-not $claim.success) { Write-Host ("        领券失败：" + $claim.message) -ForegroundColor DarkYellow; return $false }
+
+    $my = Invoke-RestMethod "$Marketing/coupons/My" -Method Post -Headers $script:adminHeaders `
+        -ContentType 'application/json' -TimeoutSec 30 `
+        -Body (@{ customerId = $script:gftCouponCustomerId; status = 0; page = 1; pageSize = 50 } | ConvertTo-Json)
+    $couponId = [long](@($my.data.items | Where-Object { [long]$_.templateId -eq $script:gftCouponTemplateId })[0].couponId)
+    if ($couponId -le 0) { return $false }
+
+    $order = New-GftOrder $script:gftCouponCustomerId $couponId 'C'
+    if (-not $order.success) { Write-Host ("        下单失败：" + $order.message) -ForegroundColor DarkYellow; return $false }
+
+    # 满赠券本身折扣额是 0：它不该把这单变便宜，只该在支付后送券
+    $pay = Pay-GftOrder $order.data.orderNo
+    if (-not $pay.success) { Write-Host ("        支付失败：" + $pay.message) -ForegroundColor DarkYellow; return $false }
+
+    $giftCount = (Get-GftCoupons $script:gftCouponCustomerId $script:gftSecondGiftTemplateId).Count
+    $paid = Invoke-RestMethod "http://127.0.0.1:5064/orders/Detail?orderNo=$($order.data.orderNo)&customerId=$($script:gftCouponCustomerId)" `
+        -TimeoutSec 30
+
+    Write-Host ("        实付 {0} / 收到赠品券 {1} 张" -f $paid.data.payableAmount, $giftCount) -ForegroundColor DarkGray
+    return $giftCount -eq 1 -and $paid.data.payableAmount -eq $script:gftPrice
+}
+
+Invoke-Case 'API-GFT-004' '满赠赠送张数越界被拒（0 与 101）' {
+    $zero = Post-Api '/marketing/activities/Create' @{
+        activityName = "张数0$($script:suffix)"; activityType = 3
+        thresholdAmount = 50; giftTemplateId = $script:gftGiftTemplateId; giftQuantity = 0
+        targetType = 1; targets = '[]'
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        platformId = 0
+    }
+    $tooMany = Post-Api '/marketing/activities/Create' @{
+        activityName = "张数101$($script:suffix)"; activityType = 3
+        thresholdAmount = 50; giftTemplateId = $script:gftGiftTemplateId; giftQuantity = 101
+        targetType = 1; targets = '[]'
+        startTime = $script:now.AddDays(-1).ToString('o')
+        endTime = $script:now.AddDays(1).ToString('o')
+        platformId = 0
+    }
+    return (-not $zero.success) -and (Get-ErrorText $zero) -match '赠送张数' `
+        -and (-not $tooMany.success) -and (Get-ErrorText $tooMany) -match '赠送张数'
+}
+
+Invoke-Case 'API-GFT-009' '清理：删活动 / 券活动 / 模板 / 商品 / 分类' {
+    Post '/marketing/activities/Delete' @{ activityId = $script:gftActivityId } | Out-Null
+    if ($script:gftCouponActivityId -gt 0) {
+        # 券活动没有删除接口（领过的券要能查到来源），只能停用
+        Post '/marketing/coupon-activities/Update' @{
+            activityId = $script:gftCouponActivityId; activityName = "满赠券活动$($script:suffix)"
+            templateId = $script:gftCouponTemplateId
+            claimStartTime = $script:now.AddMinutes(-5).ToString('o')
+            claimEndTime = $script:now.AddDays(1).ToString('o')
+            claimQuantity = 50; perUserLimit = 5
+            targetType = 1; targets = '[]'; platformId = 0; status = 2
+        } | Out-Null
+    }
+    foreach ($t in @($script:gftCouponTemplateId, $script:gftSecondGiftTemplateId, $script:gftGiftTemplateId)) {
+        if ($t -gt 0) { Post '/marketing/coupon-templates/Delete' @{ templateId = $t } | Out-Null }
+    }
+    if ($script:gftProductId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:gftProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    foreach ($id in [array]($script:gftCategoryIds | Sort-Object -Descending)) {
+        Invoke-RestMethod "$Gateway/gateway/categories/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ categoryId = $id } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    return $true
+}
+
 Write-Host "`n=== SKL 秒杀：库存划出与回补（S-1）===" -ForegroundColor Cyan
 
 # 秒杀要用一个**真实存在且有库存**的 SKU：发布时真的会去库存服务划库存，

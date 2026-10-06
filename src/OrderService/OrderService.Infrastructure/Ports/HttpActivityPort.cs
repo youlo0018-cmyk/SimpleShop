@@ -24,7 +24,7 @@ public sealed class HttpActivityPort : IActivityPort
     public async Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
         long customerId, long platformId, long sessionId, long couponId,
         IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
-        CancellationToken ct = default)
+        string orderNo = "", CancellationToken ct = default)
     {
         if (lines.Count == 0) return [];
 
@@ -33,7 +33,7 @@ public sealed class HttpActivityPort : IActivityPort
             var body = new QuoteRequest(
                 customerId,
                 lines.Select(a => new QuoteLine(a.SpuId, a.SkuId, a.Amount)).ToArray(),
-                platformId, sessionId, couponId);
+                platformId, sessionId, couponId, orderNo);
 
             var response = await _http.PostAsJsonAsync(
                 "internal/marketing/activities/Quote", body, ct).ConfigureAwait(false);
@@ -73,8 +73,11 @@ public sealed class HttpActivityPort : IActivityPort
     /// <param name="PlatformId">平台 Id。</param>
     /// <param name="SessionId">秒杀场次 Id。</param>
     /// <param name="CouponId">已选券 Id。</param>
+    /// <param name="OrderNo">
+    /// 订单号。营销服务靠它把满赠的发放承诺按订单落库；结算试算传空串。
+    /// </param>
     private sealed record QuoteRequest(
-        long CustomerId, QuoteLine[] Lines, long PlatformId, long SessionId, long CouponId);
+        long CustomerId, QuoteLine[] Lines, long PlatformId, long SessionId, long CouponId, string OrderNo);
 
     /// <summary>订单行。</summary>
     /// <param name="SpuId">SPU Id。</param>

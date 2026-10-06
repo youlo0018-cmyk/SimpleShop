@@ -222,7 +222,7 @@ public sealed class OrderCreator
             request.CustomerId, platformId, 0,
             request.CouponId,
             couponLines.Select(a => (a.SpuId, a.SkuId, a.Amount)).ToArray(),
-            ct).ConfigureAwait(false);
+            orderNo, ct).ConfigureAwait(false);
 
         var activityDiscounts = couponLines
             .Select(a => activityBySku.FirstOrDefault(b => b.SkuId == a.SkuId).ActivityDiscount)

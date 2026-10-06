@@ -19,6 +19,10 @@ public sealed record QuoteOrderLine(long SpuId, long SkuId, decimal Amount);
 /// <param name="PlatformId">平台 Id，0 表示不限。</param>
 /// <param name="SessionId">秒杀场次 Id，0 表示非秒杀单。</param>
 /// <param name="CouponId">客户已选的券 Id，0 表示不用券。</param>
+/// <param name="OrderNo">
+/// 订单号。真实下单必传：满赠的发放承诺按订单落库，支付成功时才能按当时的结论发券。
+/// 结算试算（只看看不买）传空，不产生任何承诺。
+/// </param>
 /// <remarks>
 /// <para>为什么必须有这个内部接口：结算试算（FinalPrice）会把活动优惠算给前端看，
 /// 但<b>下单链路算不到它</b> —— 小程序只传 couponId / pointsToUse / freight，
@@ -31,7 +35,7 @@ public sealed record QuoteOrderLine(long SpuId, long SkuId, decimal Amount);
 /// </remarks>
 public record QuoteOrderDiscountCommand(
     long CustomerId, IReadOnlyList<QuoteOrderLine> Lines,
-    long PlatformId = 0, long SessionId = 0, long CouponId = 0)
+    long PlatformId = 0, long SessionId = 0, long CouponId = 0, string OrderNo = "")
     : IRequest<ApiResponse<QuoteOrderDiscountResult>>;
 
 /// <summary>逐行优惠拆分。</summary>
@@ -90,6 +94,8 @@ public sealed class QuoteOrderDiscountHandler
 
         var result = PromotionCalculator.Calculate(lines, activities, coupons, priority, nowUtc);
 
+        await RecordGiftPromiseAsync(request, activities, lines, result, nowUtc, ct).ConfigureAwait(false);
+
         var perLine = result.Lines
             .Select(a => new QuoteOrderLineResult(
                 a.SpuId, a.SkuId, PromotionCalculator.Round2(a.ActivityDiscount)))
@@ -97,6 +103,46 @@ public sealed class QuoteOrderDiscountHandler
 
         return ApiResults.Ok(new QuoteOrderDiscountResult(
             perLine, PromotionCalculator.Round2(result.ActivityDiscountTotal)));
+    }
+
+    /// <summary>把本单命中的满赠落成发放承诺。</summary>
+    /// <param name="request">试算命令，<c>OrderNo</c> 为空表示结算试算，不写承诺。</param>
+    /// <param name="activities">候选活动。</param>
+    /// <param name="lines">订单行。</param>
+    /// <param name="result">优惠引擎的整单结论。</param>
+    /// <param name="nowUtc">下单时刻（UTC）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <remarks>
+    /// 只有真实下单（<c>OrderNo</c> 非空）才写：结算页每翻一页都会试算一次，
+    /// 试算也写承诺的话，用户随便看看就会在库里堆一堆永不支付的「待发放」。
+    /// </remarks>
+    private async Task RecordGiftPromiseAsync(
+        QuoteOrderDiscountCommand request,
+        IReadOnlyList<PromotionActivity> activities,
+        IReadOnlyList<PromotionLine> lines,
+        FinalPriceResult result,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.OrderNo)) return;
+        if (request.CustomerId <= 0) return;
+
+        // 满赠命中时，优惠额是 0，角标来源会是 gift；用同一份结论判定，不另算一遍
+        var giftHit = result.Lines.Any(a => a.Source == DiscountSources.Gift);
+        var gift = GiftGrantPlanner.FindHitGiftActivity(activities, lines, nowUtc, giftHit);
+        if (gift is null) return;
+
+        var template = await _coupons.GetTemplateAsync(gift.GiftTemplateId, ct).ConfigureAwait(false);
+        if (!GiftGrantPlanner.CanPromise(template, gift.GiftQuantity))
+        {
+            // 池子不够 / 模板已被删：承诺不了就别承诺，免得付完钱发不出券
+            return;
+        }
+
+        await _coupons.RecordGiftGrantsAsync(
+            request.OrderNo, request.CustomerId,
+            [new GiftGrantRequest(GiftGrantSources.Activity, gift.Id, gift.GiftTemplateId, gift.GiftQuantity)],
+            nowUtc, ct).ConfigureAwait(false);
     }
 }
 

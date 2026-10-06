@@ -157,10 +157,11 @@ public sealed class PreviewOrderHandler
         var chosen = options.FirstOrDefault(a => a.CouponId == request.CouponId);
         var couponDiscount = chosen.CouponId > 0 ? chosen.DiscountAmount : 0m;
 
+        // 试算传空订单号：用户只是看了一眼结算页，不该在营销服务留下发放承诺
         var activityBySku = await _activities.QuoteAsync(
             request.CustomerId, platformId, 0, request.CouponId,
             couponPortLines.Select(a => (a.SpuId, a.SkuId, a.Amount)).ToArray(),
-            ct).ConfigureAwait(false);
+            string.Empty, ct).ConfigureAwait(false);
 
         var activityDiscounts = couponPortLines
             .Select(a => activityBySku.FirstOrDefault(b => b.SkuId == a.SkuId).ActivityDiscount)

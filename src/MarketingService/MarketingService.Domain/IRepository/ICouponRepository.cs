@@ -21,6 +21,20 @@ public sealed record CouponOutcome(
 /// <param name="CouponCodes">本次发放的券码。</param>
 public sealed record ClaimResult(CouponOutcome Outcome, IReadOnlyList<string> CouponCodes);
 
+/// <summary>一条满赠发放承诺（下单试算时写）。</summary>
+/// <param name="SourceType">来源类型，见 <see cref="Entities.GiftGrantSources"/>。</param>
+/// <param name="SourceId">来源 Id：活动 Id 或用户券 Id。</param>
+/// <param name="GiftTemplateId">赠送的券模板 Id。</param>
+/// <param name="Quantity">赠送张数。</param>
+public sealed record GiftGrantRequest(int SourceType, long SourceId, long GiftTemplateId, int Quantity);
+
+/// <summary>满赠发券执行结果。</summary>
+/// <param name="Promised">本单已承诺的发放条数（含此前已发过的）。</param>
+/// <param name="Issued">本次真正发出去的条数。</param>
+/// <param name="CouponCount">本次真正发出去的券张数。</param>
+/// <param name="Failed">发了但发不出去的条数（模板被删等），这些记录留在待发放供人工核对。</param>
+public sealed record GiftIssueOutcome(int Promised, int Issued, int CouponCount, int Failed);
+
 /// <summary>券仓储。</summary>
 /// <remarks>
 /// 写操作（领券 / 占券 / 核销 / 回退）都必须自带<b>幂等 + 并发控制</b>，
@@ -61,6 +75,36 @@ public interface ICouponRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>核销结果。</returns>
     Task<CouponOutcome> ConsumeAsync(long customerId, string orderNo, CancellationToken ct = default);
+
+    /// <summary>记录满赠发放承诺（下单试算时写，幂等）。</summary>
+    /// <param name="orderNo">订单号。</param>
+    /// <param name="customerId">收券的客户 Id。</param>
+    /// <param name="grants">本单命中的满赠来源。</param>
+    /// <param name="nowUtc">当前 UTC 时间。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>本次新写入的承诺条数；已存在的不会重复写。</returns>
+    /// <remarks>
+    /// <b>为什么下单时就要写</b>：满赠按「下单当时」的活动时间窗与配置判定，
+    /// 支付时再算一遍的话，活动一旦被改或过期，用户就会「下单页写着送券、付完钱没有」。
+    /// 所以下单把结论落库，支付只负责按结论发券。
+    /// </remarks>
+    Task<int> RecordGiftGrantsAsync(
+        string orderNo, long customerId, IReadOnlyList<GiftGrantRequest> grants,
+        DateTime nowUtc, CancellationToken ct = default);
+
+    /// <summary>发放某订单的全部待发满赠券（支付成功时调用）。</summary>
+    /// <param name="orderNo">订单号。</param>
+    /// <param name="nowUtc">当前 UTC 时间。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>发放统计。</returns>
+    /// <remarks>
+    /// <para><b>幂等</b>：只有「待发放」的记录会被处理，发完即置为「已发放」，
+    /// 重复调用（支付回调重投、用户重试）不会发出第二份。</para>
+    /// <para><b>模板已被删除时不阻断支付</b>：那笔钱已经收了，把订单卡在待支付
+    /// 只会让用户付了钱看不到订单；记录留在待发放，作为可对账的异常信号。</para>
+    /// </remarks>
+    Task<GiftIssueOutcome> IssueGiftGrantsAsync(
+        string orderNo, DateTime nowUtc, CancellationToken ct = default);
 
     /// <summary>回退占券（取消 / 超时关单）。券回到可用。</summary>
     /// <param name="customerId">客户 Id。</param>

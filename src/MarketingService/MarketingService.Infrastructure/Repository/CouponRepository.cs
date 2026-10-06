@@ -114,33 +114,13 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
                 throw new InvalidOperationException("券池子在本次事务期间被其它请求改动，事务回滚。");
             }
 
-            // 有效期从**领取时刻**起算，不从活动开始时间算
-            var expireAt = nowUtc.AddDays(template.ValidDays);
-
             for (var i = 0; i < quantity; i++)
             {
-                var coupon = new UserCoupon
-                {
-                    Id = SnowflakeId.NewId(),
-                    CreatedAt = nowUtc,
-                    CustomerId = customerId,
-                    TemplateId = template.Id,
-                    ActivityId = activity.Id,
-                    CouponCode = NewCouponCode(nowUtc, i),
-                    // ↓ 快照：模板改多少次都不影响这张券
-                    CouponType = template.CouponType,
-                    ThresholdAmount = template.ThresholdAmount,
-                    DiscountAmount = template.DiscountAmount,
-                    DiscountRate = template.DiscountRate,
-                    ValidDays = template.ValidDays,
-                    // ↑ 快照结束
-                    TargetType = activity.TargetType,
-                    Targets = activity.Targets,
-                    Status = CouponStatuses.Unused,
-                    ExpireAt = expireAt,
-                    ReceiveAt = nowUtc,
-                    OrderNo = string.Empty
-                };
+                // 适用范围取自**券活动**（同一张模板可以由不同活动投放到不同商品范围）；
+                // 其余字段取自模板快照。两条发券路径（领券 / 满赠）共用这一个构造方法，
+                // 各写一份的话，改了一处另一处会静默停留在旧规则上。
+                var coupon = NewCouponFromTemplate(
+                    template, customerId, activity.Id, activity.TargetType, activity.Targets, nowUtc, i);
 
                 _db.Insert(coupon).ExecuteAffrows();
                 codes.Add(coupon.CouponCode);
@@ -208,7 +188,13 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
                     return;
                 }
 
-                if (!quote.ReachedThreshold || quote.DiscountAmount <= 0m)
+                // 满赠券的折扣额**本来就是 0**：它不是「不可用」，而是「本单送券」。
+                // 一律按 discount <= 0 拒掉的话，券类型 4 的券永远占不上，
+                // 付完钱自然也发不出它承诺的赠品券——整条满赠券链路等于不存在。
+                var isGift = coupon.CouponType == CouponTypes.Gift;
+                var usable = quote.ReachedThreshold && (isGift || quote.DiscountAmount > 0m);
+
+                if (!usable)
                 {
                     result = new CouponOutcome(false, false, coupon.Id, 0m,
                         string.IsNullOrEmpty(quote.Reason) ? "该券在当前订单下不可用" : quote.Reason);
@@ -237,6 +223,29 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
                     DiscountAmount = quote.DiscountAmount,
                     Status = OccupancyStatuses.Occupied
                 }).ExecuteAffrows();
+
+                // 满赠券要送的那张券，此刻就把「送什么、送几张」落成发放承诺。
+                // 支付成功时按承诺发券，而不是那时再回头读模板 ——
+                // 运营在用户付款期间改了模板，用户拿到的就不该跟着变。
+                if (isGift)
+                {
+                    var source = _db.Select<CouponTemplate>().Where(a => a.Id == coupon.TemplateId).First();
+                    if (source is not null && source.GiftTemplateId > 0)
+                    {
+                        _db.Insert(new GiftGrant
+                        {
+                            Id = SnowflakeId.NewId(),
+                            CreatedAt = nowUtc,
+                            OrderNo = orderNo,
+                            CustomerId = customerId,
+                            SourceType = GiftGrantSources.Coupon,
+                            SourceId = coupon.Id,
+                            GiftTemplateId = source.GiftTemplateId,
+                            Quantity = 1,
+                            Status = GiftGrantStatuses.Pending
+                        }).ExecuteAffrows();
+                    }
+                }
 
                 result = new CouponOutcome(true, false, coupon.Id, quote.DiscountAmount);
             }), ct);
@@ -291,6 +300,129 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
         }), ct);
 
         return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<int> RecordGiftGrantsAsync(
+        string orderNo, long customerId, IReadOnlyList<GiftGrantRequest> grants,
+        DateTime nowUtc, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(orderNo) || grants.Count == 0) return 0;
+
+        var written = 0;
+
+        await Task.Run(() => _db.Transaction(() =>
+        {
+            written = 0;
+
+            foreach (var grant in grants)
+            {
+                if (grant.GiftTemplateId <= 0 || grant.Quantity <= 0) continue;
+
+                // 同一单同一来源只承诺一次。试算会被重放（客户端重试、幂等键撞车），
+                // 不判存在性的话付完钱会发两份券。
+                var exists = _db.Select<GiftGrant>()
+                    .Where(a => a.OrderNo == orderNo
+                                && a.SourceType == grant.SourceType
+                                && a.SourceId == grant.SourceId)
+                    .Any();
+                if (exists) continue;
+
+                _db.Insert(new GiftGrant
+                {
+                    Id = SnowflakeId.NewId(),
+                    CreatedAt = nowUtc,
+                    OrderNo = orderNo,
+                    CustomerId = customerId,
+                    SourceType = grant.SourceType,
+                    SourceId = grant.SourceId,
+                    GiftTemplateId = grant.GiftTemplateId,
+                    Quantity = grant.Quantity,
+                    Status = GiftGrantStatuses.Pending
+                }).ExecuteAffrows();
+
+                written++;
+            }
+        }), ct);
+
+        return written;
+    }
+
+    /// <inheritdoc />
+    public async Task<GiftIssueOutcome> IssueGiftGrantsAsync(
+        string orderNo, DateTime nowUtc, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(orderNo)) return new GiftIssueOutcome(0, 0, 0, 0);
+
+        var promised = 0;
+        var issued = 0;
+        var couponCount = 0;
+        var failed = 0;
+
+        await Task.Run(() => _db.Transaction(() =>
+        {
+            promised = 0;
+            issued = 0;
+            couponCount = 0;
+            failed = 0;
+
+            var all = _db.Select<GiftGrant>().Where(a => a.OrderNo == orderNo).ToList();
+            promised = all.Count;
+
+            foreach (var grant in all.Where(a => a.Status == GiftGrantStatuses.Pending))
+            {
+                var template = _db.Select<CouponTemplate>().Where(a => a.Id == grant.GiftTemplateId).First();
+
+                if (template is null)
+                {
+                    // 模板被删了，券发不出来。**不能因此让支付失败**：钱已经收了，
+                    // 把订单卡在待支付只会让用户付了钱看不到订单。
+                    // 记录留在「待发放」，作为可对账的异常信号（接口把条数报给调用方记日志）。
+                    failed++;
+                    continue;
+                }
+
+                // 满赠券没有券活动，适用范围按**全场**快照。
+                // 模板本身不带适用范围（那是券活动的字段），所以这里没有更精确的来源可抄。
+                for (var i = 0; i < grant.Quantity; i++)
+                {
+                    var coupon = NewCouponFromTemplate(
+                        template, grant.CustomerId, activityId: 0,
+                        TargetTypes.All, "[]", nowUtc, i);
+
+                    _db.Insert(coupon).ExecuteAffrows();
+                    couponCount++;
+                }
+
+                // 已发放数只在有池子的模板上累加。0 表示不限量，没有可累加的池子。
+                if (template.TotalQuantity > 0)
+                {
+                    _db.Update<CouponTemplate>()
+                        .Where(a => a.Id == template.Id)
+                        .Set(a => new CouponTemplate
+                        {
+                            IssuedQuantity = template.IssuedQuantity + grant.Quantity
+                        })
+                        .ExecuteAffrows();
+                }
+
+                // 条件更新：只有仍是「待发放」才置为已发放。
+                // 重复调用（支付回调重投）时这里影响 0 行，也就不会重复发券。
+                _db.Update<GiftGrant>()
+                    .Where(a => a.Id == grant.Id && a.Status == GiftGrantStatuses.Pending)
+                    .Set(a => new GiftGrant
+                    {
+                        Status = GiftGrantStatuses.Issued,
+                        IssuedAt = nowUtc,
+                        UpdatedAt = nowUtc
+                    })
+                    .ExecuteAffrows();
+
+                issued++;
+            }
+        }), ct);
+
+        return new GiftIssueOutcome(promised, issued, couponCount, failed);
     }
 
     /// <inheritdoc />
@@ -378,6 +510,46 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
     /// </remarks>
     private static string NewCouponCode(DateTime nowUtc, int index)
         => $"{nowUtc:yyyyMMddHHmmss}{index:D2}{Random.Shared.Next(100000, 999999)}";
+
+    /// <summary>按模板快照造一张用户券。</summary>
+    /// <param name="template">券模板，快照的来源。</param>
+    /// <param name="customerId">收券的客户 Id。</param>
+    /// <param name="activityId">来源券活动 Id，0 表示不是从券活动发的（满赠）。</param>
+    /// <param name="targetType">适用范围类型，见 <see cref="TargetTypes"/>。</param>
+    /// <param name="targets">适用范围的 JSON 文本。</param>
+    /// <param name="nowUtc">当前 UTC 时间，有效期从这一刻起算。</param>
+    /// <param name="index">同一批发券里的序号，只用于券码去重。</param>
+    /// <returns>待插入的用户券。</returns>
+    /// <remarks>
+    /// <b>券快照机制（DATA_SPEC 5.12）</b>：类型 / 门槛 / 优惠额 / 折扣率 / 有效天数
+    /// 在发放这一刻复制到用户券自己的字段上，之后模板怎么改都不影响它。
+    /// 不这么做的话，运营改一次模板价格，全站已发出的券跟着变价——那是资损级事故。
+    /// </remarks>
+    private static UserCoupon NewCouponFromTemplate(
+        CouponTemplate template, long customerId, long activityId,
+        int targetType, string targets, DateTime nowUtc, int index)
+        => new()
+        {
+            Id = SnowflakeId.NewId(),
+            CreatedAt = nowUtc,
+            CustomerId = customerId,
+            TemplateId = template.Id,
+            ActivityId = activityId,
+            CouponCode = NewCouponCode(nowUtc, index),
+            // ↓ 快照：模板改多少次都不影响这张券
+            CouponType = template.CouponType,
+            ThresholdAmount = template.ThresholdAmount,
+            DiscountAmount = template.DiscountAmount,
+            DiscountRate = template.DiscountRate,
+            ValidDays = template.ValidDays,
+            // ↑ 快照结束
+            TargetType = targetType,
+            Targets = targets,
+            Status = CouponStatuses.Unused,
+            ExpireAt = nowUtc.AddDays(template.ValidDays),
+            ReceiveAt = nowUtc,
+            OrderNo = string.Empty
+        };
 
     /// <inheritdoc />
     public async Task<CouponReportAggregate> AggregateAsync(

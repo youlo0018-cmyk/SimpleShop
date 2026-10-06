@@ -79,6 +79,7 @@ public static class OrderAmountCalculator
     /// <param name="lineActivityDiscounts">每行的活动优惠额，长度须与 lines 一致。</param>
     /// <param name="freightRule">运费规则。</param>
     /// <param name="pointsToUse">本次抵扣的积分数（整数）。</param>
+    /// <param name="pointsPerYuan">抵扣汇率：多少积分抵 1.00 元。来自积分规则，后台可改。</param>
     /// <returns>整单金额拆分。</returns>
     /// <remarks>
     /// <paramref name="lineCouponDiscounts"/> 是「按行**已经分摊好**的券优惠」，

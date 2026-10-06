@@ -59,6 +59,30 @@ public sealed class HttpCouponPort : ICouponPort
     }
 
     /// <inheritdoc />
+    public async Task IssueGiftsAsync(string orderNo, CancellationToken ct = default)
+    {
+        var body = await PostAsync<GiftIssueResponse>(
+            "internal/marketing/gifts/Issue", new GiftIssueRequest(orderNo), ct).ConfigureAwait(false);
+
+        var data = body.Data;
+        if (data is null) return;
+
+        if (data.CouponCount > 0)
+        {
+            _logger.LogInformation("订单 {OrderNo} 发放满赠券 {Count} 张", orderNo, data.CouponCount);
+        }
+
+        // 承诺了却发不出去（赠送模板被删）：不阻断支付，但必须留下显眼的痕迹，
+        // 否则用户「下单页写着送券、券包里没有」，而系统全程无异常。
+        if (data.Failed > 0)
+        {
+            _logger.LogError(
+                "订单 {OrderNo} 有 {Failed} 条满赠承诺发不出券（赠送模板可能已被删除），记录留在待发放",
+                orderNo, data.Failed);
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<CouponQuoteOption>> QuoteAsync(
         long customerId, IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
     {
@@ -146,6 +170,21 @@ public sealed class HttpCouponPort : ICouponPort
     /// <param name="CustomerId">客户 Id。</param>
     /// <param name="OrderNo">订单号。</param>
     private sealed record ReleaseRequest(long CustomerId, string OrderNo);
+
+    /// <summary>满赠发券请求体。</summary>
+    /// <param name="OrderNo">订单号。</param>
+    private sealed record GiftIssueRequest(string OrderNo);
+
+    /// <summary>满赠发券结果。</summary>
+    /// <param name="Promised">本单承诺的发放条数。</param>
+    /// <param name="Issued">本次真正发出去的条数。</param>
+    /// <param name="CouponCount">本次真正发出去的券张数。</param>
+    /// <param name="Failed">发不出去的条数。</param>
+    private sealed record GiftIssueResponse(
+        [property: JsonPropertyName("promised")] int Promised,
+        [property: JsonPropertyName("issued")] int Issued,
+        [property: JsonPropertyName("couponCount")] int CouponCount,
+        [property: JsonPropertyName("failed")] int Failed);
 
     /// <summary>只读试算请求体。字段名与营销服务的 <c>SettleCouponsCommand</c> 对齐。</summary>
     /// <param name="CustomerId">客户 Id。</param>

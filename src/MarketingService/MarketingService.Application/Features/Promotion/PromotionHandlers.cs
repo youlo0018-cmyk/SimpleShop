@@ -70,6 +70,7 @@ public sealed class CreatePromotionActivityHandler
             DiscountAmount = PromotionCalculator.Round2(request.DiscountAmount),
             DiscountRate = PromotionCalculator.Round2(request.DiscountRate),
             GiftTemplateId = request.GiftTemplateId,
+            GiftQuantity = request.GiftQuantity,
             SessionId = request.SessionId,
             TargetType = request.TargetType,
             Targets = (request.Targets ?? "[]").Trim(),
@@ -126,6 +127,7 @@ public sealed class UpdatePromotionActivityHandler
         existing.DiscountAmount = PromotionCalculator.Round2(request.DiscountAmount);
         existing.DiscountRate = PromotionCalculator.Round2(request.DiscountRate);
         existing.GiftTemplateId = request.GiftTemplateId;
+        existing.GiftQuantity = request.GiftQuantity;
         existing.TargetType = request.TargetType;
         existing.Targets = (request.Targets ?? "[]").Trim();
         existing.StartTime = CreatePromotionActivityHandler.ToUtc(request.StartTime);
@@ -170,7 +172,8 @@ public sealed class QueryPromotionActivitiesHandler
             a.ThresholdAmount, a.DiscountAmount, a.DiscountRate,
             a.TargetType, PromotionNames.TargetName(a.TargetType, a.Targets),
             a.StartTime.ToString("yyyy-MM-dd HH:mm"), a.EndTime.ToString("yyyy-MM-dd HH:mm"),
-            a.Status, PromotionNames.StatusName(a.Status))).ToList();
+            a.Status, PromotionNames.StatusName(a.Status),
+            a.GiftTemplateId, a.GiftQuantity)).ToList();
 
         return ApiResults.Ok(new PagedPromotionResult(dtos, total, request.Page, request.PageSize));
     }
@@ -201,7 +204,8 @@ public sealed class GetPromotionActivityHandler
             a.ThresholdAmount, a.DiscountAmount, a.DiscountRate,
             a.TargetType, PromotionNames.TargetName(a.TargetType, a.Targets),
             a.StartTime.ToString("yyyy-MM-dd HH:mm"), a.EndTime.ToString("yyyy-MM-dd HH:mm"),
-            a.Status, PromotionNames.StatusName(a.Status)));
+            a.Status, PromotionNames.StatusName(a.Status),
+            a.GiftTemplateId, a.GiftQuantity));
     }
 }
 

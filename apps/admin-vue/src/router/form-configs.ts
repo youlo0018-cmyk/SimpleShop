@@ -286,6 +286,7 @@ export const FORMS = {
       { field: 'discountAmount', label: '优惠金额', type: 'number', min: 0, default: 0, help: '满减用' },
       { field: 'discountRate', label: '折扣率', type: 'number', min: 0, max: 10, default: 10, help: '满折用。10 表示不打折，8.5 表示 85 折' },
       { field: 'giftTemplateId', label: '赠送券模板', type: 'select', options: 'couponTemplates', default: 0, help: '满赠时必填' },
+      { field: 'giftQuantity', label: '赠送张数', type: 'number', min: 1, max: 100, default: 1, help: '满赠每单赠送张数，1 ~ 100' },
       { field: 'startTime', label: '开始时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
       { field: 'endTime', label: '结束时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
       { field: 'perOrderLimit', label: '每单限用', type: 'number', min: 0, default: 0 },

@@ -4,7 +4,7 @@ using OrderService.Domain.Ports;
 
 namespace OrderService.Application;
 
-/// <summary>支付成功后的收尾：扣库存 → 实扣积分 → 核销券 → 改状态。</summary>
+/// <summary>支付成功后的收尾：扣库存 → 实扣积分 → 核销券 → 发满赠券 → 改状态。</summary>
 /// <remarks>
 /// <para><b>下游先做、状态最后改</b>。反过来的话，状态一旦改成 20 就算支付成功，
 /// 而库存扣减失败了也没人再重试——用户拿到「已支付」却没货。
@@ -132,7 +132,22 @@ public sealed class OrderPaymentCompleter
             }
         }
 
-        // ---- ④ 改状态：10 待支付 → 20 待发货 ----
+        // ---- ④ 发满赠券 ----
+        // 无条件调用：本单有没有满赠只有营销服务知道（承诺是下单时按当时的活动写的）。
+        // 放在改状态之前，失败了整笔支付可以重跑——记录仍是「待发放」，
+        // 重跑时按状态幂等，不会重复发券。放在改状态之后的话，
+        // 状态一变就再也不会有人来补发，用户的券就**永久消失**了。
+        try
+        {
+            await _coupons.IssueGiftsAsync(order.OrderNo, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "支付发放满赠券失败：订单 {OrderNo}", order.OrderNo);
+            return OrderPaymentOutcome.Fail(4, "发放满赠券失败：" + ex.Message);
+        }
+
+        // ---- ⑤ 改状态：10 待支付 → 20 待发货 ----
         // 实付 0 元的单创建时就已经是 20，没有状态可迁，直接收工。
         if (settledWithoutPayment)
         {
@@ -160,7 +175,7 @@ public sealed class OrderPaymentCompleter
                 return OrderPaymentOutcome.Ok(alreadyCompleted: true);
             }
 
-            return OrderPaymentOutcome.Fail(4, "订单状态已变更，请刷新后重试");
+            return OrderPaymentOutcome.Fail(5, "订单状态已变更，请刷新后重试");
         }
 
         _logger.LogInformation("订单 {OrderNo} 支付完成，进入待发货", order.OrderNo);
@@ -171,7 +186,7 @@ public sealed class OrderPaymentCompleter
 /// <summary>支付收尾结果。</summary>
 /// <param name="Succeeded">是否成功。</param>
 /// <param name="AlreadyCompleted">是否因为重复回调而无需再处理。</param>
-/// <param name="FailedStep">失败步骤 1~4，0 表示成功。</param>
+/// <param name="FailedStep">失败步骤 1~5（1 扣库存 / 2 实扣积分 / 3 核销券 / 4 发满赠券 / 5 改状态），0 表示成功。</param>
 /// <param name="Error">失败原因。</param>
 public readonly record struct OrderPaymentOutcome(
     bool Succeeded, bool AlreadyCompleted, int FailedStep, string Error)

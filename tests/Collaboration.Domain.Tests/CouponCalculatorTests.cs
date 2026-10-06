@@ -108,6 +108,18 @@ public class CouponCalculatorTests
     }
 
     [Fact]
+    public void 满赠券未达门槛时不命中()
+    {
+        // 「满 600 送券」在 500 元的单上不该送。不判门槛的话运营配的门槛形同虚设，
+        // 而症状是「满赠太容易中」，很难联想到是这里漏了判断。
+        var miss = CouponCalculator.Quote(MakeCoupon(type: CouponTypes.Gift, threshold: 600m), TwoLines);
+
+        Assert.False(miss.ReachedThreshold);
+        Assert.Equal(0m, miss.DiscountAmount);
+        Assert.Contains("未达门槛", miss.Reason);
+    }
+
+    [Fact]
     public void 代金券可无门槛()
     {
         var quote = CouponCalculator.Quote(MakeCoupon(type: CouponTypes.Cash, discountAmount: 30m), TwoLines);

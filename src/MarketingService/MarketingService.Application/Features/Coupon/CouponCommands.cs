@@ -71,6 +71,7 @@ public static class CouponValidators
         services.AddScoped<IValidator<ReleaseCouponCommand>, ReleaseCouponValidator>();
         services.AddScoped<IValidator<SettleCouponsCommand>, SettleCouponsValidator>();
         services.AddScoped<IValidator<QueryCouponReportCommand>, CouponReportValidator>();
+        services.AddScoped<IValidator<IssueGiftGrantsCommand>, IssueGiftGrantsValidator>();
     }
 
     /// <summary>营销效果报表校验。</summary>

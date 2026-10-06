@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS promotion_activity (
     discount_rate    numeric(18,2) NOT NULL DEFAULT 0,
     -- 满赠赠送的券模板 Id
     gift_template_id bigint        NOT NULL DEFAULT 0,
+    -- 满赠每单赠送张数，1 ~ 100。非满赠活动忽略
+    gift_quantity    int           NOT NULL DEFAULT 1,
     -- 限时抢购场次 Id。非秒杀固定 0。
     -- 所有查询都按它寻址，「当前场次」只是查询条件之一——多场次能力现在就具备，
     -- 不用等做秒杀时再改表。
@@ -66,6 +68,47 @@ ALTER TABLE promotion_activity ADD COLUMN IF NOT EXISTS created_by_id   bigint  
 ALTER TABLE promotion_activity ADD COLUMN IF NOT EXISTS created_by_name varchar(64) NOT NULL DEFAULT '';
 ALTER TABLE promotion_activity ADD COLUMN IF NOT EXISTS operation_id    bigint      NOT NULL DEFAULT 0;
 ALTER TABLE promotion_activity ADD COLUMN IF NOT EXISTS operation_name  varchar(64) NOT NULL DEFAULT '';
+ALTER TABLE promotion_activity ADD COLUMN IF NOT EXISTS gift_quantity   int         NOT NULL DEFAULT 1;
+
+-- 满赠待发券记录（BUSINESS.md 11.6 / 20.1：满赠发券）。
+--
+-- 「命中满赠」发生在上单试算那一刻（按当时的活动时间窗与配置判定），
+-- 「发券」发生在支付成功。中间隔着用户付款这段时间，支付时再重算一遍的话，
+-- 活动一旦被改或过期，用户就会「下单页写着送券、付完钱没有」。
+-- 所以下单试算时先把发放承诺落成一条记录，支付成功只按记录发券。
+CREATE TABLE IF NOT EXISTS gift_grant (
+    id               bigint        NOT NULL,
+    created_at       timestamp     NOT NULL,
+    updated_at       timestamp     NULL,
+    is_deleted       boolean       NOT NULL DEFAULT false,
+    deleted_at       timestamp     NULL,
+    order_no         varchar(64)   NOT NULL DEFAULT '',
+    customer_id      bigint        NOT NULL DEFAULT 0,
+    -- 1 满赠活动 / 2 满赠券
+    source_type      int           NOT NULL DEFAULT 1,
+    -- 来源 Id：活动 Id 或用户券 Id
+    source_id        bigint        NOT NULL DEFAULT 0,
+    gift_template_id bigint        NOT NULL DEFAULT 0,
+    quantity         int           NOT NULL DEFAULT 1,
+    -- 10 待发放 / 20 已发放
+    status           int           NOT NULL DEFAULT 10,
+    issued_at        timestamp     NULL,
+    CONSTRAINT pk_gift_grant PRIMARY KEY (id)
+);
+
+-- 幂等键：同一单、同一来源只承诺一次。
+-- 下单试算会被重试（客户端重试、幂等键撞车后的重放），
+-- 没有这个索引就会承诺两次，付完钱发两份券。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_gift_grant_order_source
+    ON gift_grant (order_no, source_type, source_id);
+
+-- 发放与补偿重试都按「订单号 + 状态」找记录
+CREATE INDEX IF NOT EXISTS idx_gift_grant_order ON gift_grant (order_no, status);
+
+-- 对账 / 排障按状态筛「还没发出去的承诺」
+CREATE INDEX IF NOT EXISTS idx_gift_grant_status
+    ON gift_grant (status)
+    WHERE is_deleted = false;
 
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO simpleshop_app;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO simpleshop_app;

@@ -94,7 +94,6 @@ public static class OrderStatusMachine
     public static bool CanVerifyPickup(int status) => CanTransit(status, OrderStatuses.Completed);
 
     /// <summary>实物订单是否可退款。</summary>
-    /// <param name="status">状态码。</param>
     /// <param name="status">订单当前状态。</param>
     /// <param name="deliveryTypes">订单里出现过的配送方式。</param>
     /// <returns>可退款返回 true。</returns>

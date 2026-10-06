@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using MarketingService.Application.Features.Coupon;
 using MarketingService.Application.Features.Seckill;
 using MarketingService.Application.Features.Promotion;
 using MediatR;
@@ -62,5 +63,18 @@ public sealed class InternalMarketingController : ControllerBase
     [HttpPost("activities/Quote")]
     public Task<ApiResponse<QuoteOrderDiscountResult>> QuoteOrderDiscount(
         [FromBody] QuoteOrderDiscountCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>发放某订单的满赠券（订单服务在支付成功时调用）。</summary>
+    /// <param name="command">命令，只需订单号。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>发放统计。</returns>
+    /// <remarks>
+    /// 下单时已把「该送什么」写成发放承诺，这里按承诺发券。
+    /// <b>幂等</b>：只有「待发放」的记录会被处理，支付回调重投不会重复发券。
+    /// </remarks>
+    [HttpPost("gifts/Issue")]
+    public Task<ApiResponse<GiftIssueResult>> IssueGiftGrants(
+        [FromBody] IssueGiftGrantsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 }
