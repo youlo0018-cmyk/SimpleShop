@@ -66,6 +66,65 @@ public sealed class HttpPlatformPort : IPlatformPort
         return new ShippingConfig(body.Data.ShippingFee, body.Data.FreeShippingThreshold);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// 与运费那条路刻意不同：名称取不到**只降级**（返回空表，列表回落显示 Id），
+    /// 不抛 <see cref="OrderDownstreamException"/> —— 展示字段缺失不该让后台订单列表打不开。
+    /// </remarks>
+    public async Task<PlatformNames> GetNamesAsync(
+        IReadOnlyCollection<long> platformIds,
+        IReadOnlyCollection<long> merchantIds,
+        CancellationToken ct = default)
+    {
+        var empty = new PlatformNames(
+            new Dictionary<long, string>(), new Dictionary<long, string>());
+
+        if (platformIds.Count == 0 && merchantIds.Count == 0) return empty;
+
+        try
+        {
+            var response = await _http.PostAsJsonAsync(
+                "internal/platforms/Names",
+                new NameLookupRequest(platformIds.ToArray(), merchantIds.ToArray()),
+                ct).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("取平台 / 商户名称失败：HTTP {Code}，列表回落显示 Id", (int)response.StatusCode);
+                return empty;
+            }
+
+            var body = await response.Content
+                .ReadFromJsonAsync<ApiResponse<NameLookupData>>(ct).ConfigureAwait(false);
+
+            if (body is null || !body.Success || body.Data is null) return empty;
+
+            return new PlatformNames(
+                body.Data.Platforms.ToDictionary(a => a.Id, a => a.Name),
+                body.Data.Merchants.ToDictionary(a => a.Id, a => a.Name));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "取平台 / 商户名称调用异常，列表回落显示 Id");
+            return empty;
+        }
+    }
+
+    /// <summary>名称查询请求体。</summary>
+    private sealed record NameLookupRequest(
+        [property: JsonPropertyName("platformIds")] long[] PlatformIds,
+        [property: JsonPropertyName("merchantIds")] long[] MerchantIds);
+
+    /// <summary>名称查询响应数据。</summary>
+    private sealed record NameLookupData(
+        [property: JsonPropertyName("platforms")] List<NamePair> Platforms,
+        [property: JsonPropertyName("merchants")] List<NamePair> Merchants);
+
+    /// <summary>一个 Id → 名称。</summary>
+    private sealed record NamePair(
+        [property: JsonPropertyName("id")] long Id,
+        [property: JsonPropertyName("name")] string Name);
+
     /// <summary>运费配置响应数据。</summary>
     /// <param name="PlatformId">平台 Id。</param>
     /// <param name="ShippingFee">平台运费，两位小数。</param>

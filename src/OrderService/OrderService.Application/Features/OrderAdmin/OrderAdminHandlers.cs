@@ -14,10 +14,16 @@ public sealed class QueryAdminOrdersHandler
     : MediatR.IRequestHandler<QueryAdminOrdersCommand, ApiResponse<PagedResult<AdminOrderListItemDto>>>
 {
     private readonly IOrderStore _store;
+    private readonly IPlatformPort _platforms;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
-    public QueryAdminOrdersHandler(IOrderStore store) => _store = store;
+    /// <param name="platforms">平台端口：列表要显示平台 / 店铺名而不是 Id（DATA_SPEC 4.3）。</param>
+    public QueryAdminOrdersHandler(IOrderStore store, IPlatformPort platforms)
+    {
+        _store = store;
+        _platforms = platforms;
+    }
 
     /// <summary>执行后台分页。</summary>
     /// <param name="request">查询命令。</param>
@@ -42,6 +48,12 @@ public sealed class QueryAdminOrdersHandler
         var aggregates = await _store
             .AggregateItemsAsync(orders.Select(a => a.Id).ToArray(), ct).ConfigureAwait(false);
 
+        // 平台名 / 店铺名只存在于商户平台服务：一次批量取，取不到回落成 Id
+        var names = await _platforms.GetNamesAsync(
+            orders.Where(a => a.PlatformId > 0).Select(a => a.PlatformId).Distinct().ToArray(),
+            orders.Where(a => a.MerchantId > 0).Select(a => a.MerchantId).Distinct().ToArray(),
+            ct).ConfigureAwait(false);
+
         var items = orders.Select(a =>
         {
             aggregates.TryGetValue(a.Id, out var agg);
@@ -51,7 +63,13 @@ public sealed class QueryAdminOrdersHandler
                 a.ReceiverName, a.ReceiverPhone,
                 a.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
                 agg.HasPhysical, agg.HasVirtual, agg.HasSelfPickup,
-                a.CustomerNo, a.MerchantId);
+                a.CustomerNo, a.MerchantId,
+                a.PlatformId > 0
+                    ? names.Platforms.GetValueOrDefault(a.PlatformId, a.PlatformId.ToString())
+                    : "平台自营",
+                a.MerchantId > 0
+                    ? names.Merchants.GetValueOrDefault(a.MerchantId, a.MerchantId.ToString())
+                    : "平台自营");
         }).ToList();
 
         return ApiResults.Ok(new PagedResult<AdminOrderListItemDto>(

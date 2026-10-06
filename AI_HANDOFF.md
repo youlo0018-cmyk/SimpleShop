@@ -278,6 +278,30 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-07：列表把雪花 Id 当成名称显示（账号列表 `PlatformName` = `PlatformId.ToString()`）
+
+按 DATA_SPEC 4.3（必须冗余返回的展示字段）逐行取证时发现：**名称根本没有取到过**。
+
+| 位置 | 修前 | 修后 |
+|---|---|---|
+| 后台账号列表 | `PlatformName` / `MerchantName` 两个字段的值是 `PlatformId.ToString()` / `MerchantId.ToString()` —— 字段叫 Name，值是 Id | 调商户平台服务解析成平台名 / 店铺名 |
+| 后台订单列表 | `AdminOrderListItemDto` 只有 `MerchantId`，**没有** PlatformName / MerchantName（4.3 明确要求） | 补上两个字段并解析 |
+
+用户早就明确要求「直接显示 name，不要显示 id」，而这两处一个显示 Id、一个根本没有名称字段。
+
+**改法**：MerchantPlatformService 新增内部接口 `POST /internal/platforms/Names`
+（入参 `platformIds` + `merchantIds`，出参两组 `{id, name}`，一次最多 200 个），
+UserService 与 OrderService 各加一个客户端，**按当前页批量取一次**，不逐行查询。
+
+两条刻意的设计取舍：
+- **名称是展示字段，取不到只降级**（回落显示 Id + 记警告），不像运费那样抛
+  `OrderDownstreamException` —— 缺个名字不该让后台订单列表打不开。
+- `platformId = 0` / `merchantId = 0` 表示平台自营，显示「平台自营」，**不去查名**
+  （0 本来就没有对应的行，查了也是空）。
+
+**验证**：构建 0 警告 0 错误；单测 384/384；E2E **672/672**（18 个脚本，
+新增 API-ADM-096 账号列表名称 / API-ADM-097 订单列表名称）。
+
 ### 2026-10-07：内置地区库只有省级（收货地址三级联动用不了）+ 券活动发放量不限模板
 
 按 DATA_SPEC 5.31 / 5.32 逐条取证时发现两处「文档里有、实现没有」：

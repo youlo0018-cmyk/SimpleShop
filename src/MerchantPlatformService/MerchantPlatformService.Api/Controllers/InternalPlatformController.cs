@@ -43,7 +43,63 @@ public sealed class InternalPlatformController : ControllerBase
 
         return Ok(ApiResults.Ok(row ?? new ShippingConfigSnapshot(platformId, 0m, 0m)));
     }
+
+    /// <summary>按 Id 集合取平台 / 商户的**显示名**（其它服务的列表冗余展示用）。</summary>
+    /// <param name="command">平台 Id 与商户 Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>命中的名称清单；查不到的 Id 不会出现在结果里。</returns>
+    /// <remarks>
+    /// <para><b>为什么要有它</b>：DATA_SPEC 4.3 要求订单 / 退款等列表**冗余返回名称**，
+    /// 而名称只存在于本服务。没有这个接口，其它服务只能回一个雪花 Id ——
+    /// 运营在列表上看到的就是一串数字（用户明确要求「直接显示 name，不要显示 id」）。</para>
+    ///
+    /// <para>返回的是<b>展示名</b>（平台名 / 店铺名），不是凭证类数据；
+    /// 与其它 /internal 接口同一条边界：网关不路由 /internal，只在服务网络内可达。</para>
+    /// </remarks>
+    [HttpPost("Names")]
+    public async Task<ActionResult<ApiResponse<NameLookupResult>>> Names(
+        [FromBody] NameLookupCommand command, CancellationToken ct)
+    {
+        var platformIds = (command.PlatformIds ?? Array.Empty<long>()).Where(a => a > 0).Distinct().ToArray();
+        var merchantIds = (command.MerchantIds ?? Array.Empty<long>()).Where(a => a > 0).Distinct().ToArray();
+
+        // 内部上下文不过租户过滤，这里显式去重 + 限流（一次最多 200 个，够列表页用）
+        var platforms = platformIds.Length == 0
+            ? new List<NamePair>()
+            : (await _db.Select<Platform>()
+                .Where(a => platformIds.Contains(a.Id))
+                .Limit(200)
+                .ToListAsync(a => new NamePair(a.Id, a.PlatformName), ct).ConfigureAwait(false));
+
+        var merchants = merchantIds.Length == 0
+            ? new List<NamePair>()
+            : (await _db.Select<Merchant>()
+                .Where(a => merchantIds.Contains(a.Id))
+                .Limit(200)
+                .ToListAsync(a => new NamePair(a.Id, a.MerchantName), ct).ConfigureAwait(false));
+
+        return Ok(ApiResults.Ok(new NameLookupResult(platforms, merchants)));
+    }
 }
+
+/// <summary>名称查询请求。</summary>
+/// <param name="PlatformIds">平台 Id 集合。</param>
+/// <param name="MerchantIds">商户 Id 集合。</param>
+public sealed record NameLookupCommand(
+    IReadOnlyList<long>? PlatformIds = null,
+    IReadOnlyList<long>? MerchantIds = null);
+
+/// <summary>名称查询结果。</summary>
+/// <param name="Platforms">平台 Id → 名称。</param>
+/// <param name="Merchants">商户 Id → 名称。</param>
+public sealed record NameLookupResult(
+    IReadOnlyList<NamePair> Platforms,
+    IReadOnlyList<NamePair> Merchants);
+
+/// <summary>一个 Id → 名称。</summary>
+/// <param name="Id">平台或商户 Id。</param>
+/// <param name="Name">展示名。</param>
+public sealed record NamePair(long Id, string Name);
 
 /// <summary>平台运费配置快照。</summary>
 /// <param name="PlatformId">平台 Id。</param>

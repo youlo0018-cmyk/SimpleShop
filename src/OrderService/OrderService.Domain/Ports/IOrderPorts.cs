@@ -105,12 +105,33 @@ public interface IPlatformPort
     /// 后台把运费配成 10 元，顾客结算时看到的仍然是 0。</para>
     /// </remarks>
     Task<ShippingConfig> GetShippingConfigAsync(long platformId, CancellationToken ct = default);
+
+    /// <summary>按 Id 集合取平台 / 商户的显示名（后台列表冗余展示用）。</summary>
+    /// <param name="platformIds">平台 Id 集合。</param>
+    /// <param name="merchantIds">商户 Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>Id → 名称；查不到或下游不可用时缺项。</returns>
+    /// <remarks>
+    /// 名称是**展示字段**，取不到只降级（列表回落显示 Id），不像运费那样让整个请求失败
+    /// （DATA_SPEC 4.3 要求订单列表冗余返回 PlatformName / MerchantName）。
+    /// </remarks>
+    Task<PlatformNames> GetNamesAsync(
+        IReadOnlyCollection<long> platformIds,
+        IReadOnlyCollection<long> merchantIds,
+        CancellationToken ct = default);
 }
 
 /// <summary>平台运费配置。</summary>
 /// <param name="ShippingFee">平台运费，仅对实物快递收取，两位小数。</param>
 /// <param name="FreeShippingThreshold">满额包邮门槛，按商品实付判定；0 表示不启用。</param>
 public readonly record struct ShippingConfig(decimal ShippingFee, decimal FreeShippingThreshold);
+
+/// <summary>平台 / 商户显示名。</summary>
+/// <param name="Platforms">平台 Id → 平台名。</param>
+/// <param name="Merchants">商户 Id → 店铺名。</param>
+public sealed record PlatformNames(
+    IReadOnlyDictionary<long, string> Platforms,
+    IReadOnlyDictionary<long, string> Merchants);
 
 
 /// <summary>券端口。占券 / 核销 / 回退，与活动优惠（<see cref="IActivityPort"/>）分开。</summary>

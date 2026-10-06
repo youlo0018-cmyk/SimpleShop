@@ -50,6 +50,21 @@ public static class ApiServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(5);
         });
 
+        // 平台 / 商户显示名：账号列表要显示名称而不是雪花 Id（DATA_SPEC 4.3）。
+        var merchantPlatformUrl = configuration["Services:MerchantPlatformServiceBaseUrl"];
+        if (string.IsNullOrWhiteSpace(merchantPlatformUrl))
+        {
+            throw new InvalidOperationException(
+                "缺少配置 Services:MerchantPlatformServiceBaseUrl，账号列表无法把平台 / 商户 Id 换成名称。请在 AgileConfig 补上。");
+        }
+
+        services.AddHttpClient<IPlatformNameClient, HttpPlatformNameClient>(client =>
+        {
+            client.BaseAddress = new Uri(merchantPlatformUrl!.TrimEnd('/') + "/");
+            // 名称只是展示字段，超时给短一点：取不到就回落显示 Id，不拖慢列表
+            client.Timeout = TimeSpan.FromSeconds(5);
+        });
+
         // 会话吊销键写在共享库：读它的是网关，写错库号会静默失效（DATA_SPEC 5.20）。
         var sharedDatabase = configuration.GetSection(RedisOptions.SectionName).Get<RedisOptions>()?.SharedDatabase ?? 0;
         services.AddSingleton<IAdminSessionRevoker>(sp => new RedisAdminSessionRevoker(

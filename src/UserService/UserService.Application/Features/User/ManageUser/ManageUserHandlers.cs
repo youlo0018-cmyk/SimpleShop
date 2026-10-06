@@ -284,10 +284,16 @@ public sealed class ChangeUserStatusHandler : IRequestHandler<ChangeUserStatusCo
 public sealed class QueryUsersHandler : IRequestHandler<QueryUsersCommand, ApiResponse<List<UserListItem>>>
 {
     private readonly IUserRepository _users;
+    private readonly IPlatformNameClient _names;
 
     /// <summary>构造处理器。</summary>
     /// <param name="users">账号仓储。</param>
-    public QueryUsersHandler(IUserRepository users) => _users = users;
+    /// <param name="names">平台 / 商户名称客户端。</param>
+    public QueryUsersHandler(IUserRepository users, IPlatformNameClient names)
+    {
+        _users = users;
+        _names = names;
+    }
 
     /// <summary>执行查询。</summary>
     /// <param name="request">查询命令。</param>
@@ -325,11 +331,22 @@ public sealed class QueryUsersHandler : IRequestHandler<QueryUsersCommand, ApiRe
             request.Page, request.PageSize, request.Keyword,
             platformId, merchantId, request.Status, ct);
 
+        // 列表要显示平台名 / 店铺名而不是雪花 Id（DATA_SPEC 4.3、用户要求「显示 name 不显示 id」）。
+        // 一次批量取当前页用到的 Id，不做逐行查询；取不到时回落成 Id（降级但信息不丢）。
+        var names = await _names.GetNamesAsync(
+            items.Where(a => a.PlatformId > 0).Select(a => a.PlatformId).Distinct().ToArray(),
+            items.Where(a => a.MerchantId > 0).Select(a => a.MerchantId).Distinct().ToArray(),
+            ct);
+
         var result = items.Select(u => new UserListItem(
             u.Id.ToString(), u.UserName, u.NickName, u.Phone, u.Email, u.Avatar,
             u.TenantType == TenantTypes.Merchant ? "商户" : "平台",
-            u.PlatformId > 0 ? u.PlatformId.ToString() : "全部平台",
-            u.MerchantId > 0 ? u.MerchantId.ToString() : "—",
+            u.PlatformId > 0
+                ? names.Platforms.GetValueOrDefault(u.PlatformId, u.PlatformId.ToString())
+                : "全部平台",
+            u.MerchantId > 0
+                ? names.Merchants.GetValueOrDefault(u.MerchantId, u.MerchantId.ToString())
+                : "—",
             u.Status,
             u.LastLoginAt?.ToString("yyyy-MM-dd HH:mm") ?? "—")).ToList();
 

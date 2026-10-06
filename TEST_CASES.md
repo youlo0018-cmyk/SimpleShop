@@ -384,6 +384,8 @@
 | API-TEN-010 | **P0** | 平台账号的账号列表只含本平台 | 传 `platformId=0` 试图「不限平台」；断言服务端用上下文覆盖入参，列表里没有 `platformId=0` 的账号 |
 | API-TEN-011 | **P0** | 直连服务端口建号被拒 | 没有 `X-Claim-*`（未过网关）= 无租户身份 → 403。断言 body 里的业务码，这套服务的业务失败是 **HTTP 200 + success=false** |
 | API-TEN-012 | P1 | 建号必填字段 | `roleIds` 至少 1 个、商户账号必填 `merchantId`、平台账号必须给 `platformId`、`status` 只能 1/2 |
+| API-TEN-013 | **P0** | 账号列表显示平台 / 商户**名称** | `platformName` 必须等于平台的名称，且**不是一串数字**。曾经字段叫 `PlatformName`、值却是 `PlatformId.ToString()` |
+| API-TEN-014 | **P0** | 订单列表返回平台 / 商户**名称** | DATA_SPEC 4.3 要求冗余返回；平台自营的单显示「平台自营」。名称取不到时降级显示 Id，但**不让列表打不开** |
 | API-VIS-001 | P0 | 未审核商户 C 端不可见 | 断言 `/merchants/Shop` 返回 404 或空 |
 | API-VIS-002 | P0 | 停用商户 C 端不可见 | 断言不可见 |
 | API-VIS-003 | P0 | 未审核商品 C 端不可见 | 断言列表与详情均不可见 |

@@ -789,6 +789,21 @@ if ($platToken) {
         }
         $null -ne $body -and (-not $body.success) -and ([int]$body.code -eq 403)
     }
+
+    Invoke-Case 'API-ADM-096' '🔴 账号列表显示平台 / 商户**名称**而不是雪花 Id' {
+        # 用户明确要求「直接显示 name，不要显示 id」；DATA_SPEC 4.3 也要求列表冗余返回名称。
+        # 这一条之前返回的是 `u.PlatformId.ToString()` —— 字段叫 PlatformName，值是 Id。
+        $rows = Invoke-RestMethod "$Gateway/gateway/users/List?page=1&pageSize=50&keyword=$platAdminUser" `
+            -Headers $auth -TimeoutSec 20
+        $row = @($rows.data | Where-Object { $_.userName -eq $platAdminUser })[0]
+        if ($null -eq $row) { return $false }
+
+        Write-Host ("        平台 = {0}；商户 = {1}" -f $row.platformName, $row.merchantName) -ForegroundColor DarkGray
+
+        # 平台账号：平台名必须是那个平台的**名称**（不是一串数字）
+        return $row.platformName -eq $firstPlatform.platformName `
+            -and $row.platformName -notmatch '^\d+$'
+    }
 }
 else {
     Write-Host '  跳过新建平台越权用例：未能建出平台维度的测试账号' -ForegroundColor Yellow
@@ -918,6 +933,22 @@ Invoke-Case 'API-ADM-088' '订单列表支持客户、商户、手机号与时�
         @($byMerchant.data.items | Where-Object { $_.merchantId -ne $row.merchantId }).Count -eq 0 -and
         @($byPhone.data.items | Where-Object { $_.receiverPhone -ne $row.receiverPhone }).Count -eq 0 -and
         @($byTime.data.items).Count -gt 0
+}
+
+Invoke-Case 'API-ADM-097' '🔴 订单列表返回平台 / 商户**名称**而不是雪花 Id' {
+    # DATA_SPEC 4.3：订单列表必须冗余返回 PlatformName / MerchantName。
+    # 只回 Id 的话运营在列表上看到的是一串数字（用户要求「显示 name，不要显示 id」）。
+    $r = Post-Ep '/gateway/admin/orders/List' @{ page = 1; pageSize = 5 }
+    $row = @($r.data.items)[0]
+    if ($null -eq $row) { return $false }
+
+    Write-Host ("        平台 = {0}；商户 = {1}" -f $row.platformName, $row.merchantName) -ForegroundColor DarkGray
+
+    # 非空，且不是一串数字（平台自营的单回「平台自营」）
+    return -not [string]::IsNullOrWhiteSpace($row.platformName) `
+        -and -not [string]::IsNullOrWhiteSpace($row.merchantName) `
+        -and $row.platformName -notmatch '^\d+$' `
+        -and $row.merchantName -notmatch '^\d+$'
 }
 
 # 收尾：把临时账号停用。

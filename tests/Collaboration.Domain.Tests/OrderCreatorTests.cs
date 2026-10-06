@@ -1067,6 +1067,15 @@ public class OrderCreatorTests
             QueryCount++;
             return Task.FromResult(new ShippingConfig(ShippingFee, FreeShippingThreshold));
         }
+
+        /// <inheritdoc />
+        /// <remarks>下单链路不用名称，这里只满足接口：返回空表表示「查不到」，调用方会回落显示 Id。</remarks>
+        public Task<PlatformNames> GetNamesAsync(
+            IReadOnlyCollection<long> platformIds,
+            IReadOnlyCollection<long> merchantIds,
+            CancellationToken ct = default)
+            => Task.FromResult(new PlatformNames(
+                new Dictionary<long, string>(), new Dictionary<long, string>()));
     }
 
     /// <summary>活动优惠试算端口的替身。默认「没有活动优惠」，用例需要时自行赋值。</summary>

@@ -170,7 +170,8 @@ public sealed record AdminOrderListItemDto(
     decimal PayableAmount, int ItemQuantity,
     string ReceiverName, string ReceiverPhone, string CreatedAt,
     bool HasPhysical, bool HasVirtual, bool HasSelfPickup,
-    string CustomerNo, long MerchantId);
+    string CustomerNo, long MerchantId,
+    string PlatformName, string MerchantName);
 
 /// <summary>取货码结果。</summary>
 /// <param name="OrderNo">订单号。</param>
