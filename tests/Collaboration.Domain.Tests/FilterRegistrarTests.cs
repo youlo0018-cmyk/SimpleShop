@@ -81,13 +81,19 @@ public sealed class FilterRegistrarTests
     }
 
     /// <summary>
-    /// 商户账号的租户条件必须**同时**带 platform_id 与 merchant_id（TEST_CASES API-TEN-002）。
+    /// 商户账号查 <c>merchant</c> 表（商户维度的租户根）时，条件必须是 <c>Id = 自己</c>，
+    /// 而**不是** <c>merchant_id = 自己</c>（TEST_CASES API-TEN-002）。
     /// </summary>
     /// <remarks>
-    /// 只加 platform_id 是最容易被漏掉的一种：商户 A 与商户 B 在同一个平台下，
-    /// 少一个 merchant_id 条件，A 就能在列表里看到 B 的全部店铺数据。
-    /// 端到端很难覆盖到这一层（要先建出平台维度的商户账号再比对列表），
-    /// 所以在这里对着生成的 SQL 断言 —— 条件数量不对，测试立刻红。
+    /// <para><b>这条断言改过一次，因为原断言把一个缺陷写成了期望。</b>
+    /// <c>merchant</c> 表是商户维度的租户根：它的 <c>merchant_id</c> 列恒为 0
+    /// （商户不隶属于另一个商户），身份在 <c>Id</c> 上。
+    /// 原断言要求 SQL 里出现 <c>"merchant_id" = 自己</c>，而那正是「商户查不到自己」的原因 ——
+    /// 实测后果是商户账号保存店铺装修永远回「商户不存在」，而 E2E 一直用超管令牌，所以没被发现。</para>
+    ///
+    /// <para>真正要防的仍然是「商户 A 看到商户 B」：判据换成 <c>Id = 自己</c> 之后，
+    /// 同平台兄弟商户照样被挡住，而自己的那一条能查到了。
+    /// 端到端对应 <c>design-regression.ps1</c> 的 API-DS-102 / API-DS-103。</para>
     /// </remarks>
     [Fact]
     public void Register_ShouldScopeMerchantAccountToItsOwnMerchant()
@@ -109,9 +115,14 @@ public sealed class FilterRegistrarTests
 
             var merchantSql = db.Select<Merchant>().ToSql();
 
-            // 两个条件各出现且**只出现一次**：重复叠加同样是有问题的 SQL
-            Assert.Equal(1, CountOccurrences(merchantSql, $"\"platform_id\" = {PlatformId}"));
-            Assert.Equal(1, CountOccurrences(merchantSql, $"\"merchant_id\" = {MerchantId}"));
+            // 条件各出现且**只出现一次**：重复叠加同样是有问题的 SQL
+            Assert.Equal(1, CountOccurrences(merchantSql, $"\"id\" = {MerchantId}"));
+            // 租户根表不能再叠加 merchant_id 条件：那一列恒为 0，加了就一条都查不到。
+            // 注意判据要带上 " = "：SELECT 列表里本来就会出现 merchant_id 这一列名，
+            // 只匹配列名会把「有过滤条件」误判成「没有」。
+            Assert.Equal(0, CountOccurrences(merchantSql, "\"merchant_id\" = "));
+            // 同理，平台条件也换成了 Id：租户根表不看 platform_id 归属
+            Assert.Equal(0, CountOccurrences(merchantSql, "\"platform_id\" = "));
             Assert.Equal(1, CountOccurrences(merchantSql, "\"is_deleted\" = 'f'"));
         }
         finally

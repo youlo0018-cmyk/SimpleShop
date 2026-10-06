@@ -162,6 +162,20 @@ public static class FilterRegistrar
     private static LambdaExpression BuildTenant(Type type, long platformId, long? merchantId)
     {
         var p = Expression.Parameter(type, "x");
+
+        // 商户根表（merchant）：它的 merchant_id 列恒为 0，身份在 Id 上。
+        // 商户账号看自己的记录要判 `Id == 我的商户Id`，判 merchant_id 会一条都查不到
+        // （详见 IMerchantRoot 的说明）。
+        // 平台账号那一侧不受影响：merchantId 为 null 时走的仍是 platform_id 条件。
+        if (merchantId.HasValue && typeof(IMerchantRoot).IsAssignableFrom(type))
+        {
+            return Expression.Lambda(
+                Expression.Equal(
+                    Expression.Property(p, nameof(EntityBase.Id)),
+                    Expression.Constant(merchantId.Value, typeof(long))),
+                p);
+        }
+
         var body = Expression.Equal(
             Expression.Property(p, nameof(AdminEntityBase.PlatformId)),
             Expression.Constant(platformId, typeof(long)));

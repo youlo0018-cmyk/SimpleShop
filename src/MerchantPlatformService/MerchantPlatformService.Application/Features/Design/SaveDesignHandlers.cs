@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MediatR;
 using MerchantPlatformService.Application.Services;
 using MerchantPlatformService.Domain.IRepository;
@@ -124,6 +125,14 @@ public sealed class SavePlatformDraftHandler
     public async Task<ApiResponse<DesignResult>> Handle(
         SavePlatformDraftCommand request, CancellationToken ct)
     {
+        // platformId 来自请求体，必须按租户身份再判一次：
+        // AOP 过滤只挡查询 / 更新，越权请求会走到 INSERT 分支给别的平台插一份配置。
+        if (!DesignTenantScope.CanUsePlatform(TenantContextHolder.Current, request.PlatformId))
+        {
+            return ApiResults.Fail<DesignResult>(
+                BaseApiResponseCode.NotFound, DesignTenantScope.NotFoundMessage);
+        }
+
         var saved = await DesignDraftSaver.SaveAsync(
             request.ConfigJson, forMerchant: false,
             request.PlatformId, merchantId: 0, _products, _logger, ct).ConfigureAwait(false);
@@ -173,6 +182,13 @@ public sealed class SaveMerchantDraftHandler
     public async Task<ApiResponse<DesignResult>> Handle(
         SaveMerchantDraftCommand request, CancellationToken ct)
     {
+        // 商户账号只能装修自己的店铺页（DATA_SPEC 5.30：MerchantId「只读；锁定本商户」）
+        if (!DesignTenantScope.CanUseMerchant(TenantContextHolder.Current, request.MerchantId))
+        {
+            return ApiResults.Fail<DesignResult>(
+                BaseApiResponseCode.NotFound, DesignTenantScope.NotFoundMessage);
+        }
+
         var merchant = await _merchants.GetByIdAsync(request.MerchantId, ct).ConfigureAwait(false);
         if (merchant is null)
         {

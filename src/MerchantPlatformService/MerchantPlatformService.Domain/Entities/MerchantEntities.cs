@@ -99,9 +99,9 @@ public static class PlatformStatuses
     };
 }
 
-/// <summary>商户 / 店铺。</summary>
+/// <summary>商户 / 店铺（商户维度的租户根：自己的身份在 Id 上，merchant_id 列恒为 0）。</summary>
 [Table(Name = "merchant")]
-public class Merchant : AdminEntityBase, IPublicVisible<Merchant>
+public class Merchant : AdminEntityBase, IPublicVisible<Merchant>, IMerchantRoot
 {
     /// <summary>构造该实体的公开可见条件（BUSINESS.md 1.4）。</summary>
     /// <param name="now">当前时间 UTC；商户不按时间窗判定，忽略。</param>

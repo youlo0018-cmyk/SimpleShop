@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MediatR;
 using MerchantPlatformService.Domain.IRepository;
 
@@ -21,6 +22,11 @@ public sealed class PublishPlatformDesignHandler
     public async Task<ApiResponse<int>> Handle(
         PublishPlatformDesignCommand request, CancellationToken ct)
     {
+        if (!DesignTenantScope.CanUsePlatform(TenantContextHolder.Current, request.PlatformId))
+        {
+            return ApiResults.Fail<int>(BaseApiResponseCode.NotFound, DesignTenantScope.NotFoundMessage);
+        }
+
         var version = await _design.PublishPlatformAsync(request.PlatformId, ct).ConfigureAwait(false);
         // 版本号 0 = 没有草稿可发布。此时**不能**把线上那份覆盖成空，
         // 那是把线上页面清空的最快方式
@@ -47,6 +53,11 @@ public sealed class PublishMerchantDesignHandler
     public async Task<ApiResponse<int>> Handle(
         PublishMerchantDesignCommand request, CancellationToken ct)
     {
+        if (!DesignTenantScope.CanUseMerchant(TenantContextHolder.Current, request.MerchantId))
+        {
+            return ApiResults.Fail<int>(BaseApiResponseCode.NotFound, DesignTenantScope.NotFoundMessage);
+        }
+
         var version = await _design.PublishMerchantAsync(request.MerchantId, ct).ConfigureAwait(false);
         return version > 0
             ? ApiResults.Ok(version, $"发布成功，当前版本 v{version}")

@@ -278,6 +278,40 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-07：商户装修对「商户本人」完全不可用（租户根表被按错误的列过滤）
+
+审 DATA_SPEC 5.29 / 5.30 时先发现装修配置的租户边界没做，补上守卫后又发现更根本的问题：
+**商户账号根本查不到自己的商户记录**。
+
+根因在通用的租户过滤器上。默认规则是「这一行归哪个租户所有」→
+商户账号追加 `merchant_id == 我的商户Id`。但 `merchant` 表是**商户维度的租户根**：
+它的 `merchant_id` 列恒为 0（商户不隶属于另一个商户），身份在 `Id` 上。
+于是商户账号查自己得到 `merchant_id(0) == 我的商户Id` → 假 → 一条都查不到。
+
+表现是 `SaveMerchantDraft` 永远回「商户不存在」——
+**商户装修对商户本人完全不可用**，只有平台 / 超管能配（超管不加租户条件，所以一直正常）。
+E2E 全程用超管令牌跑，所以这个洞从来没被触发过。
+
+**改法**：
+
+| 改动 | 说明 |
+|---|---|
+| 新增 `IMerchantRoot` 标记 | `merchant` 表实现它。**不能**复用 `ITenantRoot`：那个会把整条租户条件都跳过，连「平台账号只看本平台商户」也一起没了。`merchant` 表的 `platform_id` 列是有意义的，只有 `merchant_id` 那一半要换 |
+| `FilterRegistrar.BuildTenant` | 商户上下文 + 租户根表 → 条件改写成 `Id == 我的商户Id`；平台上下文那一侧不受影响 |
+| 装修命令补租户守卫 | `SavePlatformDraft` / `PublishPlatform` / `Platform`（读）按平台判；`SaveMerchantDraft` / `PublishMerchant` / `Merchant`（读）按商户判；越权一律 404 |
+
+**为什么装修那边必须单独补守卫**：AOP 租户过滤只管查询 / 更新 / 删除，**不管插入**。
+越权保存的真实路径是「更新影响 0 行 → 走 INSERT 分支 → 给别人的平台 / 商户插一份装修配置」：
+对方已有配置时撞唯一索引回 500，没有配置时更糟——直接替对方建了一条草稿。
+
+**顺带修掉的测试自身缺陷**：`design-regression.ps1` 的 API-DS-036/037/038
+写在 `exit 0` **之后**，从来没跑过（脚本自报 28 条，实际是 25 条）。已挪到汇总之前。
+单测 `FilterRegistrarTests.Register_ShouldScopeMerchantAccountToItsOwnMerchant`
+原来把缺陷当成了期望（断言 SQL 里必须有 `merchant_id = 自己`），已按新语义改写，
+并补了「判据要带 ` = `」的说明——只匹配列名会被 SELECT 列表里的同名栏目误导。
+
+**验证**：构建 0 警告 0 错误；单测 384/384；E2E **661/661**（`design-regression` 28 → 35）。
+
 ### 2026-10-07：评价回复的归属可以伪造（商户冒充平台官方）
 
 审 DATA_SPEC 5.27 时发现 `ReplyEvaluateHandler` 已经修过一半：

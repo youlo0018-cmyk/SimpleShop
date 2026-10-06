@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MediatR;
 using MerchantPlatformService.Domain.Entities;
 using MerchantPlatformService.Domain.IRepository;
@@ -23,6 +24,13 @@ public sealed class QueryPlatformDesignHandler
     public async Task<ApiResponse<DesignResult>> Handle(
         QueryPlatformDesignCommand request, CancellationToken ct)
     {
+        // 读也要判：草稿里有未发布的运营配置，别的平台不该看到
+        if (!DesignTenantScope.CanUsePlatform(TenantContextHolder.Current, request.PlatformId))
+        {
+            return ApiResults.Fail<DesignResult>(
+                BaseApiResponseCode.NotFound, DesignTenantScope.NotFoundMessage);
+        }
+
         var config = await _design.GetPlatformAsync(request.PlatformId, ct);
         if (config is null) return ApiResults.Ok(DesignResultFactory.Empty());
 
@@ -48,6 +56,12 @@ public sealed class QueryMerchantDesignHandler
     public async Task<ApiResponse<DesignResult>> Handle(
         QueryMerchantDesignCommand request, CancellationToken ct)
     {
+        if (!DesignTenantScope.CanUseMerchant(TenantContextHolder.Current, request.MerchantId))
+        {
+            return ApiResults.Fail<DesignResult>(
+                BaseApiResponseCode.NotFound, DesignTenantScope.NotFoundMessage);
+        }
+
         var config = await _design.GetMerchantAsync(request.MerchantId, ct);
         // 商户装修只有店铺页：返回平台那套会让搭建器把首页 / 我的页也画出来，
         // 运营会发现「我改不动的页面居然在这儿」

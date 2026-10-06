@@ -433,17 +433,6 @@ Invoke-Case 'API-DS-049' '清理：删商品 → 删分类' {
     return $true
 }
 
-Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan
-Write-Host ("  通过: " + $script:pass + "  失败: " + $script:fail)
-
-if ($script:fail -gt 0) {
-    Write-Host "  失败用例:" -ForegroundColor Red
-    $script:failures | ForEach-Object { Write-Host "    - $_" -ForegroundColor Red }
-    exit 1
-}
-Write-Host "  全部通过" -ForegroundColor Green
-exit 0
-
 Invoke-Case 'API-DS-036' '🔴 缺少必需的页面画布被拒' {
     $cfg = New-PlatformConfig
     $cfg.pages.Remove('profile')
@@ -476,3 +465,104 @@ Invoke-Case 'API-DS-038' '🔴 tabBar 页面路径重复被拒' {
     }
     return (-not $r.success) -and $r.message -match '重复'
 }
+
+Write-Host "`n=== DS 租户边界（装修配置不能跨商户写）===" -ForegroundColor Cyan
+
+# platformId / merchantId 都是**请求体字段**，文档写的是「只读；锁定本商户」——
+# 也就是说必须由服务端锁，前端隐藏字段不算锁。
+# 表上有 AOP 租户过滤，但过滤器只管查询 / 更新 / 删除，**不管插入**：
+# 越权保存的真实路径是「更新影响 0 行 → 走 INSERT 分支 → 给别人的商户插一份装修配置」。
+
+$script:designMerchantUserId = 0
+$script:designMerchantToken = $null
+
+try {
+    $du = "dsgmr$($script:suffix)"
+    $dp = 'Merchant123456'
+    $c = Invoke-RestMethod "$Gateway/gateway/users/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{
+            userName = $du; password = $dp
+            phone = '137' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+            tenantType = 2; nickName = '装修越权用例'
+            platformId = $script:platformId; merchantId = $script:merchantId; roleIds = @(9004)
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30
+
+    if ($c.success) {
+        $script:designMerchantUserId = [long]$c.data
+        $script:designMerchantToken = (Invoke-RestMethod -Uri "$Gateway/gateway/auth/token" -Method Post `
+            -Body "grant_type=password&client_id=admin-app&username=$du&password=$dp" `
+            -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 30).access_token
+    }
+}
+catch {
+    Write-Host ("  （准备装修越权用例失败：" + $_.Exception.Message + "）") -ForegroundColor DarkYellow
+}
+
+Invoke-Case 'API-DS-100' '🔴 商户账号改不了别人店铺的装修（404，不是静默成功）' {
+    if (-not $script:designMerchantToken) { return $false }
+    $h = @{ Authorization = "Bearer $($script:designMerchantToken)" }
+    $cfg = (New-MerchantConfig | ConvertTo-Json -Depth 12)
+
+    $r = Invoke-RestMethod "$Gateway/gateway/design/SaveMerchantDraft" -Method Post -Headers $h `
+        -Body (@{ merchantId = ($script:merchantId + 1); configJson = $cfg } | ConvertTo-Json -Depth 12) `
+        -ContentType 'application/json' -TimeoutSec 60
+
+    # 断言业务码而不是 HTTP：这套接口的业务失败是 HTTP 200 + success=false
+    (-not $r.success) -and ([int]$r.code -eq 404)
+}
+
+Invoke-Case 'API-DS-101' '🔴 商户账号读不到别人店铺的装修草稿' {
+    if (-not $script:designMerchantToken) { return $false }
+    $h = @{ Authorization = "Bearer $($script:designMerchantToken)" }
+    $r = Invoke-RestMethod "$Gateway/gateway/design/Merchant?merchantId=$($script:merchantId + 1)" `
+        -Headers $h -TimeoutSec 60
+    (-not $r.success) -and ([int]$r.code -eq 404)
+}
+
+Invoke-Case 'API-DS-102' '商户账号改**自己**店铺的装修仍然可用（没有误伤）' {
+    if (-not $script:designMerchantToken) { return $false }
+    $h = @{ Authorization = "Bearer $($script:designMerchantToken)" }
+    $cfg = (New-MerchantConfig | ConvertTo-Json -Depth 12)
+    $r = Invoke-RestMethod "$Gateway/gateway/design/SaveMerchantDraft" -Method Post -Headers $h `
+        -Body (@{ merchantId = $script:merchantId; configJson = $cfg } | ConvertTo-Json -Depth 12) `
+        -ContentType 'application/json' -TimeoutSec 60
+    $r.success
+}
+
+Invoke-Case 'API-DS-103' '🔴 商户账号的商户列表恰好只有自己一条' {
+    # merchant 表是商户维度的租户根：它的 merchant_id 列恒为 0，身份在 Id 上。
+    # 默认租户条件 `merchant_id == 我的商户Id` 会一条都匹配不到 ——
+    # 那样商户连自己的商户记录都读不到（保存店铺装修时表现成「商户不存在」）。
+    # 修好之后要**恰好一条**：多了说明商户条件被整个跳过（能看到同平台的兄弟商户）。
+    if (-not $script:designMerchantToken) { return $false }
+    $h = @{ Authorization = "Bearer $($script:designMerchantToken)" }
+    $r = Invoke-RestMethod "$Gateway/gateway/merchants/List" -Method Post -Headers $h `
+        -Body (@{ page = 1; pageSize = 50 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 60
+    $items = @($r.data.items)
+    $items.Count -eq 1 -and [long]$items[0].id -eq [long]$script:merchantId
+}
+
+# 收尾：停用临时商户账号（项目刻意没有删除账号的接口，审计要求留痕）
+if ($script:designMerchantUserId -gt 0) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/users/UpdateStatus" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ userId = $script:designMerchantUserId; status = 2 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        Write-Host '  （已停用临时商户账号）' -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Host ('  （停用临时商户账号失败，不影响结论：' + $_.Exception.Message + '）') -ForegroundColor DarkYellow
+    }
+}
+
+Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan
+Write-Host ("  通过: " + $script:pass + "  失败: " + $script:fail)
+
+if ($script:fail -gt 0) {
+    Write-Host "  失败用例:" -ForegroundColor Red
+    $script:failures | ForEach-Object { Write-Host "    - $_" -ForegroundColor Red }
+    exit 1
+}
+Write-Host "  全部通过" -ForegroundColor Green
+exit 0
