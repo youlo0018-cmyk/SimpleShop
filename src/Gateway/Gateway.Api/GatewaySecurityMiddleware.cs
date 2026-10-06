@@ -132,6 +132,32 @@ public sealed class GatewaySecurityMiddleware
                 new { error = "insufficient_permissions", error_description = $"Requires '{requiredCode}'." });
             return;
         }
+        else if (requiredCode is null && outcome.Kind != DualTokenValidator.KindCustomer)
+        {
+            // 🔴 没有权限映射的后台令牌一律拒绝（fail-closed）。
+            //
+            // RBAC 的判定是「查不到映射 → requiredCode 为 null → 放行」，
+            // 所以**漏配一条 api_path 就等于那个接口完全不鉴权**。
+            // 这个缺陷是静默的：没有日志、没有报错，接口照常工作，
+            // 只是任何人都能调 —— 曾经 /gateway/payments/Simulate 就是这样：
+            // 顾客拿自己的客户令牌就能把自己的订单标成已支付，白拿商品。
+            //
+            // 这里按「未映射 = 只可能是 C 端接口」处理：C 端接口本来就刻意不绑
+            // 后台权限点（绑了会把小程序自己挡掉），所以客户令牌照常放行；
+            // 而后台令牌走到未映射路径，说明**权限种子漏了这条**，
+            // 必须响亮地拒绝并留下日志，让人去补种子，而不是默默放行。
+            _logger.LogError(
+                "拒绝后台令牌访问未映射路径 {Path}：权限种子里缺少这条 api_path，"
+                + "补上之前该接口对所有后台账号都是敞开的", path);
+
+            await RejectAsync(context, StatusCodes.Status403Forbidden,
+                new
+                {
+                    error = "route_not_mapped",
+                    error_description = "This admin route has no permission mapping and is denied by default.",
+                });
+            return;
+        }
 
         // ---- 第 4 步：注入可信租户头 ----
         InjectClaims(context, context.User);

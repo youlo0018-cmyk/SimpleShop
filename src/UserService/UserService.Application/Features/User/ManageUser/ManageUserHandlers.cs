@@ -116,9 +116,9 @@ public sealed class ResetPasswordHandler : IRequestHandler<ResetPasswordCommand,
     public async Task<ApiResponse> Handle(ResetPasswordCommand request, CancellationToken ct)
     {
         var user = await _users.GetByIdAsync(request.UserId, ct);
-   if (user is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "账号不存在");
+        if (user is null) return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "账号不存在");
 
-      user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
+        user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
         await _users.UpdateAsync(user, ct);
         return ApiResponseFactory.Ok("密码已重置");
     }

@@ -60,9 +60,12 @@ $leaves = [ordered]@{
     # 商户审核是真实流程（merchants/Audit），平台审核在规格里没有对应流程，
     # 所以这个叶子节点本就不该存在——按 BUSINESS.md 5.2 的清单删除它，
     # 权限点总数随之从 78 变为 77（见 BUSINESS.md 同步说明）。
-    '2104' = @(@('platform:read', '平台列表', '/gateway/platforms/List'), @('platform:create', '新建平台', '/gateway/platforms/Create'),
+    # platforms/Options 是后台多个表单的「所属平台」下拉数据源。
+    # 漏了它，后台账号在 fail-closed 之后连下拉都拉不出来（403），
+    # 而报错只会显示「请求失败」，看不出是权限种子少了一条。
+    '2104' = @(@('platform:read', '平台列表', '/gateway/platforms/List,/gateway/platforms/Options'), @('platform:create', '新建平台', '/gateway/platforms/Create'),
              @('platform:update', '编辑与删除平台', '/gateway/platforms/Update,/gateway/platforms/Delete'))
-    '2105' = @(@('merchant:read', '商户列表', '/gateway/merchants/List'), @('merchant:create', '新建商户', '/gateway/merchants/Create'),
+    '2105' = @(@('merchant:read', '商户列表', '/gateway/merchants/List,/gateway/merchants/Options'), @('merchant:create', '新建商户', '/gateway/merchants/Create'),
              @('merchant:update', '编辑 / 删除 / 重新提交 / 启停商户', '/gateway/merchants/Update,/gateway/merchants/Delete,/gateway/merchants/Resubmit,/gateway/merchants/ChangeStatus'), @('merchant:audit', '商户审核', '/gateway/merchants/Audit'))
     # 地区在 MerchantPlatformService 的独立控制器上，路由是 regions/，
     # **不存在** platform-configs 这个前缀。
@@ -75,10 +78,13 @@ $leaves = [ordered]@{
     # 之前只有 Save 一个端点，于是 product:create 无处可绑——它绑的
     # /gateway/products/Create 查不到映射，**新建商品接口等于不鉴权**。
     # 拆成两个端点还有一个好处：「能改价」与「能建档」变成两种可分别授予的能力。
-    '2109' = @(@('product:read', '商品列表', '/gateway/products/List'), @('product:create', '新建商品', '/gateway/products/Create'),
-             @('product:update', '编辑 / 提交审核 / 上下架', '/gateway/products/Save,/gateway/products/SubmitAudit,/gateway/products/ChangeListing'), @('product:audit', '商品审核', '/gateway/products/Audit'),
-             @('product:delete', '删除商品', '/gateway/products/Delete'))
-    '2110' = @(@('inventory:read', '库存查询', '/gateway/inventory/List'), @('inventory:update', '库存调整', '/gateway/inventory/Adjust'))
+    # products/Detail 是后台商品编辑页的详情接口，brands/* 按 DATA_SPEC 5.21 复用 product:*。
+    # 这两组此前都没绑，而「查不到映射 = 放行」—— 后台详情与品牌增删改一直是不鉴权的。
+    '2109' = @(@('product:read', '商品列表', '/gateway/products/List,/gateway/products/Detail,/gateway/brands/List'), @('product:create', '新建商品', '/gateway/products/Create,/gateway/brands/Create'),
+             @('product:update', '编辑 / 提交审核 / 上下架', '/gateway/products/Save,/gateway/products/SubmitAudit,/gateway/products/ChangeListing,/gateway/brands/Update'), @('product:audit', '商品审核', '/gateway/products/Audit'),
+             @('product:delete', '删除商品', '/gateway/products/Delete,/gateway/brands/Delete'))
+    # inventory/Flows 是库存流水（后台「库存」页的明细），同样漏绑。
+    '2110' = @(@('inventory:read', '库存查询', '/gateway/inventory/List,/gateway/inventory/Flows'), @('inventory:update', '库存调整', '/gateway/inventory/Adjust'))
     # 后台订单一律走 /gateway/admin/orders/*，C 端订单走 /gateway/orders/*。
     # 分成两个前缀是刻意的：后台的「发货 / 退款 / 取货核销 / 模拟支付」权限点不能被小程序命中。
     # 🔴 Detail / Refunds 必须显式列出来。之前只绑了 List，而网关的判定是
@@ -88,7 +94,12 @@ $leaves = [ordered]@{
              @('order:virtual-deliver', '虚拟发货', '/gateway/admin/orders/DeliverVirtual'),
              @('order:pickup', '取货核销', '/gateway/admin/orders/VerifyPickupCode'),
              @('order:pickup-ready', '备货完成', '/gateway/admin/orders/SelfPickupReady'),
-             @('order:simulate', '模拟支付', '/gateway/admin/orders/SimulatePayment'),
+             # 🔴 payments/Simulate 是**同一个动作的第二条路径**（规格 5.28 记的后台入口），
+             # 它落在 PaymentService 的 PaymentController 上，与 /gateway/admin/orders/SimulatePayment
+             # 是两套端点。只绑了后者，前者就一直查不到映射 —— 而「查不到 = 放行」，
+             # 于是**顾客拿自己的客户令牌就能把自己的订单标成已支付**，白拿商品。
+             # 两条路径必须绑同一个权限点，否则补了一条另一条还是洞。
+             @('order:simulate', '模拟支付', '/gateway/admin/orders/SimulatePayment,/gateway/payments/Simulate'),
              @('order:refund', '订单退款与取消', '/gateway/admin/orders/Refund,/gateway/admin/orders/Cancel'),
              # 物流公司字典（DATA_SPEC 5.23）落在 ProductService：它是发货表单的下拉数据源。
              # 之前绑的是不存在的 /gateway/logistics/*，同样等于不鉴权。
@@ -98,15 +109,17 @@ $leaves = [ordered]@{
     '2112' = ,@(@('payment:read', '支付单列表', '/gateway/admin/payments/List'))
     # 退款单详情与审批同在 /gateway/refunds/* 下，用 /* 通配一次覆盖，省得再加叶子。
     # 退款「发起」在 refunds/Apply 上，不在 payments/ 下（那边是支付单）。
-    '2113' = @(@('refund:read', '退款单列表与详情', '/gateway/refunds/List'), @('refund:apply', '发起退款', '/gateway/refunds/Apply'),
+    # refunds/Detail 是退款单详情（含金额与审批记录），漏绑时任何登录用户都能读到别家的退款数据。
+    '2113' = @(@('refund:read', '退款单列表与详情', '/gateway/refunds/List,/gateway/refunds/Detail'), @('refund:apply', '发起退款', '/gateway/refunds/Apply'),
              @('refund:approve', '审批退款', '/gateway/refunds/Approve'), @('refund:reject', '拒绝退款', '/gateway/refunds/Reject'))
-    '2114' = @(@('marketing:read', '活动列表', '/gateway/marketing/activities/List'), @('marketing:create', '新建活动', '/gateway/marketing/activities/Create'),
+    # activities/Get 是活动详情（编辑页要回填），漏绑时任何登录用户都能读活动配置。
+    '2114' = @(@('marketing:read', '活动列表', '/gateway/marketing/activities/List,/gateway/marketing/activities/Get'), @('marketing:create', '新建活动', '/gateway/marketing/activities/Create'),
              @('marketing:update', '编辑 / 启停活动', '/gateway/marketing/activities/Update,/gateway/marketing/activities/SetStatus'), @('marketing:delete', '删除活动', '/gateway/marketing/activities/Delete'))
     # 券模板 / 券活动之前只绑了 List 与 Create，但真实端点当时只有 Get 与 Create，
     # 于是 List / Update / Delete 全都查不到映射 —— 不鉴权。端点已补齐，路径对齐。
-    '2115' = @(@('coupon-template:read', '券模板列表', '/gateway/marketing/coupon-templates/List'), @('coupon-template:create', '新建券模板', '/gateway/marketing/coupon-templates/Create'),
+    '2115' = @(@('coupon-template:read', '券模板列表', '/gateway/marketing/coupon-templates/List,/gateway/marketing/coupon-templates/Get'), @('coupon-template:create', '新建券模板', '/gateway/marketing/coupon-templates/Create'),
              @('coupon-template:update', '编辑券模板', '/gateway/marketing/coupon-templates/Update'), @('coupon-template:delete', '删除券模板', '/gateway/marketing/coupon-templates/Delete'),
-             @('coupon-activity:read', '券活动列表', '/gateway/marketing/coupon-activities/List'), @('coupon-activity:create', '新建券活动', '/gateway/marketing/coupon-activities/Create'),
+             @('coupon-activity:read', '券活动列表', '/gateway/marketing/coupon-activities/List,/gateway/marketing/coupon-activities/Get'), @('coupon-activity:create', '新建券活动', '/gateway/marketing/coupon-activities/Create'),
              @('coupon-activity:update', '编辑券活动', '/gateway/marketing/coupon-activities/Update'), @('coupon-record:read', '券核销记录', '/gateway/marketing/coupon-records/List'))
     # 营销配置在 marketing 命名空间下：/gateway/marketing/marketing-config/{Get,Save}。
     '2116' = @(@('marketing-config:read', '营销配置查看', '/gateway/marketing/marketing-config/Get'), @('marketing-config:update', '营销配置维护', '/gateway/marketing/marketing-config/Save'))
@@ -117,7 +130,10 @@ $leaves = [ordered]@{
     # 后台积分流水走 points/RecordsAll（跨客户），C 端的 points/Records 是「只看自己的」，
     # 刻意不绑权限点：它是客户令牌访问的，带上后台权限点会把小程序自己的积分页挡掉。
     # 积分报表在 reports/Point 上（report:view 的通配已覆盖），规则维护在 points/Rules。
-    '2118' = @(@('point:read', '积分流水', '/gateway/points/RecordsAll'), @('point:rule-update', '积分规则维护', '/gateway/points/Rules'))
+    # points/SaveRules 是**真正写入**积分规则的端点，points/Rules 只是读当前规则。
+    # 只绑了读的那条，写的那条一直不鉴权 —— 任何登录用户都能把「每消费 1 元得 1 分」
+    # 改成「得 100 分」，然后正常下单把积分刷出来。
+    '2118' = @(@('point:read', '积分流水', '/gateway/points/RecordsAll'), @('point:rule-update', '积分规则维护', '/gateway/points/Rules,/gateway/points/SaveRules'))
     # ⚠️ 后台评价端点在 EvaluateAdminController 上，路由是 **evaluates/admin/**
     # （真实路径 /gateway/evaluates/admin/Reply 等）。
     # 这里原本绑的是 /gateway/evaluates/Reply —— 少了一层 admin，

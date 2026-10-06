@@ -143,8 +143,105 @@ try {
     }
 
     Write-Host ("==> 权限点 {0} 条 / 端点 {1} 个 / 路由 {2} 条" -f $entries.Count, $endpoints.Count, $rules.Count) -ForegroundColor Cyan
+
+    # ---------- 4. 反向核对：网关可达的端点里，有没有**漏配**权限点的 ----------
+    #
+    # 上面那一半查的是「声明了的权限点对不对得上真实端点」。
+    # 这一半查的是反面：**真实端点有没有被声明**。
+    #
+    # 为什么必须查这一半：RBAC 的判定是「查不到映射 → requiredCode 为 null → 放行」，
+    # 所以漏配一条 api_path 就等于那个接口完全不鉴权。这正是
+    # /gateway/payments/Simulate 的洞 —— 顾客拿客户令牌就能把自己的订单标成已支付。
+    # 只看「已声明的路径对不对」永远发现不了它，因为漏配的东西压根不在声明里。
+    #
+    # 判定规则：网关可达的端点，要么在权限种子里有映射，要么在下面这份
+    # **C 端 / 匿名白名单**里显式登记。白名单的意义是让「这个是故意不鉴权的」
+    # 变成一次可评审的决定，而不是一次疏忽 —— 新增 C 端接口时补一行即可。
+    # 注意这里写的是**下游路径**（控制器上的真实路由），不是网关路径：
+    # $endpoints 收集的是控制器路由，网关前缀在这一步已经剥掉了。
+    $cEndPaths = @(
+        # 匿名白名单（与 AgileConfig 的 Gateway:AnonymousPaths 对应）
+        '/customers/Register', '/customers/Login',
+        '/shop/products/*', '/shop/catalog/*',
+        '/design/Store', '/design/PlatformStore',
+        '/evaluates/List', '/marketing/seckill/sessions/Public',
+        '/coupons/Available',
+        # C 端（客户令牌）—— 刻意不绑后台权限点，绑了会把小程序自己挡掉
+        '/carts/*', '/orders/*', '/coupons/*', '/evaluates/*',
+        '/points/*', '/merchants/Shop/*',
+        # payments/Create|Confirm|Query 是客户付款；Simulate 是后台的，已单独绑 order:simulate
+        '/payments/Create', '/payments/Confirm', '/payments/Query',
+        '/marketing/activities/FinalPrice', '/marketing/activities/FinalPriceBatch',
+        '/marketing/seckill/grab/result',
+        # 报表：/reports/Point 是**客户自己的**积分报表（C 端积分页用），
+        # 与后台的 /reports/Report 等不是一回事
+        '/reports/Point'
+    )
+    function Test-CEnd([string]$downPath) {
+        foreach ($p in $cEndPaths) {
+            if ($p.EndsWith('/*')) {
+                $b = $p.Substring(0, $p.Length - 2)
+                if ($downPath -eq $b -or $downPath.StartsWith("$b/")) { return $true }
+            }
+            elseif ($downPath -eq $p) { return $true }
+        }
+        return $false
+    }
+
+    # 已声明的 api_path 翻成下游路径，供反向核对使用
+    $declaredDown = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in $entries) {
+        foreach ($apiPath in ($e.Groups['path'].Value -split '[,;]')) {
+            $apiPath = $apiPath.Trim()
+            if ($apiPath -eq '' -or -not $apiPath.StartsWith('/gateway/')) { continue }
+            $isWildcard = $apiPath.EndsWith('/*')
+            $probe = $apiPath.TrimEnd('/')
+            if ($isWildcard) { $probe = $probe.Substring(0, $probe.Length - 1) + '/__probe__' }
+            $down = Resolve-Downstream $probe
+            if ($null -eq $down) { continue }
+            if ($isWildcard) {
+                $prefix = $down.Substring(0, $down.LastIndexOf('/')).TrimEnd('/')
+                [void]$declaredDown.Add($prefix + '/*')
+            }
+            else { [void]$declaredDown.Add($down) }
+        }
+    }
+    function Test-Declared([string]$downPath) {
+        if ($declaredDown.Contains($downPath)) { return $true }
+        foreach ($k in $declaredDown) {
+            if ($k.EndsWith('/*')) {
+                $b = $k.Substring(0, $k.Length - 2)
+                if ($downPath -eq $b -or $downPath.StartsWith("$b/")) { return $true }
+            }
+        }
+        return $false
+    }
+
+    $unmapped = New-Object System.Collections.Generic.List[object]
+    foreach ($ep in $endpoints) {
+        if ($ep -like '/internal*') { continue }
+        # 网关根本转发不到的端点不算（例如只在服务内网暴露的）
+        $gw = "/gateway" + $ep
+        if ($null -eq (Resolve-Downstream $gw)) { continue }
+        if (Test-CEnd $ep) { continue }
+        if (Test-Declared $ep) { continue }
+        $unmapped.Add($ep)
+    }
+
+    if ($unmapped.Count -gt 0) {
+        Write-Host ("`n==> 发现 {0} 个网关可达端点**没有绑定任何权限点**（等于不鉴权）：" -f $unmapped.Count) -ForegroundColor Red
+        foreach ($u in $unmapped) {
+            Write-Host ("  {0}  → 在 seed-permissions.ps1 里补 api_path，或登记进本脚本的 C 端白名单" -f $u) -ForegroundColor Red
+        }
+        $problems.Add([pscustomobject]@{
+            Code = '(未绑定)'; Name = '-'; ApiPath = "$($unmapped.Count) 个端点"
+            Problem = '网关可达但没有权限映射，且不在 C 端白名单里'
+        })
+    }
+
     if ($problems.Count -eq 0) {
         Write-Host '==> 全部 api_path 都能落到真实端点' -ForegroundColor Green
+        Write-Host '==> 网关可达端点全部有权限映射或在 C 端白名单里' -ForegroundColor Green
         exit 0
     }
     Write-Host ("`n==> 发现 {0} 条对不上的 api_path（这些接口等于**没有鉴权**）：" -f $problems.Count) -ForegroundColor Red

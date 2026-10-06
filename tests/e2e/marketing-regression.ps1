@@ -971,6 +971,36 @@ Invoke-Case 'API-SKL-031' '🔴 P0 同一客户 10 个并发请求：只允许�
     return $ok -eq 1 -and $distinctOrders -eq 1 -and $limited -eq 9 -and $err -eq 0 -and $row.soldCount -eq 1
 }
 
+Invoke-Case 'API-MKT-090' '🔴 收尾断言：本次跑完不留任何活动' {
+    # 活动是**全场生效**的，遗留一个「满 100 减 10」会让后面 product-regression
+    # 的「原价 = 到手价」断言凭空少 10 块 —— 报错指向商品前台价格，
+    # 病因却在几十个用例之外，而且每跑一次多留一批，失败会变得时有时无。
+    #
+    # 本脚本的活动由 New-Activity 统一记进 $script:promoIds 并在前面统一删除，
+    # 所以正常情况下这里是 0。这条用例是**兜底**：将来有人新加一处建活动
+    # 而忘了登记，这里会立刻变红，而不是等到几天后 product-regression 莫名失败。
+    $list = Invoke-RestMethod "$Marketing/marketing/activities/List?page=1&pageSize=200" -Method Post `
+        -Headers $script:adminHeaders -Body '{}' -ContentType 'application/json' -TimeoutSec 30
+
+    $mine = @($list.data.items | Where-Object { $_.activityName -like "*$($script:suffix)*" })
+    $deleted = 0
+    foreach ($a in $mine) {
+        try {
+            $r = Invoke-RestMethod "$Marketing/marketing/activities/Delete" -Method Post `
+                -Headers $script:adminHeaders -Body (@{ activityId = $a.id } | ConvertTo-Json) `
+                -ContentType 'application/json' -TimeoutSec 30
+            if ($r.success) { $deleted++ }
+        } catch {
+            # 单条删不掉不该让整条用例判红：它证明的是「有没有留垃圾」，
+            # 而失败原因（网络、已被删）会写进下面的计数里。
+            Write-Host ("        删除活动 {0} 失败: {1}" -f $a.id, $_.Exception.Message) -ForegroundColor DarkYellow
+        }
+    }
+
+    Write-Host ("        遗留 {0} 个，补删 {1} 个" -f $mine.Count, $deleted) -ForegroundColor DarkGray
+    return $mine.Count -eq $deleted
+}
+
 Invoke-Case 'API-SKL-018' '清理：删商品 → 删分类' {
     if ($script:sklProductId -gt 0) {
         Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `

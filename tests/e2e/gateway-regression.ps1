@@ -268,6 +268,57 @@ Invoke-Case 'API-GTW-042' '完全不带头也回 401（而不是 404 或 500）'
     }
 }
 
+Write-Host "`n=== GTW 客户令牌不得触碰后台接口（fail-closed）===" -ForegroundColor Cyan
+
+$script:customerToken = ''
+
+Invoke-Case 'API-GTW-043' '准备：注册一个普通客户并拿到客户令牌' {
+    $sfx = Get-Random -Minimum 100000 -Maximum 999999
+    $tail = ([string]$sfx).PadLeft(8, '0').Substring(0, 8)
+    $body = @{
+        customerName = "gtw$sfx"; password = 'Gtw12345678'
+        phone = "136$tail"; nickName = '网关回归客户'
+    }
+    $r = Invoke-RestMethod "$Gateway/gateway/customers/Register" -Method Post `
+        -Body ($body | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 25
+    $script:customerToken = [string]$r.data.token
+    return $r.success -and $script:customerToken.Length -gt 20
+}
+
+Invoke-Case 'API-GTW-044' '🔴 P0 客户令牌调 payments/Simulate 被 403（否则白拿商品）' {
+    # 这是本轮修掉的那个洞：/gateway/payments/Simulate 没有权限映射，
+    # 而网关的判定是「查不到映射 → 放行」，于是顾客拿自己的客户令牌
+    # 就能把自己的订单标成已支付。订单真的会走到 20 待发货。
+    #
+    # 现在按「未映射 = 只可能是 C 端接口」处理：客户令牌照常放行 C 端，
+    # 后台令牌走到未映射路径一律 403 并记日志，逼人去补权限种子。
+    $h = @{ Authorization = "Bearer $script:customerToken" }
+    $status = Get-Status 'POST' '/gateway/payments/Simulate' $h @{ orderNo = 'X'; success = $true }
+
+    Write-Host ("        payments/Simulate -> HTTP {0}" -f $status) -ForegroundColor DarkGray
+    return $status -eq 403
+}
+
+Invoke-Case 'API-GTW-045' '🔴 客户令牌调 points/SaveRules 被 403（否则自己改积分规则）' {
+    # 同一类洞的另一处：SaveRules 是**写**积分规则的端点，
+    # 而种子里只绑了读的那条（points/Rules），写的那条一直不鉴权。
+    $h = @{ Authorization = "Bearer $script:customerToken" }
+    $status = Get-Status 'POST' '/gateway/points/SaveRules' $h @{ earnPerYuan = 100 }
+
+    Write-Host ("        points/SaveRules -> HTTP {0}" -f $status) -ForegroundColor DarkGray
+    return $status -eq 403
+}
+
+Invoke-Case 'API-GTW-046' '客户令牌访问 C 端接口仍然放行（fail-closed 没有误伤）' {
+    # 反面同样重要：未映射的 C 端接口是**故意**不绑后台权限点的
+    # （绑了会把小程序自己挡掉）。一刀切拒绝会让整个小程序不可用。
+    $h = @{ Authorization = "Bearer $script:customerToken" }
+    $status = Get-Status 'GET' '/gateway/points/Balance?customerId=0' $h $null
+
+    Write-Host ("        points/Balance -> HTTP {0}" -f $status) -ForegroundColor DarkGray
+    return $status -eq 200
+}
+
 Invoke-Case 'API-GTW-040' '清理低权限测试账号' {
     if ($script:merchantAccountId -le 0) { return $true }
 

@@ -14,6 +14,7 @@ param(
     [string]$Gateway = 'http://127.0.0.1:5008',
     [string]$AuthService = 'http://127.0.0.1:5019',
     [string]$UserService = 'http://127.0.0.1:5011',
+[string]$Marketing = 'http://127.0.0.1:5072',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
@@ -329,7 +330,18 @@ Invoke-Case 'API-ADM-052' 'products/Save 非法配送方式返回 400' {
 }
 
 Invoke-Case 'API-ADM-053' 'coupons/Settle 空订单行返回 400（同一类缺陷的回归）' {
-    (Post-EpStatus '/gateway/coupons/Settle' @{ customerId = 0; lines = $null } $auth) -eq 400
+    # 直连营销服务而不是走网关：/gateway/coupons/* 是**C 端**接口
+    # （客户令牌访问，刻意不绑后台权限点），拿后台令牌走网关现在会被
+    # fail-closed 挡成 403，那样这条断言测的就成了鉴权而不是校验器。
+    # 这条用例要证明的是「空订单行会被校验器挡住」，与谁调用无关。
+    try {
+        Invoke-RestMethod "$Marketing/coupons/Settle" -Method Post `
+            -Body (@{ customerId = 0; lines = $null } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 25 | Out-Null
+        return $false
+    } catch {
+        return [int]$_.Exception.Response.StatusCode -eq 400
+    }
 }
 
 Write-Host "`n=== 文件管理 / 积分流水（补齐占位页所需的后端）===" -ForegroundColor Cyan
@@ -560,6 +572,56 @@ Invoke-Case 'API-ADM-083' 'roles/Detail 返回角色与已绑定权限点' {
     $r = Invoke-RestMethod -Uri "$Gateway/gateway/roles/Detail?roleId=9001" `
         -Headers $auth -TimeoutSec 20
     $r.success -and $r.data.roleName -and @($r.data.permissionIds).Count -gt 0
+}
+
+Invoke-Case 'API-ADM-083b' '🔴 P0 roles/BindPermissions：绑上 → 读回一致 → 解绑' {
+    # 这个端点在补这条之前**零覆盖**，而它正是「角色权限树多级勾选」的落库入口
+    # （用户需求：权限树每个权限要支持增删改、要有全部权限按钮）。
+    # 树的渲染再漂亮，勾完存不进去或存错，整套权限配置就是空转。
+    $code = 'regbind' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
+    $created = Post-Ep '/gateway/roles/Create' @{
+        roleName = "回归角色$code"; code = $code; allowedScopes = 1; dataScope = 1; remark = '临时'
+    }
+    if (-not $created.Success) { Write-Host ("        建角色失败: " + $created.Message) -ForegroundColor DarkYellow; return $false }
+    $roleId = [long]$created.data
+
+    try {
+        # 拿两个真实存在的权限点：从内置角色的已绑定集合里取，避免自己造数据
+        $detail = Invoke-RestMethod -Uri "$Gateway/gateway/roles/Detail?roleId=9001" -Headers $auth -TimeoutSec 20
+        $ids = @($detail.data.permissionIds | Select-Object -First 2 | ForEach-Object { [long]$_ })
+        if ($ids.Count -lt 2) { return $false }
+
+        $bind = Post-Ep '/gateway/roles/BindPermissions' @{ roleId = $roleId; permissionIds = $ids }
+        if (-not $bind.Success) { Write-Host ("        绑定失败: " + $bind.Message) -ForegroundColor DarkYellow; return $false }
+
+        $after = Invoke-RestMethod -Uri "$Gateway/gateway/roles/Detail?roleId=$roleId" -Headers $auth -TimeoutSec 20
+        $bound = @($after.data.permissionIds | ForEach-Object { [long]$_ }) | Sort-Object
+
+        # 解绑：传空集合应当清空，而不是「不传就不动」
+        $clear = Post-Ep '/gateway/roles/BindPermissions' @{ roleId = $roleId; permissionIds = @() }
+        $cleared = Invoke-RestMethod -Uri "$Gateway/gateway/roles/Detail?roleId=$roleId" -Headers $auth -TimeoutSec 20
+
+        Write-Host ("        绑 {0} 个 → 读回 {1} 个 → 解绑后 {2} 个" -f `
+            $ids.Count, $bound.Count, @($cleared.data.permissionIds).Count) -ForegroundColor DarkGray
+
+        return $clear.Success `
+            -and ($bound -join ',') -eq ((@($ids) | Sort-Object) -join ',') `
+            -and @($cleared.data.permissionIds).Count -eq 0
+    } finally {
+        # 角色不删会在权限列表里越积越多，而且它带着权限绑定，
+        # 后面的「受限账号必须被拒」用例可能因为这个角色拿到额外权限而行为漂移。
+        Post-Ep '/gateway/roles/Delete' @{ roleId = $roleId } | Out-Null
+    }
+}
+
+Invoke-Case 'API-ADM-083c' '🔴 内置管理员角色的权限锁定，重绑被拒' {
+    # 用户明确要求「禁止编辑内置管理员角色」。
+    # 权限重绑是最容易被忽略的一条路径：改名字被拒了，但把超管的权限清空一样是破坏。
+    $r = Post-Ep '/gateway/roles/BindPermissions' @{ roleId = 9001; permissionIds = @() }
+
+    Write-Host ("        结果: success={0} msg={1}" -f $r.Success, $r.Message) -ForegroundColor DarkGray
+
+    (-not $r.Success) -and $r.Message -match '内置'
 }
 
 Invoke-Case 'API-ADM-084' 'permissions/Update 可以编辑自定义权限点' {
