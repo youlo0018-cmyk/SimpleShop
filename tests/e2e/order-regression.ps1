@@ -1673,12 +1673,13 @@ Invoke-Case 'API-ORD-150' '🔴 P0 商户账号读不到别家的订单详情（
     Invoke-Api "$Gateway/gateway/merchants/ChangeStatus" 'Post' @{ merchantId = $merchantId; status = 1 } -Headers $script:adminHeaders | Out-Null
 
     $un = "iso$($script:suffix)"
-    $created = Invoke-Api 'http://127.0.0.1:5011/users/Create' 'Post' @{
+    # 走网关：账号管理的租户锁定要读网关注入的 X-Claim-* 头，直连服务端口没有身份会被拒。
+    $created = Invoke-Api "$Gateway/gateway/users/Create" 'Post' @{
         userName = $un; password = 'Test123456'
         phone = '135' + ([string]$script:suffix).PadLeft(8, '0').Substring(0, 8)
         tenantType = 2; nickName = '隔离商户账号'
         platformId = $script:feePlatformId; merchantId = $merchantId; roleIds = @(9005)
-    }
+    } -Headers $script:adminHeaders
     if (-not $created.success) { Write-Host ("        建账号失败: " + $created.message) -ForegroundColor DarkYellow; return $false }
     $userB = [long]$created.data
 

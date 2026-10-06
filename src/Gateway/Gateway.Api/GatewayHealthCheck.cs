@@ -17,11 +17,13 @@ namespace Gateway.Api;
 /// 它一挂网关对业务而言立刻不可用，是最该被发现的一个。</item>
 /// <item><b>路由表</b>：<c>ocelot.json</c> 加载失败时网关一个请求都转不出去，
 /// 而这种故障在启动日志里很容易被淹掉。</item>
+/// <item><b>Redis</b>：后台令牌的会话吊销状态存在这里，读不到就 fail-closed 拒绝请求
+/// （DATA_SPEC 5.20）。它一挂，后台整体不可用，所以必须进就绪探针。</item>
 /// </list>
 /// </para>
 ///
-/// <para><b>刻意不探数据库与 Redis</b>：网关自己既没有数据库连接
-/// （见 <c>Program.cs</c> 对 DatabaseConnectionKey 的豁免），也没注入 Redis。
+/// <para><b>刻意不探数据库</b>：网关没有数据库连接
+/// （见 <c>Program.cs</c> 对 DatabaseConnectionKey 的豁免）。
 /// 探一个本进程压根不用的依赖，拿到的是与网关健康无关的信号，
 /// 反而会在数据库抖动时把网关实例踢下线。
 /// 同样不探 Consul：<c>ocelot.json</c> 走的是显式 <c>DownstreamHostAndPorts</c>，
@@ -48,19 +50,23 @@ public sealed class GatewayHealthCheck : IHealthCheck
     private readonly IHttpClientFactory _http;
     private readonly IOptions<GatewayOptions> _options;
     private readonly IConfiguration _configuration;
+    private readonly StackExchange.Redis.IConnectionMultiplexer _redis;
 
     /// <summary>构造健康检查。</summary>
     /// <param name="http">HTTP 客户端工厂。</param>
     /// <param name="options">网关配置（RBAC 一节在它下面）。</param>
     /// <param name="configuration">应用配置（<c>ocelot.json</c> 也由它加载）。</param>
+    /// <param name="redis">Redis 连接，用于探会话吊销存储。</param>
     public GatewayHealthCheck(
         IHttpClientFactory http,
         IOptions<GatewayOptions> options,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        StackExchange.Redis.IConnectionMultiplexer redis)
     {
         _http = http;
         _options = options;
         _configuration = configuration;
+        _redis = redis;
     }
 
     /// <summary>执行检查。</summary>
@@ -77,6 +83,9 @@ public sealed class GatewayHealthCheck : IHealthCheck
 
         var permission = await CheckPermissionServiceAsync(ct).ConfigureAwait(false);
         data[permission.Key] = permission.Value;
+
+        var sessionStore = await CheckSessionStoreAsync(ct).ConfigureAwait(false);
+        data[sessionStore.Key] = sessionStore.Value;
 
         var unhealthy = data
             .Where(a => a.Value.ToString()!.StartsWith("Unhealthy", StringComparison.Ordinal))
@@ -118,6 +127,36 @@ public sealed class GatewayHealthCheck : IHealthCheck
         return count > 0
             ? new KeyValuePair<string, string>("Routes", $"Healthy: {count} 条路由已加载")
             : new KeyValuePair<string, string>("Routes", "Unhealthy: 路由表为空，所有请求都会 404");
+    }
+
+    /// <summary>探 Redis（会话吊销存储）是否可达。</summary>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>状态文本。</returns>
+    /// <remarks>
+    /// 只发 PING，不读具体键：要回答的问题是「这个依赖还活着吗」，
+    /// 而不是「某个账号被吊销了没有」。
+    /// </remarks>
+    private async Task<KeyValuePair<string, string>> CheckSessionStoreAsync(CancellationToken ct)
+    {
+        var sharedDatabase = _configuration.GetSection(
+            Collaboration.Domain.Configuration.RedisOptions.SectionName)
+            .Get<Collaboration.Domain.Configuration.RedisOptions>()?.SharedDatabase ?? 0;
+
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            using var probe = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probe.CancelAfter(TimeSpan.FromSeconds(3));
+
+            await _redis.GetDatabase(sharedDatabase).PingAsync().WaitAsync(probe.Token).ConfigureAwait(false);
+            sw.Stop();
+
+            return new KeyValuePair<string, string>("SessionStore", $"Healthy: {sw.ElapsedMilliseconds}ms");
+        }
+        catch (Exception ex)
+        {
+            return new KeyValuePair<string, string>("SessionStore", $"Unhealthy: {ex.Message}");
+        }
     }
 
     /// <summary>探权限中心能否拉到权限树。</summary>

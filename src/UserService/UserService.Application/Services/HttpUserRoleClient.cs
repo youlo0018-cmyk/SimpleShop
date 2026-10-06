@@ -27,9 +27,56 @@ public sealed class HttpUserRoleClient : IUserRoleClient
     }
 
     /// <inheritdoc />
-    public async Task<bool> ReplaceAsync(long userId, IReadOnlyCollection<long> roleIds, long platformId, CancellationToken ct = default)
+    /// <remarks>
+    /// 预检失败（400）要把权限中心的原因原样带回来——那是给运营看的具体提示
+    /// （例如「角色『商户管理员』的租户范围与目标账号不符」），
+    /// 换成一句「角色校验失败」等于把可操作的信息丢掉。
+    /// 网络异常同样算不通过：宁可让这次建号失败，也不要造一个没角色的账号。
+    /// </remarks>
+    public async Task<RoleScopeCheckResult> ValidateScopesAsync(
+        IReadOnlyCollection<long> roleIds, int tenantType, CancellationToken ct = default)
     {
-        var payload = new BindUserRolesRequest(userId, roleIds?.ToArray() ?? Array.Empty<long>(), platformId);
+        if (roleIds.Count == 0) return new RoleScopeCheckResult(true, string.Empty);
+
+        var payload = new ValidateRoleScopesRequest(roleIds.ToArray(), tenantType);
+
+        try
+        {
+            var response = await _http.PostAsJsonAsync("internal/permissions/ValidateRoleScopes", payload, ct);
+
+            // 400 也要读 body：里面是具体原因，不是「参数错误」四个字
+            var result = await response.Content.ReadFromJsonAsync<ApiResponse<string>>(ct);
+
+            if (result is null)
+            {
+                _logger.LogError("角色作用域预检返回了空响应体，HTTP {Status}", (int)response.StatusCode);
+                return new RoleScopeCheckResult(false, "角色校验失败：权限中心返回了空响应");
+            }
+
+            return result.Success
+                ? new RoleScopeCheckResult(true, string.Empty)
+                : new RoleScopeCheckResult(false, result.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "角色作用域预检调用异常，按不通过处理");
+            return new RoleScopeCheckResult(false, "角色校验失败：权限中心暂时不可用，请稍后重试");
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 角色作用域校验（AllowedScopes 与租户类型是否匹配）在权限中心做：
+    /// 角色表在那边，这边连角色有几个都不知道。这里只负责把目标账号的租户类型带上。
+    /// </remarks>
+    public async Task<bool> ReplaceAsync(
+        long userId,
+        IReadOnlyCollection<long> roleIds,
+        long platformId,
+        int tenantType,
+        CancellationToken ct = default)
+    {
+        var payload = new BindUserRolesRequest(userId, roleIds?.ToArray() ?? Array.Empty<long>(), platformId, tenantType);
 
         try
         {
@@ -66,5 +113,11 @@ public sealed class HttpUserRoleClient : IUserRoleClient
     private sealed record BindUserRolesRequest(
         [property: JsonPropertyName("userId")] long UserId,
         [property: JsonPropertyName("roleIds")] long[] RoleIds,
-        [property: JsonPropertyName("platformId")] long PlatformId);
+        [property: JsonPropertyName("platformId")] long PlatformId,
+        [property: JsonPropertyName("tenantType")] int TenantType);
+
+    /// <summary>预检请求体，字段名必须与权限中心的命令一致。</summary>
+    private sealed record ValidateRoleScopesRequest(
+        [property: JsonPropertyName("roleIds")] long[] RoleIds,
+        [property: JsonPropertyName("tenantType")] int TenantType);
 }

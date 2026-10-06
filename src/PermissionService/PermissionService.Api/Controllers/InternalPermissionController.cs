@@ -38,6 +38,16 @@ public sealed class InternalPermissionController : ControllerBase
     public Task<ApiResponse<int>> BindUserRoles([FromBody] BindUserRolesCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>预检角色集合能否用于指定租户类型的账号。</summary>
+    /// <param name="command">角色 Id 集合与目标账号租户类型。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>通过返回成功；角色不存在或作用域不匹配返回 400 与原因。</returns>
+    /// <remarks>UserService 在建号插库之前调用，避免出现「返回成功但账号没角色」的半成品。</remarks>
+    [HttpPost("ValidateRoleScopes")]
+    public Task<ApiResponse<string>> ValidateRoleScopes(
+        [FromBody] ValidateRoleScopesCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>查询网关 RBAC 用的「接口路径 → 权限点」映射。</summary>
     /// <param name="ct">取消令牌。</param>
     /// <returns>全部启用且绑定了路径的权限点。网关缓存 30 秒。</returns>

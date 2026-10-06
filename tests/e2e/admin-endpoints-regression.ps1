@@ -508,6 +508,10 @@ Write-Host "`n=== 鉴权：受限账号必须被拒 ===" -ForegroundColor Cyan
 
 # 造一个「什么都读不了」的账号，用它验证上面这些端点确实绑了权限点。
 # 超管有全部权限，用超管测这个等于没测。
+#
+# 账号必须至少绑 1 个角色（DATA_SPEC 5.18），所以先建一个**不绑任何权限点**的空角色。
+# 这样账号是「有角色但没权限」，fail-closed 的判定路径与「没有角色」完全一致，
+# 而且不会绕过建号接口的必填规则。
 $readonlyUser = 'admreadonly' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $pwd = 'Readonly123456'
 # 手机号必须每次都不同：建号接口对 phone 有唯一约束，
@@ -515,16 +519,25 @@ $pwd = 'Readonly123456'
 # 极容易被误判成账号接口坏了）。取 139 + 时间戳后 8 位，落在 ^1[3-9]\d{9}$ 内。
 $readonlyPhone = '139' + ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString().Substring(5, 8))
 
-$createUser = Invoke-RestMethod -Uri "$UserService/users/Create" -Method Post `
-    -Body (@{
-        userName   = $readonlyUser
-        password   = $pwd
-        phone      = $readonlyPhone
-        tenantType = 1
-        nickName   = '只读回归账号'
-        platformId = 0
-    } | ConvertTo-Json -Compress) `
-    -Headers $auth -ContentType 'application/json' -TimeoutSec 20 -ErrorAction Stop
+$emptyRole = Post-Ep '/gateway/roles/Create' @{
+    roleName = "只读空角色$($script:suffix)"; code = "roempty$($script:suffix)"
+    allowedScopes = 1; dataScope = 1; remark = '回归用：不绑任何权限点'
+}
+$emptyRoleId = if ($emptyRole.Success) { [long]$emptyRole.data } else { 0 }
+if ($emptyRoleId -le 0) {
+    Write-Host ("  （建空角色失败：" + $emptyRole.Message + "，只读账号将拿不到角色）") -ForegroundColor DarkYellow
+}
+
+# 走网关建号：租户锁定（DATA_SPEC 5.18）要求调用方身份，直连服务端口没有 X-Claim-* 头会被拒。
+$createUser = Post-Ep '/gateway/users/Create' @{
+    userName   = $readonlyUser
+    password   = $pwd
+    phone      = $readonlyPhone
+    tenantType = 1
+    nickName   = '只读回归账号'
+    platformId = 0
+    roleIds    = @($emptyRoleId)
+}
 
 Invoke-Case 'API-ADM-060' '创建只读测试账号成功' {
     $createUser.Success
@@ -581,17 +594,16 @@ $platAdminPwd = 'PlatAdmin123456'
 
 $firstPlatform = (Post-Ep '/gateway/platforms/List' @{ page = 1; pageSize = 1 }).data.items[0]
 
-$platCreate = Invoke-RestMethod -Uri "$UserService/users/Create" -Method Post -Headers $auth `
-    -Body (@{
-        userName   = $platAdminUser
-        password   = $platAdminPwd
-        phone      = '137' + ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString().Substring(5, 8))
-        tenantType = 1
-        nickName   = '平台越权用例'
-        platformId = $firstPlatform.id
-        roleIds    = @(9001)
-    } | ConvertTo-Json -Compress) `
-    -ContentType 'application/json' -TimeoutSec 20 -ErrorAction SilentlyContinue
+# 同样走网关：直连服务端口没有租户头，建号会被租户锁定拒掉（403）。
+$platCreate = Post-Ep '/gateway/users/Create' @{
+    userName   = $platAdminUser
+    password   = $platAdminPwd
+    phone      = '137' + ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString().Substring(5, 8))
+    tenantType = 1
+    nickName   = '平台越权用例'
+    platformId = $firstPlatform.id
+    roleIds    = @(9001)
+}
 
 $platToken = $null
 if ($platCreate.Success) {
@@ -602,6 +614,17 @@ if ($platCreate.Success) {
     }
     catch { $platToken = $null }
 }
+
+# 超管账号 Id：下面的越权用例要验「平台账号碰不到超管」。
+# 用超管令牌查得到（它不受平台裁剪），用平台令牌查不到 —— 这本身就是 API-ADM-088 要验的事。
+$superAdminId = 0
+try {
+    $superRow = (Invoke-RestMethod "$Gateway/gateway/users/List?page=1&pageSize=50&keyword=$AdminUser" `
+        -Headers $auth -TimeoutSec 20).data |
+        Where-Object { $_.userName -eq $AdminUser } | Select-Object -First 1
+    if ($superRow) { $superAdminId = [long]$superRow.id }
+}
+catch { $superAdminId = 0 }
 
 if ($platToken) {
     $platAuth = @{ Authorization = "Bearer $platToken" }
@@ -673,6 +696,98 @@ if ($platToken) {
         } $platAuth
         # 行级过滤让这条 UPDATE 影响 0 行，Handler 会回「平台不存在」而不是成功
         -not $r.Success
+    }
+
+    # ---- 账号管理的租户锁定（DATA_SPEC 5.18）----
+    #
+    # 这一组挡的是**提权**，不是普通的越权读：
+    # 内置的「平台管理员」角色按 DATA_SPEC 5.21 绑定了全部权限点，
+    # 所以平台账号天然持有 user:create / user:update，网关那一层拦不住它。
+    # 只要服务端不再看一次租户身份，平台账号就能：
+    #   ① 建一个 platformId=0 的账号再绑 platform-admin → 一步变超管；
+    #   ② 重置超管的密码后直接登录 → 账号接管。
+    # 两条都必须被 403/404 挡住，而不是靠「前端不这么传」。
+
+    Invoke-Case 'API-ADM-090' '🔴 平台账号建 platformId=0 的账号被拒（提权封堵）' {
+        $r = Post-Ep '/gateway/users/Create' @{
+            userName   = "esc$($script:suffix)"
+            password   = 'Test123456'
+            phone      = '134' + ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString().Substring(5, 8))
+            tenantType = 1
+            nickName   = '提权尝试'
+            platformId = 0
+            roleIds    = @(9001)
+        } $platAuth
+        (-not $r.Success) -and ([int]$r.code -eq 403)
+    }
+
+    Invoke-Case 'API-ADM-091' '🔴 商户角色不能绑给平台账号（400 且不产生账号）' {
+        # 9005 = merchant-operator，AllowedScopes=2（只允许商户账号）
+        $un = "scp$($script:suffix)"
+        $r = Post-Ep '/gateway/users/Create' @{
+            userName   = $un
+            password   = 'Test123456'
+            phone      = '133' + ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString().Substring(5, 8))
+            tenantType = 1
+            nickName   = '作用域不符'
+            platformId = $firstPlatform.id
+            roleIds    = @(9005)
+        } $platAuth
+        if ($r.Success -or [int]$r.code -ne 400) { return $false }
+
+        # 关键：预检必须发生在插库**之前**。否则账号已经建出来了，
+        # 只是没绑上角色 —— 运营看到「创建成功」，拿到的却是个什么都做不了的账号。
+        #
+        # ⚠️ users/List 的 data 是**裸数组**（不是 {items:[...]} 信封），
+        # 而且 @($null).Count 在 PowerShell 里等于 1 —— 写成 .data.items 会永远「查到 1 条」，
+        # 这条断言就变成了永远失败（或换个写法后永远通过）的假用例。
+        $check = Invoke-RestMethod "$Gateway/gateway/users/List?page=1&pageSize=50&keyword=$un" `
+            -Headers $auth -TimeoutSec 20
+        @($check.data).Count -eq 0
+    }
+
+    Invoke-Case 'API-ADM-092' '🔴 平台账号重置超管密码被拒（404，账号接管封堵）' {
+        if ($superAdminId -le 0) { return $true }
+        $r = Post-Ep '/gateway/users/ResetPassword' @{
+            userId = $superAdminId; newPassword = 'Hijacked123456'
+        } $platAuth
+        # 按 TEST_CASES 6.2：越权访问他人资源回 404 而不是 403，避免泄露账号是否存在
+        (-not $r.Success) -and ([int]$r.code -eq 404)
+    }
+
+    Invoke-Case 'API-ADM-093' '🔴 平台账号停用超管被拒（404）' {
+        if ($superAdminId -le 0) { return $true }
+        $r = Post-Ep '/gateway/users/UpdateStatus' @{ userId = $superAdminId; status = 2 } $platAuth
+        (-not $r.Success) -and ([int]$r.code -eq 404)
+    }
+
+    Invoke-Case 'API-ADM-094' '平台账号的账号列表只含本平台（跨租户读封堵）' {
+        # 传 platformId=0 试图「不限平台」：服务端必须用上下文里的平台覆盖入参。
+        $r = Invoke-RestMethod "$Gateway/gateway/users/List?page=1&pageSize=50&platformId=0" `
+            -Headers $platAuth -TimeoutSec 20
+        $items = @($r.data)
+        # 「全部平台」这个文案只可能来自 platformId=0 的账号（超管）
+        $items.Count -gt 0 -and @($items | Where-Object { $_.platformName -eq '全部平台' }).Count -eq 0
+    }
+
+    Invoke-Case 'API-ADM-095' '🔴 直连服务端口建号被拒（没有网关租户头 = 无身份）' {
+        # 注意断言 body 里的业务码，不是 HTTP 状态码：
+        # 这套服务的业务失败统一回 **HTTP 200 + success=false**，
+        # 断言状态码的话这条用例会「永远失败」或「永远通过」，与租户锁定毫无关系。
+        $body = $null
+        try {
+            $body = Invoke-RestMethod -Uri "$UserService/users/Create" -Method Post `
+                -Body (@{
+                    userName = "direct$($script:suffix)"; password = 'Test123456'
+                    phone = '132' + ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString().Substring(5, 8))
+                    tenantType = 1; nickName = '直连尝试'; platformId = 0; roleIds = @(9001)
+                } | ConvertTo-Json -Compress) `
+                -ContentType 'application/json' -TimeoutSec 20
+        }
+        catch {
+            $body = $null
+        }
+        $null -ne $body -and (-not $body.success) -and ([int]$body.code -eq 403)
     }
 }
 else {
@@ -811,17 +926,13 @@ Invoke-Case 'API-ADM-088' '订单列表支持客户、商户、手机号与时�
 # 项目没有「删除账号」端点（刻意如此，审计要求留痕），所以用停用。
 if ($platCreate.Success -and $platCreate.data) {
     try {
-        Invoke-RestMethod -Uri "$UserService/users/UpdateStatus" -Method Post -Headers $auth `
-            -Body (@{ userId = $platCreate.data; status = 2 } | ConvertTo-Json -Compress) `
-            -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+        Post-Ep '/gateway/users/UpdateStatus' @{ userId = [long]$platCreate.data; status = 2 } | Out-Null
     }
     catch { }
 }
 if ($createUser.Success -and $createUser.data) {
     try {
-        Invoke-RestMethod -Uri "$UserService/users/UpdateStatus" -Method Post `
-            -Body (@{ userId = $createUser.data; status = 2 } | ConvertTo-Json -Compress) `
-            -Headers $auth -ContentType 'application/json' -TimeoutSec 20 | Out-Null
+        Post-Ep '/gateway/users/UpdateStatus' @{ userId = [long]$createUser.data; status = 2 } | Out-Null
         Write-Host '  （已停用临时只读账号）' -ForegroundColor DarkGray
     }
     catch {

@@ -36,6 +36,7 @@ public sealed class GatewaySecurityMiddleware
 
     private readonly RequestDelegate _next;
     private readonly DualTokenValidator _validator;
+    private readonly AdminSessionRevocationChecker _revocations;
     private readonly RoutePermissionCache _permissions;
     private readonly GatewayOptions _options;
     private readonly ILogger<GatewaySecurityMiddleware> _logger;
@@ -43,18 +44,21 @@ public sealed class GatewaySecurityMiddleware
     /// <summary>构造中间件。</summary>
     /// <param name="next">下一段管道。</param>
     /// <param name="validator">双令牌验签器。</param>
+    /// <param name="revocations">后台令牌吊销检查器。</param>
     /// <param name="permissions">RBAC 映射缓存。</param>
     /// <param name="options">网关配置。</param>
     /// <param name="logger">日志器。</param>
     public GatewaySecurityMiddleware(
         RequestDelegate next,
         DualTokenValidator validator,
+        AdminSessionRevocationChecker revocations,
         RoutePermissionCache permissions,
         IOptions<GatewayOptions> options,
         ILogger<GatewaySecurityMiddleware> logger)
     {
         _next = next;
         _validator = validator;
+        _revocations = revocations;
         _permissions = permissions;
         _options = options.Value;
         _logger = logger;
@@ -109,6 +113,32 @@ public sealed class GatewaySecurityMiddleware
         }
 
         context.User = outcome.Principal!;
+
+        // ---- 第 2.5 步：会话吊销 ----
+        // 验签只能证明「令牌是我们签的、还没过期」，证明不了「签发之后账号被重置过密码」。
+        // 只对后台令牌生效：客户令牌有自己的吊销语义（CustomerService 管），不在这里越界。
+        if (outcome.Kind == DualTokenValidator.KindAdmin)
+        {
+            var userId = long.TryParse(First(context.User, "sub"), out var uid) ? uid : 0;
+            var issuedAt = long.TryParse(First(context.User, "iat"), out var iat) ? iat : (long?)null;
+
+            var revocation = await _revocations.CheckAsync(userId, issuedAt);
+
+            if (revocation.StoreUnavailable)
+            {
+                await RejectAsync(context, StatusCodes.Status503ServiceUnavailable,
+                    new { error = "authorization_unavailable", error_description = "The session store is unavailable." });
+                return;
+            }
+
+            if (revocation.Revoked)
+            {
+                _logger.LogWarning("账号 {UserId} 的令牌已被吊销（重置密码），拒绝 {Path}", userId, path);
+                await RejectAsync(context, StatusCodes.Status401Unauthorized,
+                    new { error = "invalid_token", error_description = "The access token has been revoked." });
+                return;
+            }
+        }
 
         // ---- 第 3 步：RBAC ----
         var lookup = await _permissions.ResolveAsync(path);

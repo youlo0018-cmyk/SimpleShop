@@ -6,6 +6,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Ocelot.DependencyInjection;
 using Ocelot.Middleware;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,6 +43,17 @@ builder.Services.AddHttpClient<RoutePermissionCache>((sp, http) =>
 });
 
 builder.Services.AddSingleton<DualTokenValidator>();
+
+// Redis：网关只用它读「后台账号的会话吊销时刻」（DATA_SPEC 5.20）。
+// 以前网关刻意不连 Redis，现在有了这条跨服务约定，连接是必需的：
+// 读不到吊销状态就必须拒绝请求，所以 Redis 挂了等于后台整体不可用，这一点写进 /ready 探针。
+var redisOptions = builder.Configuration.GetSection(RedisOptions.SectionName).Get<RedisOptions>()!;
+var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions.ConnectionString);
+Console.WriteLine($"[bootstrap] redis 已连接 db={redisOptions.SharedDatabase}（会话吊销共享库）");
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
+builder.Services.AddSingleton(sp => new AdminSessionRevocationChecker(
+    redis, redisOptions.SharedDatabase, sp.GetRequiredService<ILogger<AdminSessionRevocationChecker>>()));
 
 // Ocelot：只做路由转发。
 // 刻意不接 Polly：下游各服务的重试 / 降级还没做，先由服务自身保证幂等，

@@ -21,6 +21,17 @@ public sealed class RedisOptions
 
     /// <summary>逻辑库索引。不同用途建议错开。</summary>
     public int Database { get; set; }
+
+    /// <summary>
+    /// 跨服务共享的逻辑库索引，默认 0。
+    /// </summary>
+    /// <remarks>
+    /// 各服务的 Redis 库是**独占**的（避免同名 key 撞车），但有一类键必须被多个服务读到：
+    /// 后台账号的会话吊销键由 UserService 写、由网关在每个请求上读（DATA_SPEC 5.20）。
+    /// 两边各用各的库号就永远读不到对方写的值，而且失败是静默的——令牌看起来「吊销了」却照样能用。
+    /// 所以这类键统一走本库号。默认 0 与网关自身的库号一致，不配置也能对上。
+    /// </remarks>
+    public int SharedDatabase { get; set; }
 }
 
 /// <summary>Consul 连接配置。</summary>

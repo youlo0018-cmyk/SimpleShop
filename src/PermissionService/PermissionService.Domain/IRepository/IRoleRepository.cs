@@ -19,6 +19,12 @@ public interface IRoleRepository
     /// <returns>角色或 null。幂等只读。</returns>
     Task<Role?> GetByIdAsync(long id, CancellationToken ct = default);
 
+    /// <summary>按 Id 集合取角色。</summary>
+    /// <param name="ids">角色 Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>命中的角色列表，顺序不保证。幂等只读。</returns>
+    Task<List<Role>> GetByIdsAsync(IReadOnlyCollection<long> ids, CancellationToken ct = default);
+
     /// <summary>按角色编码取角色，不存在返回 null。</summary>
     /// <param name="code">角色编码。</param>
     /// <param name="ct">取消令牌。</param>

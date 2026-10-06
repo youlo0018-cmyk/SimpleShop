@@ -128,6 +128,10 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
     } else {
         $cfg['Redis:ConnectionString'] = '127.0.0.1:6379'
         $cfg['Redis:Database']         = "$redisDb"
+        # 跨服务共享库：各服务的 Redis 库是独占的，但后台账号的会话吊销键
+        # 由 UserService 写、由网关读（DATA_SPEC 5.20），必须落在同一个库里。
+        # 显式写出来而不是靠代码里的默认值：将来有人调整库号时能在配置页直接看到这条约定。
+        $cfg['Redis:SharedDatabase']   = '0'
     }
     $cfg['Consul:Address']            = 'http://127.0.0.1:8500'
     $cfg['Consul:ServiceName']        = "$name"
@@ -274,7 +278,8 @@ function Get-ServiceConfigs([string]$name, [int]$redisDb) {
 # 不能所有服务共用一个库：Redis 的 key 不带服务前缀，一旦同名 key（例如 "cache:home"）
 # 出现在两个服务里就会互相覆盖，排查起来极难发现。所以这里显式一号一服务。
 # Redis 默认 16 个库（0-15），正好装下：15 个真正用 Redis 的服务占 1~15，
-# 0 号给目前不连 Redis 的网关。若后续再加服务，把 deploy/docker-compose 里
+# 0 号给网关（它只读「会话吊销」这类共享键，见 Redis:SharedDatabase）。
+# 若后续再加服务，把 deploy/docker-compose 里
 # redis 的 --databases 调到 32，否则这份表里的号会开始互相撞车。
 $redisDbMap = [ordered]@{
     'CustomerService'         = 1
@@ -292,9 +297,8 @@ $redisDbMap = [ordered]@{
     'MerchantPlatformService' = 13
     'PointService'            = 14
     'EvaluateService'         = 15
-    # 网关目前**不**真的用 Redis（不分配雪花 workerId，也不做 Redis 缓存）。
-    # 把 0 号给它而不是留作「调试库」：15 个真正用 Redis 的服务刚好占满 1~15，
-    # 而把一个用不上的号留给一个用不上的服务，是唯一不会浪费的分配方式。
+    # 网关只读共享键（后台账号的会话吊销时刻），不分配雪花 workerId、也不做自己的缓存。
+    # 把它放在 0 号，正好让 0 号成为「共享库」：其它服务的独占库是 1~15，互不干扰。
     'Gateway'                 = 0
 }
 

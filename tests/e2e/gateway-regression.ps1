@@ -138,7 +138,10 @@ $script:merchantAccountId = 0
 Invoke-Case 'API-GTW-030' '建低权限账号并取到令牌' {
     $un = 'gtw' + (Get-Random -Minimum 10000 -Maximum 99999)
     $phone = '136' + (Get-Random -Minimum 10000000 -Maximum 99999999)
-    $created = Invoke-RestMethod -Uri "$UserService/users/Create" -Method Post `
+    # 走网关：账号管理的租户锁定要读网关注入的 X-Claim-* 头，
+    # 直连服务端口没有身份，会被判成越权（403）。
+    $created = Invoke-RestMethod -Uri "$Gateway/gateway/users/Create" -Method Post `
+        -Headers @{ Authorization = "Bearer $script:adminToken" } `
         -Body (@{
             userName = $un; password = 'Test123456'; phone = $phone
             tenantType = 2; nickName = '网关低权限'; platformId = 1; merchantId = 1

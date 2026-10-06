@@ -1,9 +1,12 @@
 using System.Reflection;
+using Collaboration.Domain.Configuration;
 using Collaboration.Domain.MediatR;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
 using UserService.Application.Features.Internal;
 using UserService.Application.Features.User.ManageUser;
 using UserService.Application.Services;
@@ -46,6 +49,13 @@ public static class ApiServiceCollectionExtensions
             // 权限中心不可用时要尽快失败，不能让建号请求一直挂着
             client.Timeout = TimeSpan.FromSeconds(5);
         });
+
+        // 会话吊销键写在共享库：读它的是网关，写错库号会静默失效（DATA_SPEC 5.20）。
+        var sharedDatabase = configuration.GetSection(RedisOptions.SectionName).Get<RedisOptions>()?.SharedDatabase ?? 0;
+        services.AddSingleton<IAdminSessionRevoker>(sp => new RedisAdminSessionRevoker(
+            sp.GetRequiredService<IConnectionMultiplexer>(),
+            sharedDatabase,
+            sp.GetRequiredService<ILogger<RedisAdminSessionRevoker>>()));
 
         services.AddInfrastructure();
         return services;

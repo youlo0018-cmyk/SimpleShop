@@ -36,6 +36,14 @@ public sealed class RoleRepository : CrudRepository<Role>, IRoleRepository
     }
 
     /// <inheritdoc />
+    public async Task<List<Role>> GetByIdsAsync(IReadOnlyCollection<long> ids, CancellationToken ct = default)
+    {
+        if (ids.Count == 0) return new List<Role>();
+        var list = ids.Distinct().ToArray();
+        return await Db.Select<Role>().Where(a => list.Contains(a.Id)).ToListAsync(ct);
+    }
+
+    /// <inheritdoc />
     public async Task<Role?> GetByCodeAsync(string code, CancellationToken ct = default)
         => await Db.Select<Role>().Where(a => a.Code == code).FirstAsync(ct);
 

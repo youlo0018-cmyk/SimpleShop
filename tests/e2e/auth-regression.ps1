@@ -15,6 +15,7 @@ param(
     [string]$AuthService = 'http://127.0.0.1:5019',
     [string]$UserService = 'http://127.0.0.1:5011',
     [string]$CustomerService = 'http://127.0.0.1:5280',
+    [string]$Gateway = 'http://127.0.0.1:5008',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
@@ -65,9 +66,18 @@ function Decode-Part([string]$part) {
     return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s))
 }
 
-function Invoke-Json([string]$url, [hashtable]$payload) {
-    return Invoke-RestMethod -Uri $url -Method Post -Body ($payload | ConvertTo-Json -Compress) `
-        -ContentType 'application/json' -TimeoutSec 30
+function Invoke-Json([string]$url, [hashtable]$payload, [hashtable]$Headers) {
+    # 用 splatting 而不是直接写死参数：带 Authorization 与不带是两种调用，
+    # 写死一个 $Headers 参数会在不带时把 null 传进去，某些 PS 版本会直接报错。
+    $params = @{
+        Uri         = $url
+        Method      = 'Post'
+        Body        = ($payload | ConvertTo-Json -Compress)
+        ContentType = 'application/json'
+        TimeoutSec  = 30
+    }
+    if ($Headers) { $params['Headers'] = $Headers }
+    return Invoke-RestMethod @params
 }
 
 Write-Host "`n=== ATH 健康检查 ===" -ForegroundColor Cyan
@@ -172,19 +182,109 @@ Invoke-Case 'API-ATH-036' '🔴 客户账号不得走后台登录（账号域互
 }
 
 Invoke-Case 'API-ATH-037' '🔴 停用账号不得登录，恢复后可登录' {
-    # users/List 是 GET + 查询参数，不是 POST——用 Invoke-Json 会拿到 405
-    $uid = (Invoke-RestMethod "$UserService/users/List?page=1&pageSize=50&keyword=$AdminUser" -TimeoutSec 30).data |
+    # 账号管理走网关：租户锁定要读网关注入的 X-Claim-* 头，直连服务端口没有身份会被判越权。
+    # users/List 是 GET + 查询参数，不是 POST——用 Invoke-Json 会拿到 405。
+    $auth = @{ Authorization = "Bearer $script:token" }
+    $uid = (Invoke-RestMethod "$Gateway/gateway/users/List?page=1&pageSize=50&keyword=$AdminUser" `
+        -Headers $auth -TimeoutSec 30).data |
         Where-Object { $_.userName -eq $AdminUser } | Select-Object -First 1
     if ($null -eq $uid) { return $false }
     $id = [long]$uid.id
 
-    Invoke-Json "$UserService/users/UpdateStatus" @{ userId = $id; status = 2 } | Out-Null
+    Invoke-Json "$Gateway/gateway/users/UpdateStatus" @{ userId = $id; status = 2 } $auth | Out-Null
     $blocked = Get-RawToken $okBody
 
-    Invoke-Json "$UserService/users/UpdateStatus" @{ userId = $id; status = 1 } | Out-Null
+    Invoke-Json "$Gateway/gateway/users/UpdateStatus" @{ userId = $id; status = 1 } $auth | Out-Null
     $restored = Get-RawToken $okBody
 
     return $blocked.Status -eq 400 -and $blocked.Body -match 'disabled' -and $restored.Status -eq 200
+}
+
+Write-Host "`n=== API-ATH-038~039 会话吊销（重置密码踢下线）===" -ForegroundColor Cyan
+
+# 后台 access token 是自包含的：验签通过就代表「是我们签的、没过期」，
+# 它表达不了「签发之后账号被重置了密码」。而重置密码的真实动机往往正是怀疑账号被盗，
+# 此时旧令牌还能用 2 小时等于什么都没做。这一组验的就是那条吊销链路。
+function Get-GatewayStatus([string]$Path, [string]$Token) {
+    $req = [System.Net.Http.HttpRequestMessage]::new(
+        [System.Net.Http.HttpMethod]::new('Get'), "$Gateway$Path")
+    if ($Token) { $req.Headers.Add('Authorization', "Bearer $Token") }
+    $resp = $http.SendAsync($req).GetAwaiter().GetResult()
+    return [int]$resp.StatusCode
+}
+
+$superAuth = @{ Authorization = "Bearer $script:token" }
+$revUser = 'athrev' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$revPwd = 'Revoke123456'
+$revNewPwd = 'Revoked654321'
+$revId = 0
+$revToken = $null
+
+try {
+    $created = Invoke-Json "$Gateway/gateway/users/Create" @{
+        userName   = $revUser
+        password   = $revPwd
+        phone      = '131' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+        tenantType = 1
+        nickName   = '会话吊销用例'
+        platformId = 0
+        roleIds    = @(9001)
+    } $superAuth
+
+    if ($created.success) {
+        $revId = [long]$created.data
+        $revToken = (Get-RawToken "grant_type=password&client_id=admin-app&username=$revUser&password=$revPwd").Body |
+            ConvertFrom-Json | Select-Object -ExpandProperty access_token
+    }
+}
+catch {
+    Write-Host ("  （准备会话吊销用例失败：" + $_.Exception.Message + "）") -ForegroundColor DarkYellow
+}
+
+Invoke-Case 'API-ATH-038' '🔴 重置密码后旧令牌立即失效，新密码可重新登录' {
+    if (-not $revToken) { return $false }
+
+    # 先证明吊销前它是好用的：否则后面的 401 可能只是因为令牌本来就无效
+    $before = Get-GatewayStatus '/gateway/users/List?page=1&pageSize=5' $revToken
+    if ($before -ne 200) { return $false }
+
+    $reset = Invoke-Json "$Gateway/gateway/users/ResetPassword" @{
+        userId = $revId; newPassword = $revNewPwd
+    } $superAuth
+    if (-not $reset.success) { return $false }
+
+    $after = Get-GatewayStatus '/gateway/users/List?page=1&pageSize=5' $revToken
+    if ($after -ne 401) { return $false }
+
+    # 吊销不能连新令牌一起拒掉。
+    # 必须跨过 1 秒：iat 只精确到秒，网关把「同一秒签发」也算作被吊销
+    # （严格一侧，见 AdminSessionRevocationChecker 的说明），
+    # 不等这一下，刚拿到的新令牌也会被自己拒掉，测试会假失败。
+    Start-Sleep -Milliseconds 1100
+    $fresh = Get-RawToken "grant_type=password&client_id=admin-app&username=$revUser&password=$revNewPwd"
+    if ($fresh.Status -ne 200) { return $false }
+
+    $freshToken = $fresh.Body | ConvertFrom-Json | Select-Object -ExpandProperty access_token
+    return (Get-GatewayStatus '/gateway/users/List?page=1&pageSize=5' $freshToken) -eq 200
+}
+
+Invoke-Case 'API-ATH-039' '被吊销的旧令牌连匿名白名单以外的任何后台接口都进不去' {
+    if (-not $revToken) { return $false }
+    # 挑一条与账号列表完全不同的路径：证明吊销是在网关的统一入口生效，
+    # 而不是只在某一个 Handler 里顺手判了一下。
+    $code = Get-GatewayStatus '/gateway/points/Rules' $revToken
+    return $code -eq 401
+}
+
+# 收尾：停用临时账号（项目刻意没有删除账号的接口，审计要求留痕）
+if ($revId -gt 0) {
+    try {
+        Invoke-Json "$Gateway/gateway/users/UpdateStatus" @{ userId = $revId; status = 2 } $superAuth | Out-Null
+        Write-Host '  （已停用临时吊销用例账号）' -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Host ('  （停用临时账号失败，不影响结论：' + $_.Exception.Message + '）') -ForegroundColor DarkYellow
+    }
 }
 
 Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan
