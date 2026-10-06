@@ -17,6 +17,7 @@ param(
     [string]$Gateway = 'http://127.0.0.1:5008',
     [string]$Payment = 'http://127.0.0.1:5066',
     [string]$Order = 'http://127.0.0.1:5064',
+[string]$Inventory = 'http://127.0.0.1:5062',
     [string]$AdminUser = 'codexadmin',
     [string]$AdminPassword = 'Admin123456',
     [switch]$StopOnFail
@@ -116,6 +117,18 @@ function OrderPost([string]$Op, $Body) {
 function Get-OrderStatus([string]$OrderNo) {
     $d = Invoke-RestMethod "$Order/orders/Detail?orderNo=$OrderNo&customerId=$($script:customerId)" -TimeoutSec 30
     return [int]$d.data.status
+}
+
+<#
+.SYNOPSIS
+    取某个 SKU 的库存三个计数。
+.DESCRIPTION
+    退款是否真的回补了库存，只能看这三个数：available 涨回去、deducted 减回去。
+    只看接口返回的 success 是不够的 —— 曾经两段式退款回的是「退款已生效」，
+    而货一直挂在 deducted 上，页面上完全看不出异常。
+#>
+function Get-Stock([long]$SkuId) {
+    return (Invoke-RestMethod "$Inventory/internal/inventory/Snapshot?skuIds=$SkuId" -TimeoutSec 20).data[0]
 }
 
 # 校验失败时 message 只有「请求参数校验失败」，具体原因在 errors 里（DATA_SPEC 3.5）。
@@ -379,6 +392,47 @@ Invoke-Case 'API-PAY-035' '🔴 P0 审批通过：订单转 60 已退款' {
 Invoke-Case 'API-PAY-036' '🔴 重复审批被拒（幂等：不能退两次）' {
     $r = PayAdminPost '/refunds/Approve' @{ refundId = $script:refundB }
     return (-not $r.success) -and $r.message -match '已处理'
+}
+
+Invoke-Case 'API-PAY-035b' '🔴 P0 审批通过后库存必须回补（两段式退款此前不回补）' {
+    # BUSINESS.md 10.2：「审批通过 → 退款单已退款 → 发 payment.refunded →
+    # 订单转 60 + **库存回补** + **积分回收**」。
+    #
+    # 而订单服务的 mark-refunded 处理器**只改了状态**：
+    # 两段式退款（/refunds/Apply + Approve，也就是规格里那套带审批的正式流程）
+    # 走完之后，货永久从库存里消失。实测：下单 2 件 → 支付 →
+    # available 98 / deducted 2 → 申请 → 审批通过 → 订单显示已退款，
+    # 但 available 仍是 98、deducted 仍是 2。
+    #
+    # 订单服务另有一条 /admin/orders/Refund 的单步退款做了回补 ——
+    # 同一个业务规则又写在了两条路径里，而支付单测只断言了状态码，看不见库存。
+    $o = New-PendingOrder 'STOCK'
+    if (-not $o.orderNo) { return $false }
+    $no = $o.orderNo
+
+    PayPost '/payments/Simulate' @{ orderNo = $no; success = $true } | Out-Null
+
+    $sku = $script:skuIds[0]
+    $afterPay = Get-Stock $sku
+
+    $apply = PayPost '/refunds/Apply' @{
+        orderId = 0; orderNo = $no; items = $null; reason = '整单退款，验证库存回补'
+    }
+    if (-not $apply.success) { Write-Host ("        申请失败: " + $apply.message) -ForegroundColor DarkYellow; return $false }
+
+    $approve = PayAdminPost '/refunds/Approve' @{ refundId = [long]$apply.data }
+    if (-not $approve.success) { Write-Host ("        审批失败: " + $approve.message) -ForegroundColor DarkYellow; return $false }
+
+    Start-Sleep -Seconds 2
+    $afterRefund = Get-Stock $sku
+
+    Write-Host ("        支付后 available={0} deducted={1} → 退款后 available={2} deducted={3}" -f `
+        $afterPay.available, $afterPay.deducted, $afterRefund.available, $afterRefund.deducted) -ForegroundColor DarkGray
+
+    # 两件货必须从 deducted 回到 available
+    return (Get-OrderStatus $no) -eq 60 `
+        -and $afterRefund.available -eq ($afterPay.available + 2) `
+        -and $afterRefund.deducted -eq ($afterPay.deducted - 2)
 }
 
 Invoke-Case 'API-PAY-037' '🔴🔴 审批人取自令牌，伪造请求体里的 approverName 无效' {

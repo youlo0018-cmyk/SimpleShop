@@ -675,12 +675,9 @@ public sealed class RefundOrderHandler
 
         var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
 
-        if (items.Any(a => a.DeliveryType == DeliveryTypes.Virtual))
-        {
-            return ApiResults.Fail<RefundResultDto>(
-                BaseApiResponseCode.BusinessError, "虚拟商品订单不支持退款");
-        }
-
+        // 退款窗口统一交给 OrderStatusMachine.CanRefund 判定（BUSINESS 10.2）。
+        // 这里原来单独写了一条「虚拟商品订单不支持退款」——比规格严得多，
+        // 而且和 CanRefund 的判定重复：两处各写一遍，改了一处另一处就漂了。
         if (!OrderStatusMachine.CanRefund(order.Status, items.Select(a => a.DeliveryType)))
         {
             return ApiResults.Fail<RefundResultDto>(
@@ -793,7 +790,15 @@ public sealed class RefundOrderHandler
                 // 不这么处理的话，这一件会永久滞留在账外：常规池没有、秒杀池也没有。
                 var isSeckill = item.SourceType == OrderSourceTypes.Seckill;
 
-                if (isSeckill && lockedPhase)
+                // 🔴 秒杀行**不看 lockedPhase**：它的货在发布场次时就划走了，
+                // 与常规池的 locked / deducted 两个计数**都没有关系**。
+                //
+                // 之前这里是 `isSeckill && lockedPhase`，于是**已支付**的秒杀单
+                // （状态 20，lockedPhase 为 false）会掉进下面的常规分支去 replenish ——
+                // 把一件从未从常规池拿走的货加回常规池（凭空多货），
+                // 同时 sold_count 不回落（那件货永远滞留在账外）。
+                // 两条账同时错，而页面上只显示「已退款」。
+                if (isSeckill)
                 {
                     await _seckill.ReleaseGrabAsync(
                         order.CustomerId, item.SkuId, line.Quantity, order.OrderNo, ct)

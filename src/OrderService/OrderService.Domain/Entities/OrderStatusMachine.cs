@@ -95,18 +95,51 @@ public static class OrderStatusMachine
 
     /// <summary>实物订单是否可退款。</summary>
     /// <param name="status">状态码。</param>
-    /// <param name="deliveryTypes">订单里出现过的配送方式；含虚拟商品（2）就整单不可退。</param>
+    /// <param name="status">订单当前状态。</param>
+    /// <param name="deliveryTypes">订单里出现过的配送方式。</param>
     /// <returns>可退款返回 true。</returns>
     /// <remarks>
-    /// 含虚拟商品就整单不能退——这是用户定的规则（虚拟订单不退款）。
-    /// 「部分退」在这里不成立：一张单里混了虚拟与实物时，
-    /// 退实物不退款子会让积分、库存、券三条链路的分摊对不上。
-    /// 要退就整单退，或者下单时就分开下。
+    /// <para>退款窗口按 BUSINESS.md 10.2：</para>
+    /// <list type="bullet">
+    /// <item><b>虚拟商品：仅 {20 待发货, 30 待收货}</b>。签收（50）后不可退，含部分退款。</item>
+    /// <item><b>实物快递 / 自提：{20, 30, 40, 50} 全程可退</b>。</item>
+    /// </list>
+    ///
+    /// <para>🔴 这里原来写的是「含虚拟商品就整单不能退」——比规格严得多。
+    /// 虚拟订单支付后、商户发货前停在 20 待发货，那段时间买家连「一直没发货」
+    /// 都无法反馈，只能干等；把窗口卡死等于把正常退款需求逼成投诉。
+    /// 支付服务侧的 RefundRules 已经按规格改成 {20,30}，而订单服务这条路径
+    /// （后台订单列表的退款按钮走的就是它）还停在旧规则上 ——
+    /// 同一个业务规则两条路径算出不同答案，用户看到的是「有的地方能退、有的地方不能」。</para>
+    ///
+    /// <para>实物订单 50 之后仍可退：确认收货只代表货到了，售后窗口不该因此关闭。
+    /// 未支付（10）没有钱可退；已退款（60）与已取消（91）无可退余额。</para>
     /// </remarks>
     public static bool CanRefund(int status, IEnumerable<int> deliveryTypes)
     {
-        if (deliveryTypes.Any(a => a == DeliveryTypes.Virtual)) return false;
-        return CanTransit(status, OrderStatuses.Refunded);
+        if (status is OrderStatuses.PendingPayment
+            or OrderStatuses.Refunded
+            or OrderStatuses.Cancelled)
+        {
+            return false;
+        }
+
+        var list = deliveryTypes.ToArray();
+        if (list.Length == 0) return false;
+
+        // 含虚拟商品的单按虚拟规则处理：只要有一行是虚拟，整单就按虚拟窗口。
+        // 「部分退」在这里不成立 —— 一张单里混了虚拟与实物时，
+        // 退实物不退款子会让积分、库存、券三条链路的分摊对不上。
+        var isVirtual = list.Any(a => a == DeliveryTypes.Virtual);
+        if (isVirtual)
+        {
+            return status is OrderStatuses.PendingShipment or OrderStatuses.PendingReceipt;
+        }
+
+        return status is OrderStatuses.PendingShipment
+            or OrderStatuses.PendingReceipt
+            or OrderStatuses.PendingPickup
+            or OrderStatuses.Completed;
     }
 
     /// <summary>订单里出现过的配送方式是否含虚拟商品。</summary>

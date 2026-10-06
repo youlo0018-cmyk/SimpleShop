@@ -886,9 +886,22 @@ Invoke-Case 'API-SKL-026b' '🔴 P0 秒杀单退款：sold_count 回退，货不
         -ContentType 'application/json' -TimeoutSec 20
     $rowBefore = @($before.data | Where-Object { $_.itemId -eq "$($script:grabItemId)" })[0]
 
+    # 🔴 必须先真的付掉这一单，再去退款。
+    # 原来这条直接退一张**待支付**的秒杀单 —— 而「未付款的订单没有钱可退」
+    # （BUSINESS 10.2 的窗口只列 {20,30,40,50}，支付服务的 RefundRules 也把 10 判成不可退）。
+    # 它以前能过，只是因为订单服务的状态迁移表恰好允许 10 → 已退款；
+    # 两条路径的规则对齐之后，这条用例测的就不再是「秒杀退款」，
+    # 而是「退一张还没付钱的单」—— 那不是真实场景，也测不出 sold_count 回退。
+    $pay = Invoke-RestMethod "$Gateway/gateway/admin/orders/SimulatePayment" -Method Post `
+        -Headers $script:adminHeaders `
+        -Body (@{ orderNo = $script:grabOrderNo; succeed = $true; remark = '秒杀单支付' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    Write-Host ("        支付: success={0} msg={1} status={2}" -f $pay.success, $pay.message, $pay.data.status) -ForegroundColor DarkGray
+
     $refund = Invoke-RestMethod "$Gateway/gateway/admin/orders/Refund" -Method Post `
         -Headers $script:adminHeaders -Body (@{ orderNo = $script:grabOrderNo; remark = '秒杀单退款回归' } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
+    Write-Host ("        退款: success={0} msg={1}" -f $refund.success, $refund.message) -ForegroundColor DarkGray
 
     $after = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
         -Body (@{ sessionId = $script:grabSessionId } | ConvertTo-Json) `

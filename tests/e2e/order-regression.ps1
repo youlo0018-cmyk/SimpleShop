@@ -706,8 +706,16 @@ Invoke-Case 'API-ORD-062c' '🔴 重复确认收货不重复发积分（幂等�
     return $after.totalEarned -eq $before.totalEarned
 }
 
-Invoke-Case 'API-ORD-063' '🔴 用户确认收货后不可退款' {
-    $r = AdminOrderPost 'Refund' @{ orderNo = $script:basicOrderNo; remark = '试试退' }
+Invoke-Case 'API-ORD-063' '🔴 已取消的订单不能再退款（没有钱可退）' {
+    # 原来这条断言的是「实物订单确认收货后不可退款」——那**与规格相反**。
+    # BUSINESS.md 10.2：实物快递 / 自提 {20,30,40,50} **全程可退**，
+    # 用户也澄清过 D4 只针对虚拟订单。真正该拒的是「没有钱可退」的状态：
+    # 未支付（10）、已退款（60）、已取消（91）。
+    $o = OrderPost 'Create' (New-OrderBody 'cancelrefund')
+    $no = $o.data.orderNo
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $no } | Out-Null
+
+    $r = AdminOrderPost 'Refund' @{ orderNo = $no; remark = '试试退' }
     return (-not $r.success) -and $r.message -match '不能再退'
 }
 
@@ -1041,9 +1049,31 @@ Invoke-Case 'API-ORD-090' '虚拟单发货即完成：20 → 50' {
         -and ($after.totalEarned - $script:before090Points.totalEarned) -eq [long]$d.payableAmount
 }
 
-Invoke-Case 'API-ORD-091' '🔴 虚拟商品订单不可退款（用户明确要求）' {
+Invoke-Case 'API-ORD-091' '🔴 虚拟订单**签收后**不可退款（含部分退款）' {
+    # BUSINESS.md 10.2：虚拟商品仅 {20,30} 可退，签收（50）后不可退 ——
+    # 虚拟商品交付即完成、没有物流可追溯，签收后再退等于「用完还退」。
+    # 这条用的是 ORD-090 已经发货到 50 的那张虚拟单。
     $r = AdminOrderPost 'Refund' @{ orderNo = $script:virtualOrderNo; remark = '试试退' }
-    return (-not $r.success) -and $r.message -match '虚拟商品订单不支持退款'
+    return (-not $r.success) -and $r.message -match '不能再退'
+}
+
+Invoke-Case 'API-ORD-091b' '🔴 P0 虚拟订单在待发货时**可以**退款（旧实现一律拒退）' {
+    # 旧实现写的是「虚拟商品订单不支持退款」，比规格严得多：
+    # 虚拟订单支付后、商户发货前停在 20 待发货，那段时间买家连「一直没发货」
+    # 都无法反馈，只能干等 —— 正常退款需求被逼成投诉。
+    # 支付服务侧的 RefundRules 已按规格放行 {20,30}，而订单服务这条路径
+    # （后台订单列表的退款按钮走的就是它）还停在旧规则上。
+    $o = OrderPost 'Create' (New-OrderBody 'vrefund' 2 1)
+    if (-not $o.success) { return $false }
+    $no = $o.data.orderNo
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+
+    $d = Get-Order $no
+    if ($d.status -ne 20) { return $false }
+
+    $r = AdminOrderPost 'Refund' @{ orderNo = $no; remark = '还没发货，申请退款' }
+    Write-Host ("        待发货虚拟单退款: success={0} msg={1}" -f $r.success, $r.message) -ForegroundColor DarkGray
+    return $r.success
 }
 
 Invoke-Case 'API-ORD-092' '实物订单不能用虚拟发货' {

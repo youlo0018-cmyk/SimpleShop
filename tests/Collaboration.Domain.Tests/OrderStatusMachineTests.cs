@@ -96,26 +96,51 @@ public class OrderStatusMachineTests
     }
 
     [Fact]
-    public void 用户确认收货后不能退款()
+    public void 实物订单确认收货后仍可退_虚拟订单签收后不可退()
     {
-        // 用户要求 D4：确认收货后不可退款
-        Assert.False(OrderStatusMachine.CanRefund(
+        // BUSINESS.md 10.2：实物快递 / 自提 **{20,30,40,50} 全程可退**；
+        // 虚拟商品仅 {20,30}，签收（50）后不可退（用户澄清过 D4 只针对虚拟订单）。
+        //
+        // 这里原来是反过来的：实物 50 判成不可退、虚拟 20 也判成不可退。
+        // 支付服务的 RefundRules 按规格实现，订单服务这条路径却停在旧规则上 ——
+        // 同一个业务规则两条路径算出不同答案，而两条路径的单元测试各自「证明」自己是对的。
+        Assert.True(OrderStatusMachine.CanRefund(
             OrderStatuses.Completed, new[] { DeliveryTypes.Express }));
+        Assert.True(OrderStatusMachine.CanRefund(
+            OrderStatuses.Completed, new[] { DeliveryTypes.SelfPickup }));
+        Assert.False(OrderStatusMachine.CanRefund(
+            OrderStatuses.Completed, new[] { DeliveryTypes.Virtual }));
     }
 
     [Fact]
-    public void 虚拟商品订单不可退款而实物可以()
+    public void 虚拟商品待发货与待收货可退_其余状态不可退()
     {
-        // 用户要求：上一轮 D4 只针对虚拟订单
-        Assert.False(OrderStatusMachine.CanRefund(
+        // 虚拟订单支付后、商户发货前停在 20 待发货；那段时间买家连「一直没发货」
+        // 都无法反馈，只能干等。把窗口卡死等于把正常退款需求逼成投诉。
+        Assert.True(OrderStatusMachine.CanRefund(
             OrderStatuses.PendingShipment, new[] { DeliveryTypes.Virtual }));
+        Assert.True(OrderStatusMachine.CanRefund(
+            OrderStatuses.PendingReceipt, new[] { DeliveryTypes.Virtual }));
 
         Assert.True(OrderStatusMachine.CanRefund(
             OrderStatuses.PendingShipment, new[] { DeliveryTypes.Express }));
 
-        // 混了虚拟与实物就整单不可退：部分退会让积分 / 库存 / 券的分摊账对不上
-        Assert.False(OrderStatusMachine.CanRefund(
+        // 混了虚拟与实物就按虚拟窗口：部分退会让积分 / 库存 / 券的分摊账对不上
+        Assert.True(OrderStatusMachine.CanRefund(
             OrderStatuses.PendingShipment, new[] { DeliveryTypes.Express, DeliveryTypes.Virtual }));
+        Assert.False(OrderStatusMachine.CanRefund(
+            OrderStatuses.Completed, new[] { DeliveryTypes.Express, DeliveryTypes.Virtual }));
+    }
+
+    [Fact]
+    public void 未付款_已退款_已取消一律不可退()
+    {
+        foreach (var status in new[]
+                 { OrderStatuses.PendingPayment, OrderStatuses.Refunded, OrderStatuses.Cancelled })
+        {
+            Assert.False(OrderStatusMachine.CanRefund(status, new[] { DeliveryTypes.Express }));
+            Assert.False(OrderStatusMachine.CanRefund(status, new[] { DeliveryTypes.Virtual }));
+        }
     }
 
     [Theory]

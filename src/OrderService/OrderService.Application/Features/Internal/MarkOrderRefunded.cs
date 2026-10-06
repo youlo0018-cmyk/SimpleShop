@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using FluentValidation;
 using MediatR;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using OrderService.Domain.Entities;
 using OrderService.Domain.Ports;
@@ -36,15 +37,50 @@ public static class MarkOrderRefundedValidators
 public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefundedCommand, ApiResponse>
 {
     private readonly IOrderStore _store;
+    private readonly IInventoryPort _inventory;
+    private readonly IPointPort _points;
+    private readonly ISeckillPort _seckill;
+    private readonly ILogger<MarkOrderRefundedHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">订单存储端口。</param>
-    public MarkOrderRefundedHandler(IOrderStore store) => _store = store;
+    /// <param name="inventory">库存端口（退款回补）。</param>
+    /// <param name="points">积分端口（退款按比例回收）。</param>
+    /// <param name="seckill">秒杀端口（秒杀单的货要还回秒杀池）。</param>
+    /// <param name="logger">日志器。</param>
+    public MarkOrderRefundedHandler(
+        IOrderStore store,
+        IInventoryPort inventory,
+        IPointPort points,
+        ISeckillPort seckill,
+        ILogger<MarkOrderRefundedHandler> logger)
+    {
+        _store = store;
+        _inventory = inventory;
+        _points = points;
+        _seckill = seckill;
+        _logger = logger;
+    }
 
     /// <summary>执行标记。</summary>
     /// <param name="request">命令。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// <para><b>这里必须做库存回补与积分回收</b>。BUSINESS.md 10.2 写得很明确：
+    /// 「审批通过 → 退款单已退款 → 发 payment.refunded → 订单转 60 +
+    /// <b>库存回补</b> + <b>积分回收</b>」。</para>
+    ///
+    /// <para>🔴 之前这里**只改了状态**：两段式退款（/refunds/Apply + Approve，
+    /// 也就是规格里那套带审批的正式流程）走完之后，货永久从库存里消失、
+    /// 积分也不会还。实测：下单 2 件 → 支付 → 申请 → 审批通过，
+    /// available 停在 98、deducted 停在 2，而订单已经显示「已退款」。
+    /// 订单服务另有一条 /admin/orders/Refund 的单步退款做了回补，
+    /// 但后台的退款对话框走的是两段式那条 —— 规则又一次被写在了两条路径里。</para>
+    ///
+    /// <para>回补用的是与单步退款相同的 bizNo（订单号 + SKU），库存侧按它幂等，
+    /// 所以重试不会把货还两遍。</para>
+    /// </remarks>
     public async Task<ApiResponse> Handle(MarkOrderRefundedCommand request, CancellationToken ct)
     {
         var order = await _store.FindByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
@@ -55,6 +91,63 @@ public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefunded
             // 幂等：已经退过直接成功。退款审批可能被重复调用（重试、运营多点一次），
             // 报错会让上游以为失败而反复重试
             return ApiResponseFactory.Ok("订单已是已退款状态");
+        }
+
+        var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
+
+        // 只有**未支付**（10）的单还占着 locked；支付成功后库存已从 locked 变成 deducted。
+        // 两段式退款只可能发生在 20 及以后，所以这里基本都是 replenish，
+        // 但仍然按状态判定，免得将来放宽窗口时踩到同一个坑。
+        var lockedPhase = order.Status == OrderStatuses.PendingPayment;
+
+        foreach (var item in items)
+        {
+            try
+            {
+                // 秒杀行不看 lockedPhase：它的货在发布场次时就划走了，
+                // 与常规池的 locked / deducted 都没有关系，只能减 sold_count 还回秒杀池。
+                if (item.SourceType == OrderSourceTypes.Seckill)
+                {
+                    await _seckill.ReleaseGrabAsync(
+                        order.CustomerId, item.SkuId, item.Quantity, order.OrderNo, ct).ConfigureAwait(false);
+                }
+                else if (lockedPhase)
+                {
+                    await _inventory.ReleaseAsync(
+                        item.SkuId, item.Quantity, $"{order.OrderNo}:{item.SkuId}", ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await _inventory.ReplenishAsync(
+                        item.SkuId, item.Quantity, $"{order.OrderNo}:{item.SkuId}", ct).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 回补失败**不反过来让退款失败**：钱已经退给客户了，
+                // 这时抛错会让上游以为没退、于是重试，直接变成二次退款。
+                // 记 Error 事后对账 —— 与单步退款用的是同一套取舍。
+                _logger.LogError(ex,
+                    "退款回补库存失败：订单 {OrderNo} SKU {SkuId} 数量 {Quantity}",
+                    order.OrderNo, item.SkuId, item.Quantity);
+            }
+        }
+
+        // 按比例回收已扣积分（BUSINESS.md 10.3）。整单退时比例是 1，等价于全额回收。
+        if (order.PointsUsed > 0 && order.PayableAmount > 0)
+        {
+            var ratio = Math.Clamp(request.RefundAmount / order.PayableAmount, 0m, 1m);
+            try
+            {
+                await _points.RecoverByRefundAsync(
+                    order.CustomerId, order.OrderNo, ratio, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "退款已生效但积分回收失败：订单 {OrderNo} 比例 {Ratio}，需人工补回收",
+                    order.OrderNo, ratio);
+            }
         }
 
         var affected = await _store.TryTransitStatusAsync(order.Id, order.Status, OrderStatuses.Refunded, ct).ConfigureAwait(false);
