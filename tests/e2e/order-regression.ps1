@@ -1047,6 +1047,7 @@ Write-Host "`n=== ORD 支付超时关单 ===" -ForegroundColor Cyan
 Invoke-Case 'API-ORD-110' '🔴 超时未支付的订单被关掉，三项占用全部释放' {
     $r = OrderPost 'Create' (New-OrderBody 'timeout')
     $no = $r.data.orderNo
+    $script:closedOrderNo = $no
     $before = Get-Stock $script:skuIds[0]
 
     # 把创建时间往前拨 40 分钟。阈值是 30 分钟，直接改库比等 30 分钟现实得多——
@@ -1084,6 +1085,20 @@ Invoke-Case 'API-ORD-112' '没超时的单不会被误关' {
     # 刚下的单创建时间就在当下，阈值 30 分钟内不该被扫。
     # 这条专门挡「阈值算错成 0 分钟」这种一上线就把所有待支付单全关掉的错。
     return @($list.data.items).Count -eq @($after.data.items).Count
+}
+
+Invoke-Case 'API-ORD-112b' '🔴 P0 关掉的单不能再支付成功（钱收了但单已经作废）' {
+    # 这是关单与支付之间的竞态：用户在超时关单的前一秒点了支付，
+    # 钱扣了、单却已经是 91 已关闭 —— 用户的钱进了黑洞，而订单永远等不到发货。
+    #
+    # 关单释放了券 / 积分 / 库存，所以「支付成功」若不校验状态，
+    # 就会出现「单已关闭、占用已释放、钱却收了」的三重不一致。
+    $r = AdminOrderPost 'SimulatePayment' @{ orderNo = $script:closedOrderNo; succeed = $true; remark = '关单后支付' }
+    $d = Get-Order $script:closedOrderNo
+
+    Write-Host ("        支付结果：success={0} msg={1} 状态={2}" -f $r.success, $r.message, $d.status) -ForegroundColor DarkGray
+
+    return (-not $r.success) -and $d.status -eq 91
 }
 
 Write-Host "`n=== ORD 查询与越权 ===" -ForegroundColor Cyan

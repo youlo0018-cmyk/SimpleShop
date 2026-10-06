@@ -51,6 +51,24 @@ public sealed class OrderPaymentCompleter
         // 券会一直占着，用户再也没法用这张券，而订单在他眼里已经是完成的了。
         var settledWithoutPayment = order.PayableAmount == 0m;
 
+        // 已关闭的单**必须拒付**，不能当成「重复回调」放行。
+        //
+        // 超时关单与支付回调之间天然有竞态：用户在超时前最后一秒点了支付，
+        // 钱扣了、单却已经是 91。关单时券 / 积分 / 库存都已经释放回去了，
+        // 这里再「当成功返回」等于告诉上游钱已收到、订单会发货 ——
+        // 而实际上单已作废。用户的钱进了黑洞，而且系统报告的是**成功**，
+        // 没有任何东西会触发对账，只能等用户来投诉。
+        //
+        // 拒掉之后上游才能把这笔钱原路退回，这是唯一能救回这笔钱的路径。
+        if (order.Status == OrderStatuses.Cancelled)
+        {
+            _logger.LogWarning(
+                "拒绝支付已关闭的订单 {OrderNo}：该单已超时关单，占用已释放，需要走退款",
+                order.OrderNo);
+
+            return OrderPaymentOutcome.Fail(0, "订单已关闭（超时未支付），无法完成支付，请联系客服退款");
+        }
+
         // 非 0 元单：状态已经不是 10，说明支付回调重复到达（网关重试、消息重投都会），
         // 直接当成功返回，绝不能再去扣一遍库存。
         if (!settledWithoutPayment && order.Status != OrderStatuses.PendingPayment)

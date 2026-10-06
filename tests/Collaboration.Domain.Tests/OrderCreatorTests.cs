@@ -345,6 +345,72 @@ public class OrderCreatorTests
     }
 
     [Fact]
+    public async Task 支付已关闭的订单被拒_而不是当成重复回调放行()
+    {
+        var store = new FakeOrderStore();
+        var inventory = new FakeInventoryPort();
+        var completer = new OrderPaymentCompleter(
+            store, inventory, new FakePointPort(), new FakeCouponPort(),
+            NullLogger<OrderPaymentCompleter>.Instance);
+
+        var order = new Order
+        {
+            OrderNo = "CLOSED-1",
+            CustomerId = CustomerId,
+            PayableAmount = 51m,
+
+            // 超时关单之后的状态：券 / 积分 / 库存都已经被释放回去了
+            Status = OrderStatuses.Cancelled,
+        };
+        store.Saved = order;
+        store.SavedItems.Add(new OrderItem
+        {
+            OrderNo = order.OrderNo, SkuId = 1000, Quantity = 2, Price = 25.50m,
+        });
+
+        var outcome = await completer.CompleteAsync(order);
+
+        // 🔴 这里以前返回「已处理完成」：关单与支付回调的竞态下，
+        // 用户的钱扣了、单却已作废，而系统报的是**成功** ——
+        // 没有任何东西会触发对账，只能等用户来投诉。
+        // 拒掉之后上游才能把这笔钱原路退回。
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(0, inventory.DeductCount);
+    }
+
+    [Fact]
+    public async Task 重复支付已付款的订单仍按幂等放行()
+    {
+        // 上一条的反面：真正的重复回调（网关重试、消息重投）**不能**被拒，
+        // 否则用户付了两次钱、只发货一次。幂等与拒付要分开判。
+        var store = new FakeOrderStore();
+        var inventory = new FakeInventoryPort();
+        var completer = new OrderPaymentCompleter(
+            store, inventory, new FakePointPort(), new FakeCouponPort(),
+            NullLogger<OrderPaymentCompleter>.Instance);
+
+        var order = new Order
+        {
+            OrderNo = "PAID-1",
+            CustomerId = CustomerId,
+            PayableAmount = 51m,
+            Status = OrderStatuses.PendingShipment,
+        };
+        store.Saved = order;
+        store.SavedItems.Add(new OrderItem
+        {
+            OrderNo = order.OrderNo, SkuId = 1000, Quantity = 2, Price = 25.50m,
+        });
+
+        var outcome = await completer.CompleteAsync(order);
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.AlreadyCompleted);
+
+        // 关键：绝不能再扣一次库存
+        Assert.Equal(0, inventory.DeductCount);
+    }
+    [Fact]
     public async Task 正常下单四步都执行并落单()
     {
         var coupons = new FakeCouponPort { Discount = 5m, CouponId = 77 };
