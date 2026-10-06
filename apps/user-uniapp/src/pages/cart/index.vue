@@ -9,9 +9,12 @@
             <text v-if="item.checked">✓</text>
           </view>
           <image class="cart-item__image" :src="item.image || fallbackImage" mode="aspectFill" @error="item.image = fallbackImage" />
-          <view class="cart-item__body">
+          <view class="cart-item__body" :class="{ 'cart-item__body--unavailable': item.isAvailable === false }">
             <text class="cart-item__name">{{ item.skuName }}</text>
             <text class="cart-item__spec">{{ item.skuSpecText }}</text>
+            <text v-if="item.isAvailable === false" class="cart-item__reason">
+              {{ item.unavailableReason || '已失效' }}
+            </text>
             <view class="cart-item__foot">
               <text class="amount">¥{{ amount(item.price) }}</text>
               <view class="stepper">
@@ -74,6 +77,13 @@ async function load() {
 }
 
 async function toggle(item: any) {
+  // 已下架 / 未过审 / 规格停用的行不给勾选。
+  // 服务端在列表里已经强制把它置成未勾选，这里只是不让它在前端又被勾回去 ——
+  // 否则用户会勾上一堆失效商品，看到一个总价，点结算却被下单接口拒。
+  if (item.isAvailable === false) {
+    uni.showToast({ title: item.unavailableReason || '该商品已失效', icon: 'none' });
+    return;
+  }
   item.checked = !item.checked;
   await request('/gateway/carts/SetChecked', {
     method: 'POST',
@@ -171,6 +181,20 @@ onShow(load);
   display: block;
   margin-top: 6rpx;
   color: $text-2;
+  font-size: $font-note;
+}
+
+.cart-item__body--unavailable {
+  opacity: 0.5;
+}
+
+.cart-item__reason {
+  display: inline-block;
+  margin-top: 6rpx;
+  padding: 2rpx 10rpx;
+  border-radius: $radius-sm;
+  background: rgba(255, 59, 48, 0.1);
+  color: $danger;
   font-size: $font-note;
 }
 

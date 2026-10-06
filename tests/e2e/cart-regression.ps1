@@ -89,9 +89,21 @@ Invoke-Case 'API-CRT-000' '准备商品与 SKU（后续用例依赖它）' {
     $prodId = (Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $headers `
         -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
 
+    # 🔴 购物车会按「审核通过 + 已上架」判定该行能不能买（与下单同一套口径），
+    # 所以这里必须先把商品推到可售状态，否则下面每一条都会看到 isAvailable = false。
+    Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $headers `
+        -Body (@{ productId = $prodId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $headers `
+        -Body (@{ productId = $prodId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
     $d = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$prodId" -Headers $headers -TimeoutSec 30
     $script:skuId = [long]$d.data.skus[0].id
     $script:productId = $prodId
+    # 存下来：API-CRT-014 要靠改价来验证购物车会刷新单价，
+    # 而改价走的是同一个 Save 接口，必须带上原来的分类。
+    $script:categoryId = $c3
     return $script:skuId -gt 0
 }
 
@@ -179,6 +191,67 @@ Invoke-Case 'API-CRT-011' '清空购物车' {
     CartPost 'Clear' @{ customerId = $script:customerId } | Out-Null
     $list = Invoke-RestMethod "$Cart/carts/List?customerId=$($script:customerId)" -TimeoutSec 30
     return @($list.data).Count -eq 0
+}
+
+Write-Host "`n=== CART 价格与可售状态必须实时（不能停留在加购那一刻）===" -ForegroundColor Cyan
+
+$script:headers = @{ Authorization = "Bearer $(Get-AdminToken)" }
+
+Invoke-Case 'API-CRT-013' '准备：重新加购 1 件（API-CRT-011 已清空购物车）' {
+    $r = CartPost 'Add' @{ customerId = $script:customerId; skuId = $script:skuId; delta = 1 }
+    return $r.data.quantity -eq 1
+}
+
+Invoke-Case 'API-CRT-014' '🔴 P0 商家改价后，购物车显示新价（不必重新加购）' {
+    # 快照此前只在**加购时**刷新一次。加完购去忙别的、商家此时把 25.50 改成 39.00，
+    # 购物车里仍是 25.50 —— 而下单链路已经改成按权威售价算账，
+    # 于是页面显示 25.50、实际扣 39.00，用户看不出差在哪。
+    $save = @{
+        productId = $script:productId; spuName = "购物车商品$($script:suffix)"; categoryId = $script:categoryId
+        deliveryType = 1; mainImage = 'https://cdn.example.com/main.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "CART$($script:suffix)"; specValues = @('红'); price = 39.00; stock = 500; status = 1 })
+    }
+    Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:headers `
+        -Body ($save | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $list = Invoke-RestMethod "$Cart/carts/List?customerId=$($script:customerId)" -TimeoutSec 30
+    $row = @($list.data)[0]
+    if (-not $row) { return $false }
+
+    Write-Host ("        购物车单价={0} 小计={1}" -f $row.price, $row.subTotal) -ForegroundColor DarkGray
+
+    # 39.00 × 1 = 39.00。仍然是 25.50 就说明快照没刷新。
+    return $row.price -eq 39.00 -and $row.subTotal -eq 39.00
+}
+
+Invoke-Case 'API-CRT-015' '🔴 P0 商品下架后，该行标记为不可用且不参与勾选' {
+    # 商品下架后，购物车里那一行既不能删（用户回头想看），也不该能结算
+    # （点了会被下单接口拒）。标灰 + 不勾选是唯一诚实的处理：
+    # 否则用户勾完全部去结算，页面给出一个总价，下单却报「商品已下架」。
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:productId; status = 2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $list = Invoke-RestMethod "$Cart/carts/List?customerId=$($script:customerId)" -TimeoutSec 30
+    $row = @($list.data)[0]
+    if (-not $row) { return $false }
+
+    # 恢复上架，否则后面两条用例会拿到一个已下架的商品。
+    Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $script:productId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    Write-Host ("        isAvailable={0} reason={1} checked={2}" -f `
+        $row.isAvailable, $row.unavailableReason, $row.checked) -ForegroundColor DarkGray
+
+    return (-not $row.isAvailable) -and $row.unavailableReason -match '下架' -and (-not $row.checked)
+}
+
+Invoke-Case 'API-CRT-016' '恢复上架后重新变成可勾选（置灰不是单向的）' {
+    $list = Invoke-RestMethod "$Cart/carts/List?customerId=$($script:customerId)" -TimeoutSec 30
+    $row = @($list.data)[0]
+    return $row.isAvailable -and $row.unavailableReason -eq ''
 }
 
 Invoke-Case 'API-CRT-012' '清理测试商品与分类' {

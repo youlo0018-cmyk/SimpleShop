@@ -32,9 +32,33 @@ public record ClearCartCommand(long CustomerId) : IRequest<ApiResponse>;
 public record QueryCartCommand(long CustomerId) : IRequest<ApiResponse<List<CartItemDto>>>;
 
 /// <summary>购物车行。</summary>
+/// <param name="Id">购物车行 Id（字符串，避免 JS 精度丢失）。</param>
+/// <param name="SkuId">SKU Id。</param>
+/// <param name="ProductId">SPU Id。</param>
+/// <param name="SkuName">商品名快照。</param>
+/// <param name="SkuSpecText">规格文本快照。</param>
+/// <param name="Price">单价，<b>取自商品服务当前的权威售价</b>。</param>
+/// <param name="OriginalPrice">划线原价。</param>
+/// <param name="Image">SKU 图。</param>
+/// <param name="Quantity">数量。</param>
+/// <param name="SubTotal">小计 = 单价 × 数量。</param>
+/// <param name="Checked">是否勾选结算。</param>
+/// <param name="IsAvailable">当前是否还能买。</param>
+/// <param name="UnavailableReason">不可买的原因；可买时为空串。</param>
+/// <remarks>
+/// <b><see cref="Price"/> 为什么不能直接读购物车表。</b>加购时才刷新过一次快照，
+/// 之后就再也不动了：用户加完购去忙别的，商家此时把 25.50 改成 39.00，
+/// 购物车里仍然是 25.50，而结算时按 39.00 收 —— 页面显示的金额和实际扣的钱不一样。
+/// 下单链路已经改成用权威售价，这里再返回旧价就是两头对不上了。
+///
+/// <para><b><see cref="IsAvailable"/> 存在的原因</b>：商品下架 / 审核被撤回之后，
+/// 购物车里的那行既不能删（用户回头想看）也不该能结算（点了会被下单接口拒）。
+/// 标出来交给前端置灰，是唯一诚实的处理。</para>
+/// </remarks>
 public record CartItemDto(
     string Id, long SkuId, long ProductId, string SkuName, string SkuSpecText,
-    decimal Price, decimal OriginalPrice, string Image, int Quantity, decimal SubTotal, bool Checked);
+    decimal Price, decimal OriginalPrice, string Image, int Quantity, decimal SubTotal, bool Checked,
+    bool IsAvailable = true, string UnavailableReason = "");
 
 /// <summary>购物车命令的校验器注册。</summary>
 public static class CartValidators

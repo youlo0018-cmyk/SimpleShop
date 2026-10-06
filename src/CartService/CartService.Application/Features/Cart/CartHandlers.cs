@@ -207,10 +207,16 @@ public sealed class ClearCartHandler : IRequestHandler<ClearCartCommand, ApiResp
 public sealed class QueryCartHandler : IRequestHandler<QueryCartCommand, ApiResponse<List<CartItemDto>>>
 {
     private readonly ICartRepository _carts;
+    private readonly IProductClient _products;
 
     /// <summary>构造处理器。</summary>
     /// <param name="carts">购物车仓储。</param>
-    public QueryCartHandler(ICartRepository carts) => _carts = carts;
+    /// <param name="products">商品客户端，用于刷新价格与可售状态。</param>
+    public QueryCartHandler(ICartRepository carts, IProductClient products)
+    {
+        _carts = carts;
+        _products = products;
+    }
 
     /// <summary>执行查询。</summary>
     /// <param name="request">命令。</param>
@@ -220,10 +226,49 @@ public sealed class QueryCartHandler : IRequestHandler<QueryCartCommand, ApiResp
     {
         var items = await _carts.ListAsync(CustomerScope.Require(request.CustomerId), ct);
 
-        var list = items.Select(a => new CartItemDto(
-            a.Id.ToString(), a.SkuId, a.ProductId, a.SkuName, a.SkuSpecText,
-            a.Price, a.OriginalPrice, a.Image, a.Quantity,
-            Math.Round(a.Price * a.Quantity, 2, MidpointRounding.AwayFromZero), a.Checked)).ToList();
+        // 每次查购物车都回商品服务取一次权威售价与可售状态。
+        // 不是为了「购物车要显示最新信息」这种表层理由，而是因为下单链路已经改成
+        // 用权威售价算账 —— 购物车再返回加购时那份旧价，页面显示的金额就会和
+        // 实际扣的钱不一样，而用户看不出差在哪。
+        //
+        // 查不到（商品已删 / 商品服务抖动）时按原样返回，绝不因此让购物车打不开：
+        // 抛出去的话，用户会看到「购物车打不开了」，而商品其实只是暂时查不到。
+        var availability = await _products
+            .GetSkuAvailabilityAsync(items.Select(a => a.SkuId).Distinct().ToArray(), ct)
+            .ConfigureAwait(false);
+
+        var list = new List<CartItemDto>(items.Count);
+        foreach (var item in items)
+        {
+            var price = item.Price;
+            var isAvailable = true;
+            var reason = string.Empty;
+
+            if (availability.TryGetValue(item.SkuId, out var state))
+            {
+                price = state.Price;
+
+                // 顺序按「用户最需要知道的那个原因」排：下架 > 停用 > 未过审。
+                if (!state.SpuOnShelf) { isAvailable = false; reason = "商品已下架"; }
+                else if (!state.SpuApproved) { isAvailable = false; reason = "商品未通过审核"; }
+                else if (!state.Enabled) { isAvailable = false; reason = "该规格已停用"; }
+            }
+            else
+            {
+                isAvailable = false;
+                reason = "商品已下架";
+            }
+
+            list.Add(new CartItemDto(
+                item.Id.ToString(), item.SkuId, item.ProductId, item.SkuName, item.SkuSpecText,
+                price, item.OriginalPrice, item.Image, item.Quantity,
+                Math.Round(price * item.Quantity, 2, MidpointRounding.AwayFromZero),
+
+                // 不可买的行不参与结算：留着勾选状态的话，用户勾完全部去结算，
+                // 下单接口会以「商品已下架」拒单，页面却显示着一个总价。
+                item.Checked && isAvailable,
+                isAvailable, reason));
+        }
 
         return ApiResults.Ok(list);
     }
