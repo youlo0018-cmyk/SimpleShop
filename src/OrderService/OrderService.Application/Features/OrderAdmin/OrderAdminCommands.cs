@@ -284,10 +284,14 @@ public static class OrderAdminValidators
         {
             RuleFor(x => x.OrderNo).NotEmpty().MaximumLength(64).WithMessage("订单号不正确");
             RuleFor(x => x.Remark).MaximumLength(512).WithMessage("备注最多 512 个字符");
+            // 这里是**快递发货**的入口（虚拟单走「虚拟发货」，自提单走「备货完成」），
+            // 所以物流字段一律必填。配送方式是否匹配由处理器查订单行后判 ——
+            // 那需要查库，校验器阶段拿不到。
             RuleFor(x => x.LogisticsCompanyId).GreaterThan(0).WithMessage("请选择物流公司");
             // 单号下限给 2：长度为 1 的单号一定是输错/占位，留着会让客服拿着它去查永远查不到。
-            RuleFor(x => x.TrackingNo).NotEmpty().WithMessage("请填写运单号")
-                .MinimumLength(2).MaximumLength(64).WithMessage("运单号必须为 2-64 个字符");
+            RuleFor(x => x.TrackingNo).NotEmpty().WithMessage("请填写运单号");
+            RuleFor(x => x.TrackingNo).MinimumLength(2).MaximumLength(64)
+                .WithMessage("运单号必须为 2-64 个字符");
         }
     }
 

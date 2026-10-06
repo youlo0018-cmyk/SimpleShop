@@ -444,7 +444,9 @@ async function deliverVirtual() {
       confirmButtonText: '确认发货',
       cancelButtonText: '取消',
     });
-    await act('DeliverVirtual', { orderNo: order.orderNo, remark: result.value.trim() }, '虚拟商品已发货并完成');
+    // 虚拟单也要顾客「确认收货」才算完成（规格 7.1：30 待收货适用于快递 / 虚拟），
+    // 所以这里的提示不能写成「已发货并完成」——运营会以为这单已经结束了。
+    await act('DeliverVirtual', { orderNo: order.orderNo, remark: result.value.trim() }, '虚拟商品已发货，等待顾客确认收货');
   } catch {
     // 用户取消不提示
   }

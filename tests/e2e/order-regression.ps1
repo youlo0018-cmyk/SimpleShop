@@ -1035,17 +1035,27 @@ Write-Host "`n=== ORD 虚拟商品 ===" -ForegroundColor Cyan
 
 $script:virtualOrderNo = ''
 
-Invoke-Case 'API-ORD-090' '虚拟单发货即完成：20 → 50' {
+Invoke-Case 'API-ORD-090' '虚拟单：手动发货（不填物流信息）20 → 30，确认收货 → 50，完成时发积分' {
+    # 规格 7.1 的状态表：30 待收货适用于「快递 / 虚拟」，虚拟**不填**物流信息；
+    # 50 已完成的进入条件是「快递/虚拟：用户确认收货」。需求确认表也写着
+    # 「虚拟退款：确认收货后不可退款」—— 没有确认收货这一步，那条规则就没有落点。
     $r = OrderPost 'Create' (New-OrderBody 'virtual' 2)
     $script:virtualOrderNo = $r.data.orderNo
     AdminOrderPost 'SimulatePayment' @{ orderNo = $script:virtualOrderNo; succeed = $true; remark = '回归' } | Out-Null
-    $script:before090Points = Get-PointBalance $script:customerId
+
     $v = AdminOrderPost 'DeliverVirtual' @{ orderNo = $script:virtualOrderNo; remark = '卡号 ABCD-1234' }
+    $shipped = Get-Order $script:virtualOrderNo
+
+    $script:before090Points = Get-PointBalance $script:customerId
+    $c = OrderPost 'ConfirmReceipt' @{ customerId = $script:customerId; orderNo = $script:virtualOrderNo }
     $d = Get-Order $script:virtualOrderNo
     $after = Get-PointBalance $script:customerId
-    # 虚拟发货也是一条进「已完成」的路，积分同样要发。
+
+    Write-Host ("        发货后={0} 确认收货后={1} 收货成功={2}" -f $shipped.status, $d.status, $c.success) -ForegroundColor DarkGray
+
+    # 确认收货也是一条进「已完成」的路，积分同样要发。
     # 漏掉的话就是「同一个功能，有的单给积分有的不给」，客服解释不了。
-    return $r.success -and $v.success -and $d.status -eq 50 `
+    return $r.success -and $v.success -and $shipped.status -eq 30 -and $c.success -and $d.status -eq 50 `
         -and ($after.totalEarned - $script:before090Points.totalEarned) -eq [long]$d.payableAmount
 }
 
@@ -1081,23 +1091,44 @@ Invoke-Case 'API-ORD-092' '实物订单不能用虚拟发货' {
     return (-not $r.success) -and $r.message -match '实物商品'
 }
 
-Invoke-Case 'API-ORD-093' '🔴 虚拟订单不能用实物发货接口（否则被推成待收货、一直可退）' {
-    # 与上一条对称：DeliverVirtual 拦实物单，Ship 也必须拦纯虚拟单。
-    # 不拦的话虚拟单会变成 30 待收货：顾客要对卡号「确认收货」，
-    # 而虚拟商品的退款窗口是 {20,30} —— 交付即完成的口径被绕过，它一直可退。
+Invoke-Case 'API-ORD-093' '🔴 虚拟单不能用快递发货入口（要走「虚拟发货」）' {
+    # 与上一条对称的另一半：DeliverVirtual 拦实物单，Ship 也必须拦纯虚拟单。
+    # 虚拟单被填上运单号之后，客服与顾客都会以为有包裹可查；
+    # 而它该走的是「虚拟发货」（20 → 30，不填物流信息）。
     $o = OrderPost 'Create' (New-OrderBody 'vship' 2 1)
+    if (-not $o.success) { return $false }
+    $no = $o.data.orderNo
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+
+    # 故意把物流信息填全（模拟「运营选错了入口」），服务端仍必须拒绝
+    $r = AdminOrderPost 'Ship' (New-ShipBody $no 'SF999999')
+    $d = Get-Order $no
+    Write-Host ("        用 Ship 发虚拟单: success={0} msg={1} 状态={2}" -f $r.success, $r.message, $d.status) -ForegroundColor DarkGray
+
+    $ok = (-not $r.success) -and $r.message -match '虚拟' -and $d.status -eq 20
+
+    # 收尾：走正确入口（虚拟发货 → 30），再确认收货走完
+    AdminOrderPost 'DeliverVirtual' @{ orderNo = $no; remark = '卡号 ABCD-0002' } | Out-Null
+    OrderPost 'ConfirmReceipt' @{ customerId = $script:customerId; orderNo = $no } | Out-Null
+    return $ok
+}
+
+Invoke-Case 'API-ORD-094' '🔴 自提单不能用发货接口（要走备货完成，否则没有取货码）' {
+    # 自提单走 20 → 40（备货完成并生成取货码），发货接口对它没有意义：
+    # 发出去就成了 30 待收货，顾客既没有取货码也没有包裹可收。
+    $o = OrderPost 'Create' (New-OrderBody 'pship' 3 1)
     if (-not $o.success) { return $false }
     $no = $o.data.orderNo
     AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
 
     $r = AdminOrderPost 'Ship' (New-ShipBody $no)
     $d = Get-Order $no
-    Write-Host ("        用 Ship 发虚拟单: success={0} msg={1} 状态={2}" -f $r.success, $r.message, $d.status) -ForegroundColor DarkGray
+    Write-Host ("        用 Ship 发自提单: success={0} msg={1} 状态={2}" -f $r.success, $r.message, $d.status) -ForegroundColor DarkGray
 
-    $ok = (-not $r.success) -and $r.message -match '虚拟' -and $d.status -eq 20
+    $ok = (-not $r.success) -and $r.message -match '自提' -and $d.status -eq 20
 
-    # 收尾：用正确的入口把它交付掉，别留一张待发货的虚拟单
-    AdminOrderPost 'DeliverVirtual' @{ orderNo = $no; remark = '卡号 ABCD-0001' } | Out-Null
+    # 收尾：走正确入口备货完成
+    AdminOrderPost 'SelfPickupReady' @{ orderNo = $no; remark = '已备好' } | Out-Null
     return $ok
 }
 

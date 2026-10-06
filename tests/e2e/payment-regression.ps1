@@ -543,9 +543,15 @@ Invoke-Case 'API-PAY-042' '虚拟退款单被拒绝后**无副作用**：订单�
 }
 
 Invoke-Case 'API-PAY-043' '🔴 P0 虚拟订单发货后（50 已完成）**不可退**，含部分退款' {
-    # 虚拟发货即完成（20 → 50）。签收后不可退是规格 10.2 的明确要求
+    # 虚拟单也走「发货 → 待收货 → 确认收货」（规格 7.1：30 待收货适用于快递 / 虚拟），
+    # 所以这里要先发货再确认收货，才能拿到一张 50 已完成的虚拟单。
+    # 签收后不可退是规格 10.2 的明确要求（虚拟仅 {20,30} 可退）。
     $ship = OrderPost '/admin/orders/DeliverVirtual' @{ orderNo = $script:orderV }
     if (-not $ship.success) { return $false }
+    if ((Get-OrderStatus $script:orderV) -ne 30) { return $false }
+
+    $receipt = OrderPost '/orders/ConfirmReceipt' @{ customerId = $script:customerId; orderNo = $script:orderV }
+    if (-not $receipt.success) { return $false }
     if ((Get-OrderStatus $script:orderV) -ne 50) { return $false }
 
     $whole = PayPost '/refunds/Apply' @{ orderId = 0; orderNo = $script:orderV; items = $null; reason = '签收后想退' }

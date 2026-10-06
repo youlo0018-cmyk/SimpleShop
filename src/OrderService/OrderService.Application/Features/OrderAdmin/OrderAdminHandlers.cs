@@ -242,14 +242,18 @@ public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand,
 {
     private readonly IOrderStore _store;
     private readonly ILogisticsCompanyPort _logistics;
+    private readonly ILogger<ShipOrderHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
     /// <param name="logistics">物流公司查询端口。</param>
-    public ShipOrderHandler(IOrderStore store, ILogisticsCompanyPort logistics)
+    /// <param name="logger">日志器。</param>
+    public ShipOrderHandler(
+        IOrderStore store, ILogisticsCompanyPort logistics, ILogger<ShipOrderHandler> logger)
     {
         _store = store;
         _logistics = logistics;
+        _logger = logger;
     }
 
     /// <summary>执行发货。</summary>
@@ -279,17 +283,28 @@ public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand,
                 $"当前订单状态是「{OrderStatusMachine.NameOf(order.Status)}」，只有待发货的订单可以发货");
         }
 
-        // 纯虚拟单必须走「虚拟发货」（20 → 50，不填物流信息）。
-        // 不拦的话，一张虚拟单会被推成 30 待收货：顾客被要求对一个卡号「确认收货」，
-        // 而虚拟商品的退款窗口是 {20,30} —— 等于让它一直可退，
-        // 与规格「虚拟商品交付即完成」正好相反（BUSINESS.md 10.2 / 11 链路）。
-        // 与 DeliverVirtual 里「实物不能用虚拟发货」是同一条对称规则。
+        // 这个入口只服务**快递**行：虚拟单走「虚拟发货」（20 → 30，不填物流信息），
+        // 自提单走「备货完成」（20 → 40，生成取货码）。
+        // 走错入口的后果不是报个错而已：自提单被「发出去」会变成 30 待收货，
+        // 顾客既没有取货码也没有包裹可收；虚拟单被填上运单号，
+        // 客服与顾客都会以为有包裹可查。
         var items = await _store.ListItemsAsync(order.Id, ct).ConfigureAwait(false);
-        if (items.Count > 0 && items.All(a => a.DeliveryType == Domain.Entities.DeliveryTypes.Virtual))
+        if (items.Count == 0)
         {
             return ApiResponseFactory.Fail(
+                BaseApiResponseCode.InternalError, "订单没有商品行，无法判断配送方式");
+        }
+
+        var hasExpress = items.Any(a => a.DeliveryType == Domain.Entities.DeliveryTypes.Express);
+
+        if (!hasExpress)
+        {
+            var isSelfPickupOnly = items.All(a => a.DeliveryType == Domain.Entities.DeliveryTypes.SelfPickup);
+            return ApiResponseFactory.Fail(
                 BaseApiResponseCode.BusinessError,
-                "该订单是虚拟商品，请使用「虚拟发货」（不需要物流信息）");
+                isSelfPickupOnly
+                    ? "该订单是自提商品，请用「备货完成」生成取货码，不要走发货"
+                    : "该订单是虚拟商品，请用「虚拟发货」（不需要物流信息）");
         }
 
         // 字典里查不到就把请求挡在这里，而不是发出去之后订单上挂一个空公司名。
@@ -319,29 +334,32 @@ public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand,
             return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
 
+        _logger.LogInformation("订单 {OrderNo} 已发货：{Company} {TrackingNo}", order.OrderNo, companyName, trackingNo);
         return ApiResponseFactory.Ok($"已发货 · {companyName} {trackingNo}");
     }
 }
 
-/// <summary>虚拟商品发货处理器（20 → 50，发货即完成）。</summary>
+/// <summary>虚拟商品发货处理器（20 → 30 待收货，不填物流信息）。</summary>
 /// <remarks>
-/// 虚拟订单不走物流也不走自提：发货这一步就是终点。
-/// 顺带满足用户的要求「D4 上一轮只针对虚拟订单」——虚拟订单同样不许退款，
-/// 退款校验在 <see cref="RefundOrderHandler"/> 里按配送方式拦住。
+/// <para>规格 BUSINESS.md 7.1 的状态表写得很明确：30 待收货适用于「快递 / 虚拟」，
+/// 进入条件是「商户发货（快递必填物流信息；虚拟不填）」；50 已完成的进入条件是
+/// 「快递/虚拟：用户确认收货；自提：商户核销取货码」。所以虚拟单和快递单走的是
+/// 同一条状态链，区别只在物流字段。</para>
+///
+/// <para>用户的需求确认表也写着「虚拟退款：确认收货后不可退款」——
+/// 没有「确认收货」这一步的话，这条规则对虚拟订单根本没有落点。</para>
+///
+/// <para>曾经这里是 20 → 50「发货即完成」：那是把「不填物流信息」误读成了「交付即完成」。
+/// 后果是虚拟单永远进不了 30，而虚拟商品的退款窗口是 {20,30}（规格 10.2）——
+/// 窗口的一半成了死代码，「确认收货后不可退」也就无从谈起。</para>
 /// </remarks>
 public sealed class DeliverVirtualHandler : MediatR.IRequestHandler<DeliverVirtualCommand, ApiResponse>
 {
     private readonly IOrderStore _store;
-    private readonly OrderCompletionReward _reward;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
-    /// <param name="reward">完成奖励服务（发积分）。</param>
-    public DeliverVirtualHandler(IOrderStore store, OrderCompletionReward reward)
-    {
-        _store = store;
-        _reward = reward;
-    }
+    public DeliverVirtualHandler(IOrderStore store) => _store = store;
 
     /// <summary>执行虚拟发货。</summary>
     /// <param name="request">发货命令，Remark 一般放卡号 / 激活码。</param>
@@ -365,27 +383,27 @@ public sealed class DeliverVirtualHandler : MediatR.IRequestHandler<DeliverVirtu
                 "该订单包含实物商品，请使用「发货」而不是「虚拟发货」");
         }
 
-        // 幂等：这单确实是虚拟单且已经完成，说明之前已经发过了
-        if (order.Status == Domain.Entities.OrderStatuses.Completed)
+        // 幂等：这单确实是虚拟单，且已经在待收货 / 已完成（说明之前发过），
+        // 就回「已发货」而不是报错 —— 运营在列表上误点两下是常事。
+        if (order.Status is Domain.Entities.OrderStatuses.PendingReceipt
+            or Domain.Entities.OrderStatuses.Completed)
         {
-            return ApiResponseFactory.Ok("该订单已发货并完成");
+            return ApiResponseFactory.Ok("该订单已发货");
         }
 
         var affected = await _store.TryTransitStatusAsync(
             order.Id,
             Domain.Entities.OrderStatuses.PendingShipment,
-            Domain.Entities.OrderStatuses.Completed,
-            completedAt: DateTime.UtcNow, ct: ct).ConfigureAwait(false);
+            Domain.Entities.OrderStatuses.PendingReceipt, ct: ct).ConfigureAwait(false);
 
         if (affected == 0)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.OrderStateInvalid, "订单状态已变更，请刷新后重试");
         }
 
-        // 虚拟发货即完成，所以这里是三条进「已完成」的路之一，积分同样要发
-        await _reward.GrantAsync(order, ct).ConfigureAwait(false);
-
-        return ApiResponseFactory.Ok("已发货并完成");
+        // 积分不在这里发：虚拟单也要等顾客**确认收货**（30 → 50）才算完成，
+        // 发积分的那条路在 ConfirmReceipt 里（三条进「已完成」的路各自负责自己的奖励）。
+        return ApiResponseFactory.Ok("已发货（虚拟商品，无需物流信息），等待顾客确认收货");
     }
 }
 
