@@ -61,4 +61,33 @@ public sealed class FileStorageOptions
         "mp4" => "video",
         _ => "default"
     };
+
+    /// <summary>
+    /// 取回源时要用的 MIME 类型。
+    /// </summary>
+    /// <param name="ext">扩展名，不含点。</param>
+    /// <returns>MIME 类型；不认识的一律回落 octet-stream。</returns>
+    /// <remarks>
+    /// 回源接口以前把 Content-Type 写死成 <c>application/octet-stream</c>，
+    /// 于是所有图片都以「未知二进制」下发。浏览器多数时候会自己嗅探字节、
+    /// 照样把图显示出来，所以**看不出问题**；但新标签页直接打开是下载而不是预览，
+    /// 走严格 CSP 或中间代理的环境会直接拦掉。
+    /// 扩展名在上传时已经过白名单与魔数两道校验，这里按它取类型是安全的。
+    /// </remarks>
+    public static string GetMimeType(string ext) => ext.ToLowerInvariant() switch
+    {
+        "png" => "image/png",
+        "jpg" or "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain; charset=utf-8",
+        "mp3" => "audio/mpeg",
+        "mp4" => "video/mp4",
+        "doc" => "application/msword",
+        "xls" => "application/vnd.ms-excel",
+        "ppt" => "application/vnd.ms-powerpoint",
+        _ => "application/octet-stream"
+    };
 }

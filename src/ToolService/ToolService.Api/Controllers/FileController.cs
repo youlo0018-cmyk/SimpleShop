@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using ToolService.Application.Configuration;
 using ToolService.Application.Features.Manage;
 using ToolService.Application.Features.Upload;
 using ToolService.Domain.Services;
@@ -54,7 +55,12 @@ public sealed class FileController : ControllerBase
     {
         var stream = await _storage.OpenReadAsync(objectKey, ct);
         if (stream is null) return NotFound();
-        return File(stream, "application/octet-stream");
+
+        // Content-Type 要按扩展名给，不能一律 octet-stream：
+        // 浏览器对「未知二进制」的处置是下载而不是内联预览，
+        // 表现为「图片在新标签页打开变成下载」而不是「显示不出来」—— 极难被联想到。
+        var ext = Path.GetExtension(objectKey).TrimStart('.');
+        return File(stream, FileStorageOptions.GetMimeType(ext));
     }
 
     /// <summary>分页查文件（后台「文件管理」页）。</summary>
