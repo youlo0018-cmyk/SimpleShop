@@ -21,9 +21,16 @@ public interface IOrderPort
     /// <summary>把订单标记为已退款。</summary>
     /// <param name="orderNo">订单号。</param>
     /// <param name="refundAmount">本次退款金额。</param>
+    /// <param name="items">
+    /// 本次退款的行明细。订单侧要用它写自己的退款台账（行级可退余额就是靠它算的），
+    /// 不带的话订单详情会把已经退掉的单显示成全额可退。
+    /// </param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>成功返回 true。</returns>
-    Task<bool> MarkRefundedAsync(string orderNo, decimal refundAmount, CancellationToken ct = default);
+    Task<bool> MarkRefundedAsync(
+        string orderNo, decimal refundAmount,
+        IReadOnlyList<RefundLineSnapshot>? items = null,
+        CancellationToken ct = default);
 
     /// <summary>请求订单侧完成支付收尾（库存确认 / 积分实扣 / 券核销 / 订单转已支付）。</summary>
     /// <param name="orderNo">订单号。</param>
@@ -35,6 +42,12 @@ public interface IOrderPort
     /// </remarks>
     Task<bool> CompletePaymentAsync(string orderNo, CancellationToken ct = default);
 }
+
+/// <summary>退款的一行快照，供订单侧写自己的退款台账。</summary>
+/// <param name="OrderItemId">订单行 Id。</param>
+/// <param name="Quantity">本次退的件数。</param>
+/// <param name="Amount">该行本次退款金额，两位小数。</param>
+public sealed record RefundLineSnapshot(long OrderItemId, int Quantity, decimal Amount);
 
 /// <summary>走内网 HTTP 调订单服务的实现。</summary>
 public sealed class HttpOrderPort : IOrderPort
@@ -78,12 +91,30 @@ public sealed class HttpOrderPort : IOrderPort
     }
 
     /// <inheritdoc />
-    public async Task<bool> MarkRefundedAsync(string orderNo, decimal refundAmount, CancellationToken ct = default)
+    public async Task<bool> MarkRefundedAsync(
+        string orderNo, decimal refundAmount,
+        IReadOnlyList<RefundLineSnapshot>? items = null,
+        CancellationToken ct = default)
     {
         try
         {
+            // 把行明细一起送过去：订单侧要用它写 order_refund / order_refund_item，
+            // 而「行级可退余额」正是从那张表算出来的。不带明细的话，
+            // 后台订单详情会把已经退掉的单显示成全额可退。
+            var payload = new
+            {
+                orderNo,
+                refundAmount,
+                items = (items ?? []).Select(a => new
+                {
+                    orderItemId = a.OrderItemId,
+                    quantity = a.Quantity,
+                    amount = a.Amount,
+                }).ToArray(),
+            };
+
             var response = await _http
-                .PostAsJsonAsync("internal/orders/mark-refunded", new { orderNo, refundAmount }, ct)
+                .PostAsJsonAsync("internal/orders/mark-refunded", payload, ct)
                 .ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)

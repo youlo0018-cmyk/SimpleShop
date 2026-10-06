@@ -81,7 +81,17 @@ public sealed class ApproveRefundHandler : IRequestHandler<ApproveRefundCommand,
             return ApiResponseFactory.Fail(BaseApiResponseCode.BusinessError, "该退款单已被其他人处理");
         }
 
-        var marked = await _orders.MarkRefundedAsync(refund.OrderNo, refund.Amount, ct).ConfigureAwait(false);
+        // 把本次退款的**行明细**一起送过去：订单侧要用它写自己的退款台账
+        // （后台订单详情的「行级可退余额」就是从那张表算的）。
+        // 只送金额的话，订单侧只能瞎猜退的是哪几行。
+        var refundLines = await _refunds.ListItemsAsync(refund.Id, ct).ConfigureAwait(false);
+        var lineSnapshots = refundLines
+            .Select(a => new RefundLineSnapshot(a.OrderItemId, a.Quantity, a.Amount))
+            .ToList();
+
+        var marked = await _orders
+            .MarkRefundedAsync(refund.OrderNo, refund.Amount, lineSnapshots, ct)
+            .ConfigureAwait(false);
         if (!marked)
         {
             // 退款单已转「已退款」但订单没转：这是**不一致状态**，必须显式报错让人来查。

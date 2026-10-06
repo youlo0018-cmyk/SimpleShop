@@ -5,13 +5,26 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using OrderService.Domain.Entities;
 using OrderService.Domain.Ports;
+using OrderService.Domain.Services;
 
 namespace OrderService.Application.Features.Internal;
 
 /// <summary>把订单标记为已退款（PaymentService 审批通过后调用）。</summary>
 /// <param name="OrderNo">订单号。</param>
 /// <param name="RefundAmount">本次退款金额。</param>
-public record MarkOrderRefundedCommand(string OrderNo, decimal RefundAmount) : IRequest<ApiResponse>;
+/// <param name="Items">
+/// 本次退款的行明细。<b>不能省</b>：订单侧的「行级可退余额」就是靠它算的
+/// （后台订单详情与再次退款的累计校验都读这张表）。为空时按「整单退」处理。
+/// </param>
+public record MarkOrderRefundedCommand(
+    string OrderNo, decimal RefundAmount, IReadOnlyList<MarkOrderRefundedItem>? Items = null)
+    : IRequest<ApiResponse>;
+
+/// <summary>退款的一行。</summary>
+/// <param name="OrderItemId">订单行 Id。</param>
+/// <param name="Quantity">本次退的件数。</param>
+/// <param name="Amount">该行本次退款金额，两位小数。</param>
+public record MarkOrderRefundedItem(long OrderItemId, int Quantity, decimal Amount);
 
 /// <summary>命令校验器注册。</summary>
 public static class MarkOrderRefundedValidators
@@ -148,6 +161,74 @@ public sealed class MarkOrderRefundedHandler : IRequestHandler<MarkOrderRefunded
                     "退款已生效但积分回收失败：订单 {OrderNo} 比例 {Ratio}，需人工补回收",
                     order.OrderNo, ratio);
             }
+        }
+
+        // ---- 写订单侧的退款台账 ----
+        // 🔴 缺了这一步，两本账就对不上：资金流水在支付服务的 refund_order，
+        // 而订单侧的「行级可退余额」读的是 order_refund_item。
+        // 实测：走两段式整单退款之后，后台订单详情仍然显示「可退 100.00」——
+        // 运营看到的是一个已经退完的单还挂着全额可退，而再次退款的累计校验
+        // 也读这张表，等于把上限校验建立在一张空表上。
+        var refundItems = (request.Items ?? []).Where(a => a.Amount > 0m).ToList();
+        if (refundItems.Count == 0)
+        {
+            // 没带明细就按整单退处理：每行按「行实付 − 已退」记一遍
+            var alreadyRefunded = await _store.AggregateRefundedItemsAsync(order.Id, ct).ConfigureAwait(false);
+            refundItems = items
+                .Select(item =>
+                {
+                    alreadyRefunded.TryGetValue(item.Id, out var already);
+                    var remaining = Math.Max(0m, item.PayableAmount - already.Amount);
+                    return new MarkOrderRefundedItem(item.Id, item.Quantity, remaining);
+                })
+                .Where(a => a.Amount > 0m)
+                .ToList();
+        }
+
+        if (refundItems.Count > 0)
+        {
+            var refundedTotal = refundItems.Sum(a => a.Amount);
+            var priorTotal = (await _store.AggregateRefundedItemsAsync(order.Id, ct).ConfigureAwait(false))
+                .Values.Sum(a => a.Amount);
+
+            var ledger = new OrderRefund
+            {
+                RefundNo = $"PR{order.OrderNo}",
+                OrderId = order.Id,
+                OrderNo = order.OrderNo,
+                PlatformId = order.PlatformId,
+                MerchantId = order.MerchantId,
+                CustomerId = order.CustomerId,
+                Amount = OrderRefundRules.Round2(refundedTotal),
+                RefundType = refundItems.Count == items.Count && items.All(a =>
+                        refundItems.Any(b => b.OrderItemId == a.Id && b.Amount >= a.PayableAmount))
+                    ? OrderRefundTypes.Whole
+                    : OrderRefundTypes.Partial,
+                // 累计退满才算整单退完。与单步退款那条路径同一个判据，
+                // 免得两条路径对「退完没退完」给出不同答案。
+                FullyRefunded = OrderRefundRules.Round2(priorTotal + refundedTotal) >= order.PayableAmount,
+                Reason = "支付服务审批通过的退款",
+                OperatorId = 0,
+                OperatorName = "payment-service",
+            };
+
+            var ledgerItems = refundItems
+                .Select(a =>
+                {
+                    var line = items.First(b => b.Id == a.OrderItemId);
+                    return new OrderRefundItem
+                    {
+                        OrderItemId = line.Id,
+                        SkuId = line.SkuId,
+                        ProductName = line.ProductName,
+                        SkuSpecText = line.SkuSpecText,
+                        Quantity = a.Quantity,
+                        Amount = OrderRefundRules.Round2(a.Amount),
+                    };
+                })
+                .ToList();
+
+            await _store.SaveRefundAsync(ledger, ledgerItems, ct).ConfigureAwait(false);
         }
 
         var affected = await _store.TryTransitStatusAsync(order.Id, order.Status, OrderStatuses.Refunded, ct).ConfigureAwait(false);

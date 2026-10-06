@@ -429,10 +429,24 @@ Invoke-Case 'API-PAY-035b' '🔴 P0 审批通过后库存必须回补（两段�
     Write-Host ("        支付后 available={0} deducted={1} → 退款后 available={2} deducted={3}" -f `
         $afterPay.available, $afterPay.deducted, $afterRefund.available, $afterRefund.deducted) -ForegroundColor DarkGray
 
+    # 🔴 订单侧的退款台账也必须写上。
+    # 资金流水在支付服务的 refund_order，而「行级可退余额」读的是订单侧的
+    # order_refund_item —— 两本账各记各的时，一个**整单退完**的单
+    # 在后台详情里仍然显示「可退 100.00」，运营会以为退款没生效。
+    $list = Invoke-RestMethod "$Gateway/gateway/admin/orders/List" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ keyword = $no; page = 1; pageSize = 5 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $oid = (@($list.data.items)[0]).orderId
+    $detail = Invoke-RestMethod "$Gateway/gateway/admin/orders/Detail" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ orderId = $oid } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 20
+    $line = @($detail.data.items)[0]
+    Write-Host ("        后台详情：行实付={0} 行可退={1}" -f $line.payableAmount, $line.refundableAmount) -ForegroundColor DarkGray
+
     # 两件货必须从 deducted 回到 available
     return (Get-OrderStatus $no) -eq 60 `
         -and $afterRefund.available -eq ($afterPay.available + 2) `
-        -and $afterRefund.deducted -eq ($afterPay.deducted - 2)
+        -and $afterRefund.deducted -eq ($afterPay.deducted - 2) `
+        -and $line.refundableAmount -eq 0
 }
 
 Invoke-Case 'API-PAY-037' '🔴🔴 审批人取自令牌，伪造请求体里的 approverName 无效' {
