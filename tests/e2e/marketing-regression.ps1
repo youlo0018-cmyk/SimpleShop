@@ -138,7 +138,7 @@ $script:templateId = 0
 $script:activityId = 0
 
 Invoke-Case 'API-MKT-001' '新建满减券模板（满 100 减 20，30 天有效，每人限领 2）' {
-    $r = Post '/marketing/coupon-templates/Create' @{
+    $r = GwPost '/gateway/marketing/coupon-templates/Create' @{
         templateName = "满减券$($script:suffix)"
         couponType = 1; thresholdAmount = 100; discountAmount = 20
         validDays = 30; totalQuantity = 50; perUserLimit = 2; perOrderLimit = 1
@@ -606,7 +606,7 @@ Invoke-Case 'API-GFT-000' '准备：60 元商品 + 赠品券模板（满 50 减 
     $script:gftSkuId = [long](@($det.data.skus | Where-Object { $_.skuCode -eq "GFT$($script:suffix)" })[0].id)
 
     # 赠品券：真正要送出去的那张
-    $script:gftGiftTemplateId = [long](Post '/marketing/coupon-templates/Create' @{
+    $script:gftGiftTemplateId = [long](GwPost '/gateway/marketing/coupon-templates/Create' @{
         templateName = "赠品券$($script:suffix)"; couponType = 1; thresholdAmount = 50; discountAmount = 10
         validDays = 30; totalQuantity = 100; perUserLimit = 5; perOrderLimit = 1
         platformId = 0; status = 1
@@ -668,13 +668,13 @@ Invoke-Case 'API-GFT-003' '🔴 满赠券（券类型 4）：用它下单 → �
 
     # 用**代金券**（类型 3）而不是满减券：满减券的后端校验要求门槛大于 0，
     # 而这里要的就是「无门槛的赠品券」——代金券正是「0 元减」的形态。
-    $script:gftSecondGiftTemplateId = [long](Post '/marketing/coupon-templates/Create' @{
+    $script:gftSecondGiftTemplateId = [long](GwPost '/gateway/marketing/coupon-templates/Create' @{
         templateName = "满赠券的赠品$($script:suffix)"; couponType = 3; thresholdAmount = 0; discountAmount = 5
         validDays = 30; totalQuantity = 100; perUserLimit = 5; perOrderLimit = 1
         platformId = 0; status = 1
     }).data
 
-    $script:gftCouponTemplateId = [long](Post '/marketing/coupon-templates/Create' @{
+    $script:gftCouponTemplateId = [long](GwPost '/gateway/marketing/coupon-templates/Create' @{
         templateName = "满赠券$($script:suffix)"; couponType = 4; thresholdAmount = 0; discountAmount = 0
         giftTemplateId = $script:gftSecondGiftTemplateId
         validDays = 30; totalQuantity = 100; perUserLimit = 5; perOrderLimit = 1
@@ -1494,6 +1494,7 @@ $script:mktOwnSkuId = 0
 $script:mktOtherSkuId = 0
 $script:mktOwnCategoryIds = @()
 $script:mktNewActivityIds = @()
+$script:mktNewTemplateIds = @()
 
 try {
     # 归属校验要一个**真实存在且启用**的平台
@@ -1727,8 +1728,35 @@ Invoke-Case 'API-MKT-105' '🔴 P0 商户级的「本店全场」活动不会减
 }
 
 # 收尾：删掉本节建的活动 / 商品 / 分类，并停用临时商户账号
+Invoke-Case 'API-MKT-106' '🔴 商户账号建券模板的归属也被锁定（跨平台 403）' {
+    if (-not $script:mktMerchantToken) { return $false }
+
+    # 跨平台：直接拒
+    $bad = GwPost-AsMerchant '/gateway/marketing/coupon-templates/Create' @{
+        templateName = "越界模板$($script:suffix)"; couponType = 1
+        thresholdAmount = 10; discountAmount = 1; validDays = 30
+        totalQuantity = 5; perUserLimit = 1; perOrderLimit = 1
+        platformId = ($script:mktPlatformId + 999999); merchantId = 0; status = 1
+    }
+
+    # 正常：merchantId 传 0（表单里对商户账号是隐藏的），服务端应锁成自己的商户
+    $ok = GwPost-AsMerchant '/gateway/marketing/coupon-templates/Create' @{
+        templateName = "本店模板$($script:suffix)"; couponType = 1
+        thresholdAmount = 10; discountAmount = 1; validDays = 30
+        totalQuantity = 5; perUserLimit = 1; perOrderLimit = 1
+        platformId = $script:mktPlatformId; merchantId = 0; status = 1
+    }
+
+    if ($ok.success) { $script:mktNewTemplateIds += [long]$ok.data }
+
+    (-not $bad.success) -and ([int]$bad.code -eq 403) -and $ok.success
+}
+
 foreach ($id in $script:mktNewActivityIds) {
     try { Post '/marketing/activities/Delete' @{ activityId = $id } | Out-Null } catch { }
+}
+foreach ($id in $script:mktNewTemplateIds) {
+    try { Post '/marketing/coupon-templates/Delete' @{ templateId = $id } | Out-Null } catch { }
 }
 if ($script:mktOwnProductId -gt 0) {
     try {

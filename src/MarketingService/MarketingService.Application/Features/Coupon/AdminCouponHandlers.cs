@@ -84,12 +84,32 @@ public sealed class CreateCouponTemplateHandler
     /// </remarks>
     public async Task<ApiResponse<long>> Handle(CreateCouponTemplateCommand request, CancellationToken ct)
     {
+        // 归属由服务端按租户身份解析（DATA_SPEC 5.12，与 5.11 / 5.13 同一套规则）：
+        // PlatformId / MerchantId 来自请求体，而 AOP 租户过滤只管查询 / 更新 / 删除、**不管插入**。
+        if (!Promotion.PromotionActivityScope.TryResolve(
+                TenantContextHolder.Current, request.PlatformId, request.MerchantId,
+                out var platformId, out var merchantId, out var scopeError))
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.Forbidden, scopeError);
+        }
+
         if (request.CouponType == CouponTypes.Gift)
         {
             var gift = await _coupons.GetTemplateAsync(request.GiftTemplateId, ct).ConfigureAwait(false);
             if (gift is null)
             {
                 return ApiResults.Fail<long>(BaseApiResponseCode.NotFound, "赠送的券模板不存在");
+            }
+
+            // 赠送的模板必须与本人同租户：跨租户引用等于把 A 的券挂到 B 的满赠活动上
+            if (merchantId > 0 && gift.MerchantId > 0 && gift.MerchantId != merchantId)
+            {
+                return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "赠送的券模板不属于当前商户");
+            }
+
+            if (platformId > 0 && gift.PlatformId > 0 && gift.PlatformId != platformId)
+            {
+                return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "赠送的券模板不属于当前平台");
             }
         }
 
@@ -108,8 +128,8 @@ public sealed class CreateCouponTemplateHandler
             PerOrderLimit = request.PerOrderLimit,
             SortOrder = request.SortOrder,
             Status = request.Status,
-            PlatformId = request.PlatformId,
-            MerchantId = request.MerchantId
+            PlatformId = platformId,
+            MerchantId = merchantId
         };
 
         var id = await _coupons.InsertTemplateAsync(template, ct).ConfigureAwait(false);

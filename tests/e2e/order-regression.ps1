@@ -347,7 +347,7 @@ $script:couponCode = ''
 $script:couponId = 0
 
 Invoke-Case 'API-ORD-001a' '建满减券模板 + 券活动（满 40 减 10）' {
-    $script:templateId = (Invoke-RestMethod "$Marketing/marketing/coupon-templates/Create" -Method Post -Headers $script:adminHeaders `
+    $script:templateId = (Invoke-RestMethod "$Gateway/gateway/marketing/coupon-templates/Create" -Method Post -Headers $script:adminHeaders `
         -Body (@{ templateName = "订单券$($script:suffix)"; couponType = 1; thresholdAmount = 40; discountAmount = 10; validDays = 30; totalQuantity = 50; perUserLimit = 2; perOrderLimit = 1; platformId = 0; status = 1 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30).data
 
@@ -1577,11 +1577,11 @@ Invoke-Case 'API-ORD-146' '🔴 P0 指定 SKU 的券只减适用行（逐行分�
     $skuB = [long]$script:secondSkuId    # ORD-B：10.00
     $now = [DateTime]::UtcNow
 
-    $template = (Invoke-Api "$Marketing/marketing/coupon-templates/Create" 'Post' @{
+    $template = (Invoke-Api "$Gateway/gateway/marketing/coupon-templates/Create" 'Post' @{
         templateName = "作用域券$($script:suffix)"; couponType = 1; thresholdAmount = 100; discountAmount = 20
         validDays = 30; totalQuantity = 50; perUserLimit = 5; perOrderLimit = 1
         platformId = 0; status = 1
-    }).data
+    } $script:adminHeaders).data
     # 经网关：券活动的归属由服务端按租户身份解析（DATA_SPEC 5.13），直连没有身份会被拒
     $activity = (Invoke-Api "$Gateway/gateway/marketing/coupon-activities/Create" 'Post' @{
         activityName = "作用域券活动$($script:suffix)"; templateId = $template
