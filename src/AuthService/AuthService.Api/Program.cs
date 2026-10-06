@@ -144,7 +144,7 @@ builder.Services
         options.UseAspNetCore();
     });
 
-builder.Services.AddControllers();
+builder.Services.AddAppControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
 builder.Services.AddAppEventLogging(builder.Configuration);

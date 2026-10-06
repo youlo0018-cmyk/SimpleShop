@@ -48,7 +48,7 @@ builder.Services.AddAppFreeSql(
     typeof(User).Assembly);
 
 builder.Services.AddAppServices(builder.Configuration);
-builder.Services.AddControllers();
+builder.Services.AddAppControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
 builder.Services.AddAppEventLogging(builder.Configuration);

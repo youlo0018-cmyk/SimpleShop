@@ -202,6 +202,58 @@ public sealed class InternalProductController : ControllerBase
         return Ok(ApiResults.Ok(list));
     }
 
+    /// <summary>按 SPU Id 集合取收藏页展示摘要。</summary>
+    /// <param name="spuIds">SPU Id 集合，逗号分隔，最多 50 个。</param>
+    /// <returns>命中的商品摘要；未命中的商品不会出现在结果里。</returns>
+    /// <remarks>
+    /// <para>存在的理由：收藏记录只存 SPU Id，若收藏页逐个调商品详情，单页最多 20 次跨服务请求。
+    /// 这里一次批量取回，商品改名后收藏页也会跟着变，不需要在收藏表里存一份会过期的快照。</para>
+    ///
+    /// <para><b>不在这里过滤上下架状态</b>：BUSINESS.md 1.4 要求收藏页对已下架商品
+    /// 「显示但标灰不可购买」。调用方拿到 <c>status</c> / <c>auditStatus</c> 自行置灰；
+    /// 若这里过滤掉，用户会以为收藏记录凭空消失了。</para>
+    /// </remarks>
+    [HttpGet("spu-summaries")]
+    public ActionResult<ApiResponse<List<SpuSummary>>> SpuSummaries([FromQuery] string spuIds)
+    {
+        var ids = (spuIds ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(a => long.TryParse(a, out var v) ? v : 0)
+            .Where(a => a > 0)
+            .Distinct()
+            .Take(50)
+            .ToArray();
+
+        if (ids.Length == 0)
+        {
+            return BadRequest(new { error = "invalid_request", error_description = "请提供至少一个 SPU Id" });
+        }
+
+        // 先取实体再在内存里拼中文名：NameOf 是 C# 方法，FreeSql 无法把它翻译成 SQL。
+        var products = _db.Select<Product>()
+            .Where(a => ids.Contains(a.Id))
+            .ToList();
+
+        var list = products.Select(a => new SpuSummary(
+                a.Id,
+                a.SpuName,
+                a.MainImage,
+                a.MinPrice,
+                a.OriginalPrice,
+                a.AuditStatus,
+                AuditStatuses.NameOf(a.AuditStatus),
+                a.Status,
+                ListingStatuses.NameOf(a.Status),
+                a.DeliveryType,
+                DeliveryTypes.NameOf(a.DeliveryType),
+                a.AuditStatus == AuditStatuses.Approved && a.Status == ListingStatuses.OnShelf,
+                a.MerchantId,
+                a.PlatformId))
+            .ToList();
+
+        return Ok(ApiResults.Ok(list));
+    }
+
     /// <summary>按 Id 取物流公司（订单服务发货时用）。</summary>
     /// <param name="logisticsId">物流公司 Id。</param>
     /// <returns>物流公司 Id 与名称；查不到返回 404。</returns>
@@ -268,3 +320,23 @@ public sealed record SkuPricing(
     long SkuId, long ProductId, decimal Price, int SkuEnabled,
     bool SpuApproved, bool SpuOnShelf, long MerchantId, long PlatformId, int DeliveryType,
     string SkuName, string SkuSpecText, string Image);
+
+/// <summary>收藏页商品摘要。</summary>
+/// <param name="SpuId">商品 SPU Id。</param>
+/// <param name="SpuName">商品名。</param>
+/// <param name="MainImage">主图。</param>
+/// <param name="MinPrice">最低售价，两位小数。</param>
+/// <param name="OriginalPrice">划线原价，两位小数。</param>
+/// <param name="AuditStatus">审核状态，见 <see cref="AuditStatuses"/>。</param>
+/// <param name="AuditStatusName">审核状态中文名，前端直接展示。</param>
+/// <param name="Status">上下架状态，见 <see cref="ListingStatuses"/>。</param>
+/// <param name="StatusName">上下架状态中文名，前端直接展示。</param>
+/// <param name="DeliveryType">配送方式，见 <see cref="DeliveryTypes"/>。</param>
+/// <param name="DeliveryTypeName">配送方式中文名，前端直接展示。</param>
+/// <param name="Available">是否可购买：审核通过且已上架。false 时前端置灰。</param>
+/// <param name="MerchantId">归属商户 Id，0 表示平台自营。</param>
+/// <param name="PlatformId">归属平台 Id。</param>
+public sealed record SpuSummary(
+    long SpuId, string SpuName, string MainImage, decimal MinPrice, decimal OriginalPrice,
+    int AuditStatus, string AuditStatusName, int Status, string StatusName,
+    int DeliveryType, string DeliveryTypeName, bool Available, long MerchantId, long PlatformId);

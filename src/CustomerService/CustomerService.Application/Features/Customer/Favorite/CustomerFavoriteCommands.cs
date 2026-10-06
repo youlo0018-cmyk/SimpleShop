@@ -6,14 +6,37 @@ namespace CustomerService.Application.Features.Customer.Favorite;
 
 /// <summary>收藏项。</summary>
 /// <param name="SpuId">商品 SPU Id。</param>
-/// <param name="FavoritedAt">收藏时间（展示用，Asia/Shanghai）。</param>
+/// <param name="FavoritedAt">收藏时间（UTC，前端转 Asia/Shanghai）。</param>
+/// <param name="SpuName">商品名；商品服务不可用时为空字符串。</param>
+/// <param name="MainImage">商品主图；商品服务不可用时为空字符串。</param>
+/// <param name="Price">最低售价；商品服务不可用时为 0。</param>
+/// <param name="OriginalPrice">划线原价；商品服务不可用时为 0。</param>
+/// <param name="AuditStatus">审核状态；商品服务不可用时为 0。</param>
+/// <param name="AuditStatusName">审核状态中文名。</param>
+/// <param name="Status">上下架状态；商品服务不可用时为 0。</param>
+/// <param name="StatusName">上下架状态中文名。</param>
+/// <param name="DeliveryType">配送方式；商品服务不可用时为 0。</param>
+/// <param name="DeliveryTypeName">配送方式中文名。</param>
+/// <param name="Available">是否可购买：审核通过且已上架。false 时前端置灰。</param>
 /// <remarks>
-/// <b>只回商品 Id</b>：商品信息在商品服务，收藏表里没有也不该有快照
-/// （商品改名 / 下架之后快照就成了假的）。客户端拿 Id 去 <c>/shop/products/Detail</c> 取展示信息，
-/// 单客户收藏上限 20 条，一次最多 20 次详情请求。
-/// 「商品服务按 Id 批量查询」在 REVIEW.md P2-23 里跟踪。
+/// <b>不存快照</b>：商品信息在商品服务，收藏表里没有也不该有快照
+/// （商品改名 / 下架之后快照就成了假的）。收藏页一次批量取摘要，单客户上限 20 条，
+/// 不会再出现「每页 20 次详情请求」的 N+1（REVIEW.md P2-23）。
 /// </remarks>
-public sealed record CustomerFavoriteDto(string SpuId, string FavoritedAt);
+public sealed record CustomerFavoriteDto(
+    string SpuId,
+    string FavoritedAt,
+    string SpuName,
+    string MainImage,
+    decimal Price,
+    decimal OriginalPrice,
+    int AuditStatus,
+    string AuditStatusName,
+    int Status,
+    string StatusName,
+    int DeliveryType,
+    string DeliveryTypeName,
+    bool Available);
 
 /// <summary>查自己的收藏。</summary>
 /// <param name="CustomerId">客户 Id；经网关时必须与令牌一致。</param>

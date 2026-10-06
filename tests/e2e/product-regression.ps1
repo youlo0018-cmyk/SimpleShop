@@ -298,6 +298,18 @@ function New-ImageProductBody([string]$name, [string]$images, [string]$detailIma
     }
 }
 
+Invoke-Case 'API-PRP-006b' '链式校验器：NotEmpty 失败也回中文默认文案' {
+    $body = @{
+        productId = 0; spuName = ''; categoryId = $script:l3
+        deliveryType = 1; mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "EMPTY$($script:suffix)"; specValues = @('红'); price = 10; stock = 1; status = 1 })
+    }
+    $r = Save-ExpectReject $body
+    $text = Get-SaveErrText $r
+    return $null -ne $r -and -not $r.success -and $text -match '不能为空' -and $text -notmatch 'required'
+}
+
 Invoke-Case 'API-PRP-017' '🔴 轮播图最多 6 张（只校验总长度会让多出来的图静默不显示）' {
     # 用 -InputObject：走管道时 ConvertTo-Json 会把数组拆成多条输出，拿到的就不是 JSON 数组了
     $seven = ConvertTo-Json -InputObject @(1..7 | ForEach-Object { "https://cdn.example.com/$_.png" }) -Compress
@@ -377,6 +389,19 @@ Invoke-Case 'API-PRP-011' '审核通过后可以上架' {
         -Body (@{ productId = $script:productId; status = 1 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
     return $l.success
+}
+
+Invoke-Case 'API-PRP-011b' '内部批量摘要：收藏页一次取回商品名 / 价格 / 可购买状态' {
+    $r = Invoke-RestMethod "$Product/internal/products/spu-summaries?spuIds=$($script:productId),999999999999" -TimeoutSec 30
+    $hit = @($r.data | Where-Object { [long]$_.spuId -eq [long]$script:productId })
+    return $r.success -and $hit.Count -eq 1 `
+        -and $hit[0].spuName -like "*$($script:suffix)*" `
+        -and $hit[0].minPrice -eq 100 `
+        -and $hit[0].available -eq $true `
+        -and $hit[0].auditStatusName -eq '已通过' `
+        -and $hit[0].statusName -eq '上架' `
+        -and $hit[0].deliveryTypeName -eq '快递' `
+        -and @($r.data).Count -eq 1
 }
 
 Invoke-Case 'API-PRP-012' '🔴 驳回后编辑**不重置**审核状态，必须显式重新提交' {

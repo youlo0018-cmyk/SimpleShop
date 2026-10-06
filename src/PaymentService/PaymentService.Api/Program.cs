@@ -36,7 +36,7 @@ builder.Services.AddAppFreeSql(
     typeof(PaymentOrder).Assembly);
 
 builder.Services.AddAppServices(builder.Configuration);
-builder.Services.AddControllers();
+builder.Services.AddAppControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
 builder.Services.AddAppEventLogging(builder.Configuration);

@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using Collaboration.Domain.Context;
+using CustomerService.Application.Services;
 using CustomerService.Domain.Entities;
 using CustomerService.Domain.IRepository;
 using MediatR;
@@ -11,10 +12,18 @@ public sealed class QueryCustomerFavoritesHandler
     : IRequestHandler<QueryCustomerFavoritesCommand, ApiResponse<PagedResult<CustomerFavoriteDto>>>
 {
     private readonly ICustomerFavoriteRepository _favorites;
+    private readonly IProductSummaryClient _products;
 
     /// <summary>构造处理器。</summary>
     /// <param name="favorites">收藏仓储。</param>
-    public QueryCustomerFavoritesHandler(ICustomerFavoriteRepository favorites) => _favorites = favorites;
+    /// <param name="products">商品摘要客户端。</param>
+    public QueryCustomerFavoritesHandler(
+        ICustomerFavoriteRepository favorites,
+        IProductSummaryClient products)
+    {
+        _favorites = favorites;
+        _products = products;
+    }
 
     /// <summary>执行查询。</summary>
     /// <param name="request">查询命令。</param>
@@ -28,12 +37,32 @@ public sealed class QueryCustomerFavoritesHandler
         var (items, total) = await _favorites
             .QueryPagedAsync(request.Page, request.PageSize, ct).ConfigureAwait(false);
 
-        var dtos = items.Select(a => new CustomerFavoriteDto(
-            a.SpuId.ToString(),
-            // 与其余 C 端列表同一口径：库里存 UTC，**接口也回 UTC**，转 Asia/Shanghai 由前端做
-            // （DATA_SPEC 4.8；服务端 ToLocalTime 会把正确性绑在容器时区上）
-            DateTime.SpecifyKind(a.FavoritedAt, DateTimeKind.Utc)
-                .ToString("yyyy-MM-dd HH:mm:ss"))).ToList();
+        // 一次批量取当页商品摘要；商品服务不可用时返回空字典，下面按 Id 回退展示。
+        var summaries = await _products
+            .GetSpuSummariesAsync(items.Select(a => a.SpuId).ToArray(), ct)
+            .ConfigureAwait(false);
+
+        var dtos = items.Select(a =>
+        {
+            summaries.TryGetValue(a.SpuId, out var summary);
+            return new CustomerFavoriteDto(
+                a.SpuId.ToString(),
+                // 与其余 C 端列表同一口径：库里存 UTC，**接口也回 UTC**，转 Asia/Shanghai 由前端做
+                // （DATA_SPEC 4.8；服务端 ToLocalTime 会把正确性绑在容器时区上）
+                DateTime.SpecifyKind(a.FavoritedAt, DateTimeKind.Utc)
+                    .ToString("yyyy-MM-dd HH:mm:ss"),
+                summary?.SpuName ?? string.Empty,
+                summary?.MainImage ?? string.Empty,
+                summary?.MinPrice ?? 0m,
+                summary?.OriginalPrice ?? 0m,
+                summary?.AuditStatus ?? 0,
+                summary?.AuditStatusName ?? string.Empty,
+                summary?.Status ?? 0,
+                summary?.StatusName ?? string.Empty,
+                summary?.DeliveryType ?? 0,
+                summary?.DeliveryTypeName ?? string.Empty,
+                summary?.Available ?? false);
+        }).ToList();
 
         return ApiResults.Ok(new PagedResult<CustomerFavoriteDto>(
             dtos, total, request.Page, request.PageSize));

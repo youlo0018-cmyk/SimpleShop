@@ -32,7 +32,7 @@ builder.Services.AddAppFreeSql(
     typeof(Product).Assembly);
 
 builder.Services.AddAppServices(builder.Configuration);
-builder.Services.AddControllers();
+builder.Services.AddAppControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
 
 builder.Services.AddAppEventLogging(builder.Configuration);

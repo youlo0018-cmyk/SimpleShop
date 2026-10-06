@@ -111,7 +111,7 @@ public sealed class CustomerController : ControllerBase
     /// <summary>收藏夹分页（按收藏时间倒序）。</summary>
     /// <param name="command">查询命令。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>收藏分页，只含商品 Id 与收藏时间。</returns>
+    /// <returns>收藏分页，含商品摘要与可购买状态（商品服务不可用时只回 Id 与收藏时间）。</returns>
     [HttpPost("favorites/List")]
     public Task<ApiResponse<PagedResult<CustomerFavoriteDto>>> ListFavorites(
         [FromBody] QueryCustomerFavoritesCommand command, CancellationToken ct)

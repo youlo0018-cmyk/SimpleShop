@@ -43,7 +43,7 @@ builder.Services.AddAppFreeSql(
     builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()!.Default,
     typeof(CustomerService.Domain.Entities.Customer).Assembly);
 builder.Services.AddAppServices(builder.Configuration);
-builder.Services.AddControllers();
+builder.Services.AddAppControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
 builder.Services.AddAppEventLogging(builder.Configuration);

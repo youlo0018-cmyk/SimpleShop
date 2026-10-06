@@ -13,7 +13,7 @@ public static class InfrastructureServiceCollectionExtensions
 {
     /// <summary>注册仓储与服务。</summary>
     /// <param name="services">服务集合。</param>
-    /// <param name="configuration">应用配置，用于取积分服务地址。</param>
+    /// <param name="configuration">应用配置，用于取积分服务与商品服务地址。</param>
     /// <returns>原集合，便于链式调用。</returns>
     /// <exception cref="InvalidOperationException">缺少积分服务地址时抛出。</exception>
     public static IServiceCollection AddInfrastructure(
@@ -46,6 +46,23 @@ public static class InfrastructureServiceCollectionExtensions
             client.BaseAddress = new Uri(pointUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
         });
+
+        // 收藏页一次批量取商品摘要（REVIEW.md P2-23）。
+        // 没有地址时不 fail-fast：收藏记录本身还在，商品服务地址缺失只会让页面回退成 Id 展示，
+        // 不会让客户服务起不来；地址由 AgileConfig 统一下发。
+        var productUrl = configuration["Services:ProductServiceBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(productUrl))
+        {
+            services.AddHttpClient<IProductSummaryClient, HttpProductSummaryClient>(client =>
+            {
+                client.BaseAddress = new Uri(productUrl.TrimEnd('/') + "/");
+                client.Timeout = TimeSpan.FromSeconds(10);
+            });
+        }
+        else
+        {
+            services.AddSingleton<IProductSummaryClient, UnavailableProductSummaryClient>();
+        }
 
         return services;
     }

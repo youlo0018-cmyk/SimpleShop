@@ -64,7 +64,11 @@ function New-Customer([string]$tag, [int]$offset) {
 # 带客户令牌打网关；业务失败也要把响应体拿回来（本项目有两种失败形态：抛异常与 200+success=false）
 function Post-As([string]$path, $body, [string]$token) {
     try {
-        $r = Invoke-RestMethod "$Gateway$path" -Method Post -Headers @{ Authorization = "Bearer $token" } `
+        $headers = @{}
+        if (-not [string]::IsNullOrWhiteSpace($token)) {
+            $headers.Authorization = "Bearer $token"
+        }
+        $r = Invoke-RestMethod "$Gateway$path" -Method Post -Headers $headers `
             -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 6) -TimeoutSec 30
         return [pscustomobject]@{
             status = 200; success = $r.success; code = $r.code
@@ -101,6 +105,18 @@ Invoke-Case 'API-CUS-000' '准备：经网关注册两个客户' {
     $script:tokenA = [string]$a.data.token
     $script:tokenB = [string]$b.data.token
     return $script:customerA -gt 0 -and $script:customerB -gt 0 -and $script:customerA -ne $script:customerB
+}
+
+Invoke-Case 'API-CUS-000a' '缺必填字段时 MVC 模型绑定返回中文提示（不再回英文 required）' {
+    $r = Post-As '/gateway/customers/Login' @{ customerName = "cus$($script:suffix)" } ''
+    $text = Get-ErrorText $r
+    return $r.status -eq 400 -and $text -match '不能为空' -and $text -notmatch 'required'
+}
+
+Invoke-Case 'API-CUS-000b' 'FluentValidation 链式规则的默认文案也是中文' {
+    $r = Post-As '/gateway/customers/Login' @{ customerName = "cus$($script:suffix)"; password = '' } ''
+    $text = Get-ErrorText $r
+    return $r.status -eq 400 -and $text -match '[\u4e00-\u9fa5]' -and $text -notmatch 'required'
 }
 
 Invoke-Case 'API-CUS-001' '查自己的资料：手机号打码下发' {
@@ -215,7 +231,10 @@ Invoke-Case 'API-CUS-009' '收藏商品 → 列表可见；重复收藏幂等' {
     $list = Post-As '/gateway/customers/favorites/List' @{ customerId = $script:customerA } $script:tokenA
     $hit = @($list.data.items | Where-Object { [long]$_.spuId -eq $spu })
 
-    return $first.success -and $again.success -and $list.data.total -eq 1 -and $hit.Count -eq 1
+    # 商品服务里查不到这个测试 SPU：接口要保留收藏记录，并把可购买状态回成 false，
+    # 而不是让整个收藏页 500（P2-23 的降级路径）。
+    return $first.success -and $again.success -and $list.data.total -eq 1 -and $hit.Count -eq 1 `
+        -and $hit[0].available -eq $false
 }
 
 Invoke-Case 'API-CUS-010' '收藏上限 20：第 21 件被拒（额度不足）' {

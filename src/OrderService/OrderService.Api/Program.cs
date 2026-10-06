@@ -31,7 +31,7 @@ builder.Services.AddSingleton(_ => redis.GetDatabase(redisOptions.Database));
 builder.Services.AddAppFreeSql(databaseOptions.Default, typeof(OrderEntity).Assembly);
 
 builder.Services.AddAppServices(builder.Configuration);
-builder.Services.AddControllers();
+builder.Services.AddAppControllers();
 builder.Services.AddHealthChecks().AddCheck("self", () => HealthCheckResult.Healthy());
 
 builder.Services.AddAppEventLogging(builder.Configuration);

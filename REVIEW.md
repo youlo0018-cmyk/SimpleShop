@@ -366,7 +366,7 @@ PV / 操作 / 异常中间件 → RabbitMQ → LogService → Elasticsearch（�
 | 20 | 满赠多活动命中取最早创建 | 同行满足多个满赠活动时取创建最早（排序 `CreatedAt,Id` 升序，结果确定）；如需「门槛最高优先」应显式调整 |
 | 21 | 报表内存聚合 | 拉取区间内全部记录在内存 GroupBy；数据量大后改 SQL 聚合或汇总表 |
 | 22 | 公开接口无鉴权 | 活动专区 / 店铺公开信息面向游客，仅返回展示字段；后续加敏感字段必须重新加权限 |
-| 23 | 收藏页 N+1 查询 | 收藏接口（`/customers/favorites/*`）只回商品 Id + 收藏时间：商品信息在商品服务，收藏表**不存快照**（商品改名 / 下架后快照就是假的）。单客户上限 20，所以页面最多 20 次详情请求；彻底解法是在商品服务加「按 Id 批量查询」 |
+| 23 | 收藏页 N+1 查询 | **已修复**：商品服务新增 `GET /internal/products/spu-summaries?spuIds=`，收藏接口一次批量取回商品名 / 主图 / 价格 / 审核与上下架中文名 / 可购买状态；商品服务不可用时降级为「Id + 收藏时间」，不会让整页 500。回归：`API-PRP-011b`、`API-CUS-009` |
 | 24 | 秒杀异步落单的体验 | 抢购结果需轮询 `GrabResult`。若体验不佳，可演进为同步落单（牺牲部分并发能力） |
 | 25 | 秒杀场次库存长期占用 | 场次未结束期间秒杀库存被划出，常规库存不可售。需保证场次有可靠的结束触发（含异常兜底） |
 
@@ -383,8 +383,8 @@ PV / 操作 / 异常中间件 → RabbitMQ → LogService → Elasticsearch（�
 | 32 | 取消订单后满赠承诺记录不会自动作废 | 取消走 `ReleaseAsync` 把券放回可用，而承诺按**订单号**唯一、仍停在「待发放」。用户重新下单是新订单号、新承诺，因此**不会重复送券**；旧记录同 31 一并由对账处理 |
 | 33 | 活动报表的口径：**订单数含未支付，金额只算已支付** | 明确口径，不是缺陷。参与记录在下单试算时写，「参与订单数」= 用过这个活动的下单数（含未支付 / 已取消）；「参与金额」回订单服务取，口径同 GMV（排除待支付 / 取消 / 退款）。这样下钻出来的行数与报表上的订单数**逐行对得上**，而金额不会被未支付的单虚增。若运营要求「只算支付成功的参与」，需把记录改成两段式（同 `gift_grant` 的 status 玩法） |
 | 34 | 活动的「每单限购 / 总限量」两个旋钮已移除 | 见 DATA_SPEC 5.11 约束：活动是一单命中一次、也没有总量限制，字段不在规格里且配了不生效。列保留兼容历史数据，接口与表单不再接受 |
-| 35 | ASP.NET **隐式必填**的提示是英文 | 非空引用类型（如 `string Password`）在 `[ApiController]` 下会被自动当成必填，模型绑定失败时给的是框架自带的英文文案（「The Password field is required.」）。业务规则的提示都是中文，只有这一条是英文。彻底解法：配置 `AddLocalization` + `RequestLocalization`（zh-CN），或 `SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true` 后由 FluentValidation 全权负责提示。本轮先把「同一条提示重复 4 次」修掉了（那个更影响前端） |
-| 36 | 校验器里 `WithMessage` 只作用于**紧挨着它**的那一个校验器 | `RuleFor(x => x.Name).NotEmpty().Length(3,64).WithMessage("…")` 中 NotEmpty 失败会走默认文案（带英文字段名）。新增校验器请一条规则一句文案；存量校验器逐步收敛 |
+| 35 | ASP.NET **隐式必填**的提示是英文 | **已修复**：15 个服务统一改用 `AddAppControllers()`，`InvalidModelStateResponseFactory` 把缺必填字段统一翻成「不能为空」、JSON / 类型转换错误翻成「格式不正确」，响应体形状与全局异常中间件一致。回归：`API-CUS-000a` |
+| 36 | 校验器里 `WithMessage` 只作用于**紧挨着它**的那一个校验器 | **已修复（兜底）**：`ValidationBehavior` 首次进入时把 FluentValidation 默认文案切到 `ChineseLanguageManager`，链式 `NotEmpty().Length(…).WithMessage(…)` 的 NotEmpty 失败也会回「不能为空」，不再出现带英文字段名的默认文案；新增校验器仍按「一条规则一句文案」写。回归：`API-PRP-006b`、`API-CUS-000b` |
 
 ---
 

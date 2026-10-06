@@ -14,6 +14,17 @@ public sealed class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<
 {
     private readonly IEnumerable<IValidator<TRequest>> _validators;
 
+    /// <summary>首次进入校验管道时，把 FluentValidation 的默认文案切成中文。</summary>
+    /// <remarks>
+    /// <c>WithMessage</c> 只作用于紧挨着它的那一个校验器，存量校验器里仍有
+    /// <c>NotEmpty().Length(...)</c> 这类链式写法。这里兜底保证 NotEmpty 失败时
+    /// 也不会把带英文字段名的默认文案发给前端；新增校验器仍应一条规则一句文案。
+    /// </remarks>
+    static ValidationBehavior()
+    {
+        ValidatorOptions.Global.LanguageManager = new ChineseLanguageManager();
+    }
+
     /// <summary>构造校验器集合。</summary>
     /// <param name="validators">该请求对应的全部 Validator，可为空集合。</param>
     public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators) => _validators = validators;
