@@ -563,7 +563,7 @@ public sealed class QueryMerchantOptionsHandler
         QueryMerchantOptionsQuery request, CancellationToken ct)
     {
         var items = _merchants.ListEnabledByPlatform(request.PlatformId, ct)
-            .Select(a => new MerchantOptionDto(a.Id, a.MerchantName, a.PlatformId))
+            .Select(a => new MerchantOptionDto(a.Id.ToString(), a.MerchantName, a.PlatformId.ToString()))
             .ToList();
 
         return Task.FromResult(ApiResults.Ok(items));

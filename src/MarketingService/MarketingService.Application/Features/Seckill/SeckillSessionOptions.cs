@@ -13,12 +13,13 @@ public record QuerySeckillSessionOptionsCommand(int Limit = 200)
     : IRequest<ApiResponse<List<SeckillSessionOption>>>;
 
 /// <summary>秒杀场次下拉项。</summary>
-/// <param name="Value">场次 Id，字符串下发。</param>
-/// <param name="Label">场次名 + 时间窗，前端直接显示。</param>
+/// <param name="Id">场次 Id，字符串下发。</param>
+/// <param name="Name">场次名 + 时间窗，前端直接显示。</param>
 /// <param name="Status">状态码。</param>
 /// <param name="StatusName">状态中文名，**后端下发**（4.5）。</param>
+/// <remarks>下拉项统一形状 <c>{ id, name }</c>（DATA_SPEC 4.7），按需追加字段。</remarks>
 public sealed record SeckillSessionOption(
-    string Value, string Label, int Status, string StatusName);
+    string Id, string Name, int Status, string StatusName);
 
 /// <summary>场次下拉的校验器注册。</summary>
 public static class SeckillSessionOptionValidators
@@ -76,7 +77,7 @@ public sealed class QuerySeckillSessionOptionsHandler
 
         var ordered = result
             .OrderByDescending(a => a.Status == SeckillSessionStatuses.Running)
-            .ThenBy(a => a.Label, StringComparer.Ordinal)
+            .ThenBy(a => a.Name, StringComparer.Ordinal)
             .Take(request.Limit)
             .ToList();
 

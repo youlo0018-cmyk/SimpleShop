@@ -60,7 +60,7 @@ public sealed class ProductController : ControllerBase
     /// <param name="keyword">按商品名模糊搜索。</param>
     /// <param name="limit">最多返回多少条，1-200。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>下拉项 <c>{ value, label, deliveryType }</c>。</returns>
+    /// <returns>下拉项 <c>{ id, name, deliveryType }</c>。</returns>
     /// <remarks>
     /// 带 <c>deliveryType</c>：发货表单按它动态渲染（快递填物流、虚拟与自提不填），
     /// 前端选了商品却不知道配送方式，就只能再查一次详情。
@@ -92,7 +92,7 @@ public sealed class ProductController : ControllerBase
     /// <summary>按 SPU 取 SKU 下拉（DATA_SPEC 4.2）：只返回启用 SKU，随 SPU 联动。</summary>
     /// <param name="spuId">商品 Id。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>下拉项 <c>{ value, label, price }</c>；商品不存在返回 404。</returns>
+    /// <returns>下拉项 <c>{ id, name, price }</c>；商品不存在返回 404。</returns>
     /// <remarks>
     /// 用查询参数而不是 <c>/products/{spuId}/Skus</c>：网关 RBAC 只支持**结尾**通配
     /// （`/*`），路径中间的占位符没法映射权限点，会退化成「查不到映射 → 后台令牌被拒」。

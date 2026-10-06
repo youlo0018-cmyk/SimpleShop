@@ -61,7 +61,7 @@ public sealed class CouponAdminController : ControllerBase
     /// <param name="keyword">按模板名模糊搜索。</param>
     /// <param name="limit">最多返回多少条，1-200。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>下拉项 <c>{ value, label, couponType, couponTypeName }</c>。</returns>
+    /// <returns>下拉项 <c>{ id, name, couponType, couponTypeName }</c>。</returns>
     /// <remarks>
     /// 券活动与满赠活动都要选模板，走列表接口再自己过滤的话，
     /// 下拉里会出现停用模板 —— 选中后用户点「领取」只会拿到「模板不存在或已停用」。

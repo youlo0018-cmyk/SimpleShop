@@ -102,7 +102,12 @@ public record QueryPlatformOptionsQuery : IRequest<ApiResponse<List<PlatformOpti
 /// <param name="Id">平台 Id。</param>
 /// <param name="Name">平台名称。<b>前端下拉直接显示它，不显示 Id</b>。</param>
 /// <param name="Code">平台编码。</param>
-public sealed record PlatformOptionDto(long Id, string Name, string Code);
+/// <summary>平台下拉项。</summary>
+/// <param name="Id">平台 Id，<b>字符串下发</b>（DATA_SPEC 4.6：雪花 Id 前端必须保持字符串）。</param>
+/// <param name="Name">平台名。</param>
+/// <param name="Code">平台编码，小程序按它锁平台。</param>
+/// <remarks>下拉项统一形状 <c>{ id, name }</c>（4.7），按需追加字段。</remarks>
+public sealed record PlatformOptionDto(string Id, string Name, string Code);
 
 /// <summary>平台列表项。</summary>
 /// <param name="Id">平台 Id。</param>

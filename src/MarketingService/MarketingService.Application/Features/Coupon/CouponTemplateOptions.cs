@@ -14,12 +14,13 @@ public record QueryCouponTemplateOptionsCommand(string Keyword = "", int Limit =
     : IRequest<ApiResponse<List<CouponTemplateOption>>>;
 
 /// <summary>券模板下拉项。</summary>
-/// <param name="Value">模板 Id，字符串下发。</param>
-/// <param name="Label">模板名。</param>
+/// <param name="Id">模板 Id，字符串下发。</param>
+/// <param name="Name">模板名。</param>
 /// <param name="CouponType">券类型，前端按它决定是否显示门槛字段。</param>
 /// <param name="CouponTypeName">券类型中文名，**后端下发**（4.5）。</param>
+/// <remarks>下拉项统一形状 <c>{ id, name }</c>（DATA_SPEC 4.7），按需追加字段。</remarks>
 public sealed record CouponTemplateOption(
-    string Value, string Label, int CouponType, string CouponTypeName);
+    string Id, string Name, int CouponType, string CouponTypeName);
 
 /// <summary>券模板下拉的校验器注册。</summary>
 public static class CouponTemplateOptionValidators

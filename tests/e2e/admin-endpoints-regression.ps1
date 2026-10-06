@@ -953,7 +953,7 @@ Invoke-Case 'API-ADM-097' '🔴 订单列表返回平台 / 商户**名称**而�
 
 Write-Host "`n=== 下拉接口清单（DATA_SPEC 4.2）===" -ForegroundColor Cyan
 
-Invoke-Case 'API-ADM-098' '🔴 7 个下拉接口都返回 { value, label }（不是让前端自己过滤列表）' {
+Invoke-Case 'API-ADM-098' '🔴 7 个下拉接口都返回 { id, name }（不是让前端自己过滤列表）' {
     # 这些接口在补之前**一个都不存在**：前端只能调列表接口自己过滤，
     # 于是下拉里出现停用品牌 / 已下架商品 / 已结束场次 —— 选了之后保存必被拒。
     $eps = @(
@@ -972,13 +972,14 @@ Invoke-Case 'API-ADM-098' '🔴 7 个下拉接口都返回 { value, label }（�
         $items = @($r.data)
         if ($items.Count -eq 0) { Write-Host ("        " + $ep.Name + " 返回空列表") -ForegroundColor DarkYellow; return $false }
 
-        # 每项都要有 value 与 label，且 value 必须是字符串（雪花 Id 不能丢精度）
+        # 每项都要有 id 与 name，且 id 必须是字符串（4.6：雪花 Id 不能丢精度）。
+        # 形状统一为 { id, name }（4.7），各接口再按需追加 deliveryType / price 等字段。
         $bad = @($items | Where-Object {
-            [string]::IsNullOrWhiteSpace($_.value) -or [string]::IsNullOrWhiteSpace($_.label) -or $_.value -isnot [string]
+            [string]::IsNullOrWhiteSpace($_.id) -or [string]::IsNullOrWhiteSpace($_.name) -or $_.id -isnot [string]
         })
-        if ($bad.Count -gt 0) { Write-Host ("        " + $ep.Name + " 有 " + $bad.Count + " 项缺 value/label") -ForegroundColor DarkYellow; return $false }
+        if ($bad.Count -gt 0) { Write-Host ("        " + $ep.Name + " 有 " + $bad.Count + " 项缺 id/name") -ForegroundColor DarkYellow; return $false }
 
-        Write-Host ("        {0,-10} {1} 项，首项 = {2}" -f $ep.Name, $items.Count, $items[0].label) -ForegroundColor DarkGray
+        Write-Host ("        {0,-10} {1} 项，首项 = {2}" -f $ep.Name, $items.Count, $items[0].name) -ForegroundColor DarkGray
     }
 
     return $true
@@ -988,15 +989,15 @@ Invoke-Case 'API-ADM-099' '🔴 SKU 下拉随 SPU 联动，且只给启用 SKU' 
     $products = @((Invoke-RestMethod -Uri "$Gateway/gateway/products/Options?limit=5" -Headers $auth -TimeoutSec 30).data)
     if ($products.Count -eq 0) { return $false }
 
-    $spuId = [long]$products[0].value
+    $spuId = [long]$products[0].id
     $r = Invoke-RestMethod -Uri "$Gateway/gateway/products/Skus?spuId=$spuId" -Headers $auth -TimeoutSec 30
     if (-not $r.success) { return $false }
 
     $skus = @($r.data)
-    Write-Host ("        商品「{0}」下有 {1} 个启用 SKU" -f $products[0].label, $skus.Count) -ForegroundColor DarkGray
+    Write-Host ("        商品「{0}」下有 {1} 个启用 SKU" -f $products[0].name, $skus.Count) -ForegroundColor DarkGray
 
     return $skus.Count -gt 0 `
-        -and @($skus | Where-Object { [string]::IsNullOrWhiteSpace($_.value) -or [string]::IsNullOrWhiteSpace($_.label) }).Count -eq 0 `
+        -and @($skus | Where-Object { [string]::IsNullOrWhiteSpace($_.id) -or [string]::IsNullOrWhiteSpace($_.name) }).Count -eq 0 `
         -and @($skus | Where-Object { $_.price -le 0 }).Count -eq 0
 }
 

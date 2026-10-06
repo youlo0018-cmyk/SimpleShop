@@ -36,7 +36,7 @@ public sealed class BrandController : ControllerBase
     /// <param name="keyword">按品牌名模糊搜索。</param>
     /// <param name="limit">最多返回多少条，1-200。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>下拉项 <c>{ value, label }</c>。</returns>
+    /// <returns>下拉项 <c>{ id, name }</c>。</returns>
     /// <remarks>
     /// 单独开一个接口而不是让前端调 List 再自己过滤：
     /// 下拉里出现停用品牌时，运营选了之后保存会被拒（或存下一个已停用品牌），

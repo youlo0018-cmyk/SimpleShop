@@ -13,9 +13,10 @@ public record QueryBrandOptionsCommand(string Keyword = "", int Limit = 200)
     : IRequest<ApiResponse<List<BrandOption>>>;
 
 /// <summary>品牌下拉项。</summary>
-/// <param name="Value">品牌 Id，<b>字符串下发</b>（4.6：雪花 Id 前端必须保持字符串）。</param>
-/// <param name="Label">品牌名，前端直接显示。</param>
-public sealed record BrandOption(string Value, string Label);
+/// <param name="Id">品牌 Id，<b>字符串下发</b>（4.6：雪花 Id 前端必须保持字符串）。</param>
+/// <param name="Name">品牌名，前端直接显示。</param>
+/// <remarks>下拉项统一形状 <c>{ id, name }</c>（DATA_SPEC 4.7）。</remarks>
+public sealed record BrandOption(string Id, string Name);
 
 /// <summary>品牌下拉校验器注册。</summary>
 public static class BrandOptionValidators

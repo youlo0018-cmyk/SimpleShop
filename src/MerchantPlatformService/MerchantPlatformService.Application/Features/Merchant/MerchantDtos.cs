@@ -57,4 +57,9 @@ public sealed record PagedMerchantDtos(
 /// <param name="Id">商户 Id。</param>
 /// <param name="Name">商户名称，<b>前端下拉直接显示它</b>。</param>
 /// <param name="PlatformId">所属平台 Id。</param>
-public sealed record MerchantOptionDto(long Id, string Name, long PlatformId);
+/// <summary>商户下拉项。</summary>
+/// <param name="Id">商户 Id，<b>字符串下发</b>（4.6）。</param>
+/// <param name="Name">店铺名。</param>
+/// <param name="PlatformId">所属平台 Id，字符串下发；平台切换时前端据此联动过滤。</param>
+/// <remarks>下拉项统一形状 <c>{ id, name }</c>（4.7），按需追加字段。</remarks>
+public sealed record MerchantOptionDto(string Id, string Name, string PlatformId);

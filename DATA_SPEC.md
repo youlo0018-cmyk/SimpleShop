@@ -467,9 +467,13 @@ workerId 空间只有 64 个，开发机一天重启十几次服务，跑满 64 
 
 **通用约定**：所有 `Options` 接口按当前 `TenantContext` 自动过滤（AOP），**商家与商户账号不需要自己传 tenant 参数**。
 
-**统一返回形状**：每项至少 `{ value, label }`，`value` 一律是**字符串**（4.6：雪花 Id 前端必须保持字符串）。
+**统一返回形状**：每项至少 `{ id, name }`，`id` 一律是**字符串**（4.6：雪花 Id 前端必须保持字符串；4.7 的下拉项约定）。
 各接口按需追加：商品带 `deliveryType`、SKU 带 `price`、券模板带 `couponType`/`couponTypeName`、
-场次带 `status`/`statusName`、角色带 `allowedScopes`/`scopeName`。
+场次带 `status`/`statusName`、角色带 `allowedScopes`/`scopeName`、商户带 `platformId`。
+
+> 统一形状这件事**曾经三种并存**：`platforms/Options` 与 `merchants/Options` 回 `{ id, name }`（但 id 是数字），
+> 新补的 7 条一度写成 `{ value, label }`。前端要为三种形状各写一遍绑定逻辑，
+> 所以这一轮把全部下拉统一成 `{ id, name }` + **字符串 id**（4.6）。
 
 > 踩过：这 11 条里有一大半**根本没有实现**（只有 List 接口）。让前端调 List 自己过滤的后果是
 > 下拉里出现停用品牌 / 已下架商品 / 已结束场次 —— 选了之后保存必被拒，
@@ -539,7 +543,7 @@ SKU 的多个规格值必须由后端拼成**可直接展示的文本**，前端
 |---|---|
 | 响应体 | `ApiResponse { Success, Code, Message, Data, Errors }`（`Collaboration` 定义，`ApiResults.Ok/Fail` 构造） |
 | 分页体 | `PagedResult<T> { Items, Total, Page, PageSize }` |
-| 下拉项 | `OptionDto { Id, Name }`（`Id` 为字符串） |
+| 下拉项 | `{ id, name }`，`id` 为**字符串**。各接口按需追加字段（`deliveryType` / `price` / `couponType` / `status` / `allowedScopes` / `platformId`），枚举值一律附带中文名 |
 
 **禁止** Handler 返回 `ApiResponse` 时控制器再包 `Ok()`（双层信封，`CODING_STANDARD.md` 第 2.2 节）。
 

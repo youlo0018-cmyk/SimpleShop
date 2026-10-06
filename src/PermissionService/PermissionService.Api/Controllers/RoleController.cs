@@ -31,7 +31,7 @@ public sealed class RoleController : ControllerBase
     /// <param name="keyword">按角色名或编码模糊搜索。</param>
     /// <param name="limit">最多返回多少条，1-200。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>下拉项 <c>{ value, label, allowedScopes, scopeName }</c>。</returns>
+    /// <returns>下拉项 <c>{ id, name, allowedScopes, scopeName }</c>。</returns>
     /// <remarks>
     /// 带 <c>allowedScopes</c>：建号页要按账号类型过滤可选角色，
     /// 否则用户会选到不匹配的角色，保存时才被服务端拒（5.18 作用域校验）。

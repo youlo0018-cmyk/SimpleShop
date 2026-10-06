@@ -262,7 +262,7 @@ public sealed class QueryPlatformOptionsHandler
         QueryPlatformOptionsQuery request, CancellationToken ct)
     {
         var items = _platforms.ListEnabled(ct)
-            .Select(a => new PlatformOptionDto(a.Id, a.PlatformName, a.PlatformCode))
+            .Select(a => new PlatformOptionDto(a.Id.ToString(), a.PlatformName, a.PlatformCode))
             .ToList();
 
         return Task.FromResult(ApiResults.Ok(items));

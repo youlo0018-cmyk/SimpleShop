@@ -13,16 +13,17 @@ public record QueryRoleOptionsCommand(string Keyword = "", int Limit = 200)
     : IRequest<ApiResponse<List<RoleOption>>>;
 
 /// <summary>角色下拉项。</summary>
-/// <param name="Value">角色 Id，字符串下发。</param>
-/// <param name="Label">角色名。</param>
+/// <param name="Id">角色 Id，字符串下发。</param>
+/// <param name="Name">角色名。</param>
 /// <param name="AllowedScopes">租户范围：1 平台 / 2 商户 / 3 两者。</param>
 /// <param name="ScopeName">租户范围中文名，**后端下发**（4.5）。</param>
 /// <remarks>
 /// 带 <c>allowedScopes</c> 是为了让建号页能**按账号类型过滤**可选角色：
 /// 选了不匹配的角色，保存时会被服务端拒（DATA_SPEC 5.18 作用域校验），
 /// 前端提前过滤掉能省一次往返。
+/// 下拉项统一形状 <c>{ id, name }</c>（DATA_SPEC 4.7），按需追加字段。
 /// </remarks>
-public sealed record RoleOption(string Value, string Label, int AllowedScopes, string ScopeName);
+public sealed record RoleOption(string Id, string Name, int AllowedScopes, string ScopeName);
 
 /// <summary>角色下拉的校验器注册。</summary>
 public static class RoleOptionValidators

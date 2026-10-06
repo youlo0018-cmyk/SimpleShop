@@ -24,19 +24,20 @@ public record QueryDesignableProductsCommand(string Keyword = "", int Limit = 20
 public record QueryProductSkusCommand(long SpuId) : IRequest<ApiResponse<List<SkuOption>>>;
 
 /// <summary>商品下拉项。</summary>
-/// <param name="Value">商品 Id，字符串下发。</param>
-/// <param name="Label">商品名。</param>
+/// <param name="Id">商品 Id，字符串下发。</param>
+/// <param name="Name">商品名。</param>
 /// <param name="DeliveryType">
 /// 配送方式。**必须带**：发货表单按它动态渲染（快递填物流、虚拟与自提不填），
 /// 前端选了商品却不知道配送方式，就只能再查一次详情。
 /// </param>
-public sealed record ProductOption(string Value, string Label, int DeliveryType);
+/// <remarks>下拉项统一形状 <c>{ id, name }</c>（DATA_SPEC 4.7），按需追加字段。</remarks>
+public sealed record ProductOption(string Id, string Name, int DeliveryType);
 
 /// <summary>SKU 下拉项。</summary>
-/// <param name="Value">SKU Id，字符串下发。</param>
-/// <param name="Label">规格文本（如「红色 / M」）。</param>
+/// <param name="Id">SKU Id，字符串下发。</param>
+/// <param name="Name">规格文本（如「红色 / M」）。</param>
 /// <param name="Price">售价，两位小数。</param>
-public sealed record SkuOption(string Value, string Label, decimal Price);
+public sealed record SkuOption(string Id, string Name, decimal Price);
 
 /// <summary>下拉查询的校验器注册。</summary>
 public static class ProductOptionValidators
