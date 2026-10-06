@@ -96,13 +96,22 @@ public static class FilterRegistrar
             //
             // 用属性名反射而不是基类判断，以后再有实体走 EntityBase + 租户列也能自动覆盖，
             // 不需要有人记得回来改这里。
-            if (type.GetProperty(nameof(AdminEntityBase.PlatformId)) is null
-                || type.GetProperty(nameof(AdminEntityBase.MerchantId)) is null)
+            // 只要有 platform_id 就够：商户维度是**可选**的。
+            // BuildTenant 本来就是这么设计的（merchantId 为 null 时只比平台），
+            // 而 marketing_config / user_role 这类表只有 platform_id，
+            // 一刀切要求两列都在会把它们漏掉。
+            if (type.GetProperty(nameof(AdminEntityBase.PlatformId)) is null)
             {
                 continue;
             }
 
-            ApplyOnly(filter, type, "tenant:" + type.Name, BuildTenant(type, ctx.PlatformId, merchantId));
+            // 没有 MerchantId 列的类型不能把商户条件加进去 ——
+            // Expression.Property 找不到属性会直接抛。
+            var hasMerchantColumn =
+                type.GetProperty(nameof(AdminEntityBase.MerchantId)) is not null;
+
+            ApplyOnly(filter, type, "tenant:" + type.Name,
+                BuildTenant(type, ctx.PlatformId, hasMerchantColumn ? merchantId : null));
         }
     }
 
