@@ -286,8 +286,10 @@ public static class PromotionValidators
         /// <summary>构造规则集。</summary>
         public PromotionActivityRules()
         {
-            RuleFor(x => x.ActivityName).NotEmpty().MinimumLength(2).MaximumLength(128)
-                .WithMessage("活动名 2-128 个字符");
+            // WithMessage 只作用于紧挨着它的那一个校验器，三条规则各写各的文案
+            RuleFor(x => x.ActivityName).NotEmpty().WithMessage("活动名必填");
+            RuleFor(x => x.ActivityName).MinimumLength(2).WithMessage("活动名至少 2 个字符");
+            RuleFor(x => x.ActivityName).MaximumLength(128).WithMessage("活动名不超过 128 个字符");
 
             // 下面每条 RuleFor 都必须写成 `x => x.某个属性` 的**具体属性表达式**。
             //

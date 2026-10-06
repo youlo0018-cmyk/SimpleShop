@@ -26,12 +26,28 @@ public sealed class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<
     /// <exception cref="ValidationException">任一规则不通过时抛出。</exception>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
     {
-        var validators = _validators as IValidator<TRequest>[] ?? _validators.ToArray();
+        // 同一个校验器可能被注册多次：`AddValidatorsFromAssembly` 会扫到 public 的校验器，
+        // 而各服务又习惯再显式 AddScoped 一次「确保不漏注册」。结果同一个校验器跑 4 遍，
+        // 响应里每条错误重复 4 次 —— 前端要在 errors 里看到 4 条一模一样的中文提示。
+        // 这里按**具体类型**去重：注册几次都只跑一次，显式注册的保险仍然有效。
+        var validators = (_validators as IValidator<TRequest>[] ?? _validators.ToArray())
+            .GroupBy(v => v.GetType())
+            .Select(g => g.First())
+            .ToArray();
+
         if (validators.Length == 0) return await next();
 
         var context = new ValidationContext<TRequest>(request);
         var results = await Task.WhenAll(validators.Select(v => v.ValidateAsync(context, ct)));
-        var failures = results.SelectMany(r => r.Errors).Where(f => f is not null).ToArray();
+
+        // 不同的校验器也可能对同一字段给出同一句提示（例如共用规则集 + 专用规则集），
+        // 按「字段 + 文案」去重，保留不同措辞的提示。
+        var failures = results
+            .SelectMany(r => r.Errors)
+            .Where(f => f is not null)
+            .GroupBy(f => (f.PropertyName, f.ErrorMessage))
+            .Select(g => g.First())
+            .ToArray();
 
         if (failures.Length > 0) throw new ValidationException(failures);
         return await next();

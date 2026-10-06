@@ -169,6 +169,9 @@ try {
         # C 端（客户令牌）—— 刻意不绑后台权限点，绑了会把小程序自己挡掉
         '/carts/*', '/orders/*', '/coupons/*', '/evaluates/*',
         '/points/*', '/merchants/Shop/*',
+        # 客户资料 / 地址簿 / 收藏：都是「只能操作自己那份」，归属由 CustomerScope 在服务端校验
+        '/customers/Profile', '/customers/UpdateProfile',
+        '/customers/addresses/*', '/customers/favorites/*',
         # payments/Create|Confirm|Query 是客户付款；Simulate 是后台的，已单独绑 order:simulate
         '/payments/Create', '/payments/Confirm', '/payments/Query',
         '/marketing/activities/FinalPrice', '/marketing/activities/FinalPriceBatch',

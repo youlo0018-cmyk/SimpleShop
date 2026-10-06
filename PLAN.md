@@ -509,6 +509,8 @@ S0 基础设施
 | 14 | 🔴 **营销券接口没有归属校验（IDOR）** | BUSINESS.md 5.3、TEST_CASES 6.2（P0-ACL-007） | `/coupons/My`、`/coupons/Settle`、`/coupons/Occupy|Consume|Release` 都没调 `CustomerScope`：实测客户 A 传客户 B 的 `customerId` 就能拿到 B 的**券与优惠额**（结算试算原样回显券包），还能用 B 的券去占单（把别人的券锁死）。订单 / 购物车 / 积分 / 评价四处早有这道校验，营销侧漏了 |
 | 15 | 🔴 **支付接口没有归属校验（IDOR）** | BUSINESS.md 10.1、TEST_CASES 6.2 | 支付命令里只有**订单号**（可枚举），`/payments/Confirm` 又是 C 端路径：任何登录客户都能把**别人的订单**标成已支付（`Create` / `Query` 同理，Query 还会回显别人的金额与支付状态）。已加 `PaymentOwnership`：客户令牌存在时订单归属必须匹配 |
 | 16 | 异常中间件把 401 / 403 / 404 的**业务码写成 500** | DATA_SPEC 4.5（前端按 code 分支） | `WriteAsync` 里 `code = status == 400 ? 400 : 500`：HTTP 状态是对的，但响应体 code 一律 500，小程序会把「没权限」当「服务器挂了」提示「请稍后重试」 |
+| 17 | **客户资料 / 地址簿 / 收藏三块只有表和仓储，没有任何接口** | BUSINESS.md 180、423、19 | 实体、表、仓储（含「默认地址唯一」「收藏上限 20」的规则注释）都写好了，`CustomerController` 里却只有 Register / Login —— 小程序既存不了收货地址（结算页选地址无从谈起），也收藏不了商品。已补 11 个 C 端接口 + 14 条回归（`customer-regression.ps1`） |
+| 18 | **校验错误每条重复 4 次** | CODING_STANDARD 3.4 | public 校验器既被 `AddValidatorsFromAssembly` 扫到、又被显式 `AddScoped` 注册一次，`IEnumerable<IValidator<T>>` 于是拿到多份实例，同一条提示在 `errors` 里重复 4 遍（前端得自己去重）。已在 `ValidationBehavior` 里按校验器类型 + 「字段 + 文案」去重 |
 
 **更新规则**：每阶段结束时把该行改为「已完成」并填完成日期，同时在 `AI_HANDOFF.md` 进度日志追加条目（`AI_HANDOFF` 第 3 节第 1 条）。
 

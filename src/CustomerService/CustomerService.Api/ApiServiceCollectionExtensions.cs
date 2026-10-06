@@ -1,7 +1,10 @@
 using System.Reflection;
 using Collaboration.Domain.MediatR;
+using CustomerService.Application.Features.Customer.Address;
 using CustomerService.Application.Features.Customer.Admin;
+using CustomerService.Application.Features.Customer.Favorite;
 using CustomerService.Application.Features.Customer.Login;
+using CustomerService.Application.Features.Customer.Profile;
 using CustomerService.Application.Features.Customer.Register;
 using CustomerService.Infrastructure;
 using FluentValidation;
@@ -36,6 +39,14 @@ public static class ApiServiceCollectionExtensions
         // Validator 与 Handler 分散在 Application 层，这里显式补上，确保不会漏注册
         services.AddScoped<IValidator<RegisterCommand>, RegisterValidator>();
         services.AddScoped<IValidator<LoginCommand>, LoginValidator>();
+        services.AddScoped<IValidator<QueryCustomerProfileCommand>, QueryCustomerProfileValidator>();
+        services.AddScoped<IValidator<UpdateCustomerProfileCommand>, UpdateCustomerProfileValidator>();
+        services.AddScoped<IValidator<QueryCustomerAddressesCommand>, QueryCustomerAddressesValidator>();
+        services.AddScoped<IValidator<CreateCustomerAddressCommand>, CreateCustomerAddressValidator>();
+        services.AddScoped<IValidator<UpdateCustomerAddressCommand>, UpdateCustomerAddressValidator>();
+        services.AddScoped<IValidator<QueryCustomerFavoritesCommand>, QueryCustomerFavoritesValidator>();
+        services.AddScoped<IValidator<AddCustomerFavoriteCommand>, AddCustomerFavoriteValidator>();
+        services.AddScoped<IValidator<RemoveCustomerFavoriteCommand>, RemoveCustomerFavoriteValidator>();
         CustomerAdminValidators.AddCustomerAdminValidators(services);
 
         services.AddInfrastructure(configuration);

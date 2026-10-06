@@ -278,6 +278,34 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-06：客户资料 / 地址簿 / 收藏只有表和仓储，一个接口都没有
+
+对 CustomerService 做了一次「实体 → 表 → 仓储 → 接口」的连通性核对，结果很直白：
+`CustomerAddress` / `CustomerFavorite` 的**实体、建表脚本、仓储（连「默认地址唯一」「收藏上限 20」
+的规则注释都写了）全都在，`CustomerController` 里却只有 Register / Login**。
+后果是产品链路缺一环：结算页要「选地址」（BUSINESS.md 423），而地址存不下来；
+「我的」页改不了资料；商品收藏不了。
+
+**改动**：补 11 个 C 端接口（资料查改、地址簿 CRUD + 设默认、收藏查增删），
+新增 `customer-regression.ps1`（14 条）。三条容易漏的连带规则一并实现：
+第一条地址自动默认、设默认要清旧的、删默认要顶上新的。
+
+**顺带修掉两个横切问题**：
+1. **校验错误重复 4 次**：public 校验器被 `AddValidatorsFromAssembly` 扫到 + 各服务又显式
+   `AddScoped` 一次，`IEnumerable<IValidator<T>>` 拿到多份实例，同一条提示在 `errors` 里出现 4 遍。
+   已在 `ValidationBehavior` 里按校验器类型 + 「字段 + 文案」去重（注册几次都只跑一次）。
+2. **`WithMessage` 只作用于紧挨着它的那一个校验器**：`NotEmpty().Length(3,64).WithMessage("…")`
+   里 NotEmpty 失败会走 FluentValidation 的默认文案（「'Password' 必须大于或等于 8 个字符。」），
+   用户看到的是带英文字段名的提示。已把本轮新增/改动的校验器都改成一条规则一句文案。
+   另外 `RegisterValidator` 的 `Must(p => p.Any(...))` 在密码为 null 时会 NRE → 500（已改成 null 安全）。
+
+**验证**：构建 0 警告 0 错误；单元 379/379；端到端新增 `customer-regression.ps1` **14/14**；
+重复提示实测从 4 条降到 1 条。
+
+**仍未做的（已登记）**：ASP.NET 隐式必填（非空引用类型）的提示仍是英文
+（「The Password field is required.」）——需要配置 `AddLocalization`/`RequestLocalization`
+或抑制隐式必填，见 REVIEW P3。
+
 ### 2026-10-06：三个越权 / 错误码缺陷（都靠「换一个客户身份试一次」抓出来）
 
 这轮换了个透镜：**拿客户 A 的令牌去操作客户 B 的数据**。三个缺陷：

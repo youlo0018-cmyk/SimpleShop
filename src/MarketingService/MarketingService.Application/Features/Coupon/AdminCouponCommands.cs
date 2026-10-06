@@ -393,7 +393,9 @@ public static class AdminCouponValidators
         /// <summary>构造规则集。</summary>
         public CouponTemplateRules()
         {
-            RuleFor(x => x.TemplateName).NotEmpty().Length(2, 128).WithMessage("模板名必须为 2-128 个字符");
+            // WithMessage 只作用于紧挨着它的那一个校验器，两条规则各写各的文案
+            RuleFor(x => x.TemplateName).NotEmpty().WithMessage("模板名必填");
+            RuleFor(x => x.TemplateName).Length(2, 128).WithMessage("模板名必须为 2-128 个字符");
             RuleFor(x => x.CouponType).InclusiveBetween(1, 4).WithMessage("券类型只能是 1 满减 / 2 折扣 / 3 代金 / 4 满赠");
             RuleFor(x => x.ThresholdAmount).GreaterThanOrEqualTo(0).WithMessage("门槛金额不能为负数");
             RuleFor(x => x.DiscountAmount).GreaterThanOrEqualTo(0).WithMessage("优惠金额不能为负数");
@@ -487,7 +489,8 @@ public static class AdminCouponValidators
         /// <summary>构造规则集。</summary>
         public CouponActivityRules()
         {
-            RuleFor(x => x.ActivityName).NotEmpty().Length(2, 128).WithMessage("活动名必须为 2-128 个字符");
+            RuleFor(x => x.ActivityName).NotEmpty().WithMessage("活动名必填");
+            RuleFor(x => x.ActivityName).Length(2, 128).WithMessage("活动名必须为 2-128 个字符");
             RuleFor(x => x.TemplateId).GreaterThan(0).WithMessage("必须选择券模板");
             RuleFor(x => x.ClaimQuantity).GreaterThanOrEqualTo(1).WithMessage("发放量必须大于等于 1");
             RuleFor(x => x.PerUserLimit).InclusiveBetween(1, 100).WithMessage("每人限领必须为 1 ~ 100");

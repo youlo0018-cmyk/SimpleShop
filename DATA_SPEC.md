@@ -175,6 +175,15 @@
 
 客户账号**与后台账号完全隔离**：不同库、不同登录端点、不同令牌（`BUSINESS.md` 第 4 节）。
 
+**C 端接口（BUSINESS.md 180「注册 / 登录、资料、地址簿、收藏」）**：
+
+| 接口 | 表 | 规则 |
+|---|---|---|
+| `POST /gateway/customers/Profile` / `UpdateProfile` | `customer` | 只改昵称 / 头像 / 性别 / 生日；**登录名与手机号不在这里改**（唯一键 + 需额外验证）。手机号**打码下发**（`138****8000`） |
+| `POST /gateway/customers/addresses/List|Create|Update|Delete|SetDefault` | `customer_address` | 第一条地址自动成为默认；设默认要清掉旧的；删掉默认时剩下最新的一条自动顶上。收货手机号按 `1[3-9]\d{9}` 校验 |
+| `POST /gateway/customers/favorites/List|Add|Remove` | `customer_favorite` | 单客户上限 **20**（超出返回额度不足）；重复收藏与取消都幂等；只回商品 Id（商品信息在商品服务，收藏表不存快照） |
+| 归属 | — | 所有带 `customerId` 的 C 端接口一律过 `CustomerScope`：客户令牌与请求体不一致 → **403**；拿别人的地址 Id（用自己的 customerId）→ **404**（等同于不存在，不泄露 Id 是否真实） |
+
 ### 2.6 通用字段命名与类型
 
 | 语义 | 类型 | 列类型 | 命名 | 约束 |
