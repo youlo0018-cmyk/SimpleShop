@@ -141,6 +141,11 @@ function Get-ErrText($Resp) {
 #>
 function New-PendingOrder([string]$Tag, [int]$DeliveryType = 1, [decimal]$Freight = 0,
         [long]$PlatformId = 0, [long]$SkuId = 0, [long]$SpuId = 0) {
+    # 虚拟单必须用虚拟商品：配送方式挂在 SPU 级（BUSINESS.md 6.1），服务端以商品为准。
+    if ($DeliveryType -eq 2 -and $SkuId -le 0) {
+        $SkuId = $script:virtualSkuId
+        $SpuId = $script:virtualProductId
+    }
     if ($SkuId -le 0) { $SkuId = $script:skuIds[0] }
     if ($SpuId -le 0) { $SpuId = $script:productId }
     $line = @{
@@ -205,7 +210,25 @@ Invoke-Case 'API-PAY-000' '建三级分类 + 200 件库存的商品（单价 25.
         -Headers $script:adminHeaders -TimeoutSec 30
     $script:skuIds = @($det.data.skus | ForEach-Object { [long]$_.id })
 
-    return $script:productId -gt 0 -and $script:skuIds.Count -eq 1
+    # 🔴 虚拟单要**自己的商品**：配送方式挂在 SPU 级，一个 SPU 只有一种
+    # （BUSINESS.md 6.1），服务端以商品为准。
+    # 拿快递商品在下单时把 deliveryType 改成 2 是改不动的 ——
+    # 退款窗口判定（虚拟仅 20/30 可退）测的就成了快递单，结论是假的。
+    $vBody = @{
+        productId = 0; spuName = "虚拟商品$($script:suffix)"; categoryId = $c3
+        deliveryType = 2; mainImage = 'https://cdn.example.com/m.png'
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "PAYV$($script:suffix)"; specValues = @('红'); price = $script:price; stock = 200; status = 1 })
+    }
+    $vId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders -Body ($vBody | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60).data
+    (Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders -Body (@{ productId = $vId; auditStatus = 20 } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+    (Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders -Body (@{ productId = $vId; status = 1 } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+
+    $vd = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$vId" -Headers $script:adminHeaders -TimeoutSec 30
+    $script:virtualProductId = $vId
+    $script:virtualSkuId = [long](@($vd.data.skus | Where-Object { $_.skuCode -eq "PAYV$($script:suffix)" })[0].id)
+
+    return $script:productId -gt 0 -and $script:skuIds.Count -eq 1 -and $script:virtualSkuId -gt 0
 }
 
 Write-Host "`n=== PAY 支付单：金额服务端反查 + 幂等 ===" -ForegroundColor Cyan
@@ -452,6 +475,11 @@ Invoke-Case 'API-PAY-090' '删商品 → 删分类' {
     if ($script:feeProductId -gt 0) {
         Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
             -Body (@{ productId = $script:feeProductId } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 60 | Out-Null
+    }
+    if ($script:virtualProductId -gt 0) {
+        Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $script:virtualProductId } | ConvertTo-Json) `
             -ContentType 'application/json' -TimeoutSec 60 | Out-Null
     }
     foreach ($id in [array]($script:feeCategoryIds | Sort-Object -Descending)) {

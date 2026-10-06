@@ -74,7 +74,7 @@ public sealed class HttpProductPort : IProductPort
         foreach (var a in body.Data ?? [])
         {
             result[a.SkuId] = new SkuPriceInfo(
-                a.SkuId, a.Price, a.SkuEnabled == 1,
+                a.SkuId, a.ProductId, a.Price, a.SkuEnabled == 1,
                 a.SpuApproved, a.SpuOnShelf, a.MerchantId, a.PlatformId, a.DeliveryType,
                 a.SkuName, a.SkuSpecText, a.Image);
         }

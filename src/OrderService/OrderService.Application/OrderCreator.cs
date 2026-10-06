@@ -207,7 +207,9 @@ public sealed class OrderCreator
 
         var couponLines = request.Lines
             .Select((a, i) => new CouponPortLine(
-                a.SpuId, a.SkuId,
+                // 券与活动都支持「指定商品」，所以这里传的是**权威 SPU**。
+                // 传客户端报的那个，就能把「仅限 A 商品」的券用在 B 上。
+                resolved[i].SpuId, resolved[i].SkuId,
                 OrderAmountCalculator.Round2(resolved[i].UnitPrice * a.Quantity)))
             .ToArray();
 
@@ -392,20 +394,24 @@ public sealed class OrderCreator
                 .Select((line, i) => new OrderItem
                 {
                     OrderNo = orderNo,
-                    SpuId = line.SpuId,
-                    SkuId = line.SkuId,
-                    ProductName = line.ProductName,
-                    SkuSpecText = line.SkuSpecText,
-                    // 用权威售价，不是客户端报的那个 ——
-                    // 订单行是最长久的对账凭据，这里存错价，后面每一张退款单都会跟着错
+
+                    // ⚠️ 下面**每一列**都取自 resolved[i]，不是 request.Lines[i]。
+                    // 订单行是最长久的对账凭据，客户端报什么就永久记什么的话：
+                    // 价格错了后面每张退款单都跟着错；名称错了历史订单显示旧名；
+                    // spuId 错了评价（SPU 级）与报表全记到别的商品上；
+                    // 配送方式错了运费与发货动作都跟着错。
+                    SpuId = resolved[i].SpuId,
+                    SkuId = resolved[i].SkuId,
+                    ProductName = resolved[i].ProductName,
+                    SkuSpecText = resolved[i].SkuSpecText,
                     Price = resolved[i].UnitPrice,
                     Quantity = line.Quantity,
                     OriginalAmount = amount.Lines[i].OriginalAmount,
                     ActivityDiscount = amount.Lines[i].ActivityDiscount,
                     CouponDiscount = amount.Lines[i].CouponDiscount,
                     PayableAmount = amount.Lines[i].PayableAmount,
-                    DeliveryType = line.DeliveryType,
-                    SourceType = line.SourceType
+                    DeliveryType = resolved[i].DeliveryType,
+                    SourceType = resolved[i].SourceType
                 })
                 .ToList();
 

@@ -98,6 +98,12 @@ public sealed class OrderPricingResolver
                 SkuSpecText = string.IsNullOrWhiteSpace(sku.SkuSpecText)
                     ? line.SkuSpecText
                     : sku.SkuSpecText,
+
+                // SPU 归属同样纠正。spuId 决定**券与活动能不能用在这行上**，
+                // 而券/活动是支持「指定商品」的 —— 客户端把 skuId 填成 B、
+                // spuId 填成 A，就能把「仅限 A 商品」的券用在 B 上。
+                // 订单行也会照抄这个 spuId，于是评价（SPU 级）与报表全记到错的商品上。
+                SpuId = sku.ProductId > 0 ? sku.ProductId : line.SpuId,
             });
         }
 
@@ -195,6 +201,8 @@ public readonly record struct ResolveOutcome(
 
     /// <summary>构造一个成功结果。</summary>
     /// <param name="lines">纠正后的行。</param>
+    /// <param name="platformId">订单归属平台，由商品决定。</param>
+    /// <param name="merchantId">订单归属商户，由商品决定；0 表示平台自营。</param>
     /// <returns>成功结果。</returns>
     public static ResolveOutcome Ok(
         IReadOnlyList<OrderLineRequest> lines, long platformId = 0, long merchantId = 0)

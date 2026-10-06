@@ -291,6 +291,35 @@ public class OrderCreatorTests
         Assert.Null(store.Saved);
     }
 
+    [Fact]
+    public async Task 客户端把spuId填错会被纠正_否则指定商品的券能用错商品上()
+    {
+        var coupons = new FakeCouponPort { CouponId = 77, Discount = 5m };
+        var store = new FakeOrderStore();
+
+        // 请求里报 spuId = 999（某个能享受定向券的商品），实际买的 SKU 属于 spuId 100。
+        // 券与活动都支持「指定商品」，不纠正的话「仅限 999」的券就能用在 100 上；
+        // 订单行也会照抄 999，于是评价（SPU 级）与报表全记到错的商品上。
+        var req = Request(couponId: 77, lineCount: 1) with
+        {
+            Lines = [new OrderLineRequest(
+                SpuId: 999, SkuId: 1000, Quantity: 2, UnitPrice: 25.50m,
+                ProductName: "商品0", SkuSpecText: "红色 / M", DeliveryType: 1)]
+        };
+
+        var result = await Build(
+            coupons, new FakePointPort(), new FakeInventoryPort(), store,
+            products: new FakeProductPort { ProductId = 100 }).CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+
+        // 落库的订单行记的是真实 SPU
+        Assert.Equal(100L, store.SavedItems[0].SpuId);
+
+        // 传给券/活动的也是真实 SPU —— 券按 999 定向的话这里就该是 0 优惠
+        Assert.Equal(100L, coupons.LastLines[0].SpuId);
+    }
+
     /// <summary>按 SKU 分别返回不同平台 / 商户的端口替身，用来构造跨平台或跨店铺的购物车。</summary>
     private sealed class PerSkuOwnerProductPort : IProductPort
     {
@@ -307,7 +336,7 @@ public class OrderCreatorTests
             {
                 var (platformId, merchantId) = _ownerOf(id);
                 result[id] = new SkuPriceInfo(
-                    id, 25.50m, Enabled: true, SpuApproved: true, SpuOnShelf: true,
+                    id, 100L, 25.50m, Enabled: true, SpuApproved: true, SpuOnShelf: true,
                     merchantId, platformId, DeliveryTypeIds.PhysicalExpress);
             }
 
@@ -747,6 +776,12 @@ public class OrderCreatorTests
         /// <summary>权威规格文本。</summary>
         public string SkuSpecText { get; set; } = string.Empty;
 
+        /// <summary>
+        /// SKU 真正所属的 SPU Id。默认与订单行里报的 SpuId 一致；
+        /// 要验证「客户端把 spuId 填错」时单独设成别的值。
+        /// </summary>
+        public long ProductId { get; set; } = 100L;
+
         /// <summary>被回查过的 SKU 集合。</summary>
         public List<long> Queried { get; } = [];
 
@@ -763,7 +798,7 @@ public class OrderCreatorTests
             foreach (var id in skuIds)
             {
                 result[id] = new SkuPriceInfo(
-                    id, AuthoritativePrice ?? 25.50m,
+                    id, ProductId, AuthoritativePrice ?? 25.50m,
                     Enabled: true, SpuApproved: true, SpuOnShelf: true, MerchantId,
                     PlatformId, DeliveryType, SkuName, SkuSpecText);
             }

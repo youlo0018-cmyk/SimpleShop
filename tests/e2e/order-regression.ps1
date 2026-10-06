@@ -76,6 +76,12 @@ $script:initStock = 200
 $script:lowStock = 1
 $script:lowStockSkuId = 0
 
+# 虚拟 / 自提各有自己的商品（配送方式是 SPU 级的），这里按配送方式索引「该用哪个 SKU」。
+$script:deliverySkus = @{}
+
+# 除主商品外另外建出来的商品，清理时要一并删掉。
+$script:extraProductIds = @()
+
 function Get-AdminToken {
     $d = [System.Collections.Generic.Dictionary[string,string]]::new()
     $d['grant_type'] = 'password'; $d['client_id'] = 'admin-app'
@@ -173,9 +179,15 @@ function Get-AdminOrder([string]$OrderNo) {
 function New-IdempotencyKey([string]$Tag) { return "ORD-$Tag-$($script:suffix)" }
 
 function New-OrderLine([int]$DeliveryType = 1, [int]$Quantity = 2) {
+    # 配送方式是 SPU 级的，所以每种配送方式要用**各自的商品**。
+    # 这里按配送方式取对应 SKU，而不是拿快递商品在下单时改 deliveryType ——
+    # 服务端以商品为准（BUSINESS.md 6.1），那样改是改不动的。
+    $target = $script:deliverySkus[$DeliveryType]
+    if (-not $target) { throw "没有为配送方式 $DeliveryType 准备商品" }
+
     return [ordered]@{
-        spuId       = [long]$script:productId
-        skuId       = [long]$script:skuIds[0]
+        spuId       = [long]$target.spuId
+        skuId       = [long]$target.skuId
         quantity    = $Quantity
         unitPrice   = $script:price
         productName = "订单商品$($script:suffix)"
@@ -279,6 +291,38 @@ Invoke-Case 'API-ORD-000' '建两个 SKU 的商品并各自初始化库存' {
     $script:secondSkuId = [long]$byCode["ORD-B$($script:suffix)"]
     $script:lowStockSkuId = $byCode["ORD-C$($script:suffix)"]
     $script:spuId = [long]$d.data.id
+
+    # 🔴 配送方式挂在 **SPU 级**，一个 SPU 只有一种（BUSINESS.md 6.1），
+    # 订单行只做快照。所以虚拟单与自提单**必须各有自己的商品**，
+    # 不能拿快递商品在下单时把 deliveryType 改成 2 / 3 ——
+    # 服务端现在以商品为准，改了也不会生效（而且本来就不该生效）。
+    $script:deliverySkus = @{ 1 = @{ spuId = [long]$d.data.id; skuId = [long]$script:skuIds[0] } }
+    foreach ($variant in @(
+        @{ key = 2; name = '虚拟'; code = "ORD-V$($script:suffix)" }
+        @{ key = 3; name = '自提'; code = "ORD-P$($script:suffix)" }
+    )) {
+        $vBody = @{
+            productId = 0; spuName = "订单$($variant.name)商品$($script:suffix)"; categoryId = $c3
+            deliveryType = $variant.key; mainImage = 'https://cdn.example.com/main.png'
+            specs = @(@{ specName = '颜色'; specValues = @('红') })
+            skus = @(@{ skuCode = $variant.code; specValues = @('红'); price = $script:price; stock = 200; status = 1 })
+        }
+        $vId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
+            -Body ($vBody | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+        Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $vId; auditStatus = 20 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ productId = $vId; status = 1 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+        $vd = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$vId" -Headers $script:adminHeaders -TimeoutSec 30
+        $script:deliverySkus[$variant.key] = @{
+            spuId = $vId
+            skuId = [long](@($vd.data.skus | Where-Object { $_.skuCode -eq $variant.code })[0].id)
+        }
+        $script:extraProductIds += $vId
+    }
 
     return $d.data.skus.Count -eq 3 `
         -and $script:skuIds[0] -gt 0 `
@@ -1443,8 +1487,12 @@ Invoke-Case 'API-ORD-139' '清理运费测试的平台与商品' {
 Write-Host "`n=== ORD 清理 ===" -ForegroundColor Cyan
 
 Invoke-Case 'API-ORD-120' '清理测试商品与分类' {
-    Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
-        -Body (@{ productId = $script:productId } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    foreach ($pid_ in @($script:productId) + @($script:extraProductIds)) {
+        if ($pid_ -gt 0) {
+            Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `
+                -Body (@{ productId = $pid_ } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        }
+    }
 
     $tree = Invoke-RestMethod "$Gateway/gateway/categories/Tree" -Headers $script:adminHeaders -TimeoutSec 30
     foreach ($n in @($tree.data) | Where-Object { $_.categoryName -like "订单$($script:suffix)*" }) {

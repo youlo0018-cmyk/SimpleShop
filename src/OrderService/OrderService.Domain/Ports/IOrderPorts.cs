@@ -63,6 +63,7 @@ public interface IProductPort
 /// <param name="SkuName">商品名的权威快照（已含规格前缀）。</param>
 /// <param name="SkuSpecText">规格文本的权威快照。</param>
 /// <param name="Image">SKU 图。</param>
+/// <param name="ProductId">SKU 真正所属的 SPU Id。</param>
 /// <param name="DeliveryType">
 /// 配送方式，挂在 SPU 上（BUSINESS.md 6.1）。1 实物快递 / 2 虚拟商品 / 3 实物自提。
 /// </param>
@@ -80,7 +81,7 @@ public interface IProductPort
 /// SkuSpecText 此前直接取客户端传来的值 —— 客户端写什么，订单就永久记什么。
 /// 商家改完名之后，历史订单会显示成改名前的名字，而商品卡是另一个名字，对不上。</para>
 public readonly record struct SkuPriceInfo(
-    long SkuId, decimal Price, bool Enabled, bool SpuApproved, bool SpuOnShelf, long MerchantId,
+    long SkuId, long ProductId, decimal Price, bool Enabled, bool SpuApproved, bool SpuOnShelf, long MerchantId,
     long PlatformId = 0, int DeliveryType = DeliveryTypeIds.PhysicalExpress,
     string SkuName = "", string SkuSpecText = "", string Image = "");
 
