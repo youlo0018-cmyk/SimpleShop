@@ -329,6 +329,48 @@ Invoke-Case 'API-INI-052' '🔴 重试的 bizNo 带后缀，不会被首次流�
     return [int]$n.data.Trim() -ge 1
 }
 
+Invoke-Case 'API-INI-054' '🔴 P0 50 个并发锁 1 件（库存 10）：恰好成功 10 次，不超卖' {
+    # BUSINESS.md 20.2 把 lock:stock:{skuId} 列为分布式锁，但代码里**没有这个键** ——
+    # 原子性来自数据库本身（条件 UPDATE：available >= quantity 才扣）。
+    # 这比 Redis 锁更强（没有 TTL 到期导致两个请求同时进临界区的问题），
+    # 但「更强」这件事必须有证据，否则「锁没实现」也可能真的是没实现。
+    #
+    # 秒杀那条路有 200 并发用例，常规库存这条路此前**没有**并发覆盖 ——
+    # 而常规库存才是绝大多数订单走的路径。
+    $skuId = 880000000000 + $script:suffix
+    # Invoke-Internal 已经带上 internal/inventory/ 前缀，这里只传动作名
+    $init = Invoke-Internal 'Init' @{
+        skuId = $skuId; quantity = 10; productName = '并发锁库存回归'; skuSpecText = '红'
+        warnThreshold = 0; bizNo = "conc-$($script:suffix)"
+    }
+    if (-not $init.success) { Write-Host ("        初始化失败: " + $init.message) -ForegroundColor DarkYellow; return $false }
+
+    $jobs = 1..50 | ForEach-Object {
+        $n = $_
+        Start-ThreadJob -ScriptBlock {
+            param($url, $sku, $n)
+            try {
+                $r = Invoke-RestMethod -Uri $url -Method Post -ContentType 'application/json' `
+                    -Body (@{ skuId = $sku; action = 'lock'; quantity = 1; bizNo = "conc-$sku-$n"
+                        remark = '并发回归'; platformId = 0; merchantId = 0 } | ConvertTo-Json) -TimeoutSec 60
+                if ($r.success) { 'OK' } else { "NO:$($r.code)" }
+            } catch { 'ERR' }
+        } -ArgumentList "$Inventory/internal/inventory/Apply", $skuId, $n
+    }
+    $done = $jobs | Wait-Job -Timeout 180 | Receive-Job
+    $jobs | Remove-Job -Force
+
+    $ok = @($done | Where-Object { $_ -eq 'OK' }).Count
+    $err = @($done | Where-Object { $_ -like 'NO:*' -or $_ -eq 'ERR' }).Count
+    $after = Get-Snapshot $skuId
+
+    Write-Host ("        成功 {0} / 不足 {1}；available={2} locked={3}" -f `
+        $ok, $err, $after.available, $after.locked) -ForegroundColor DarkGray
+
+    # 恰好 10 次成功；available 不能为负；locked 不能超过初始库存
+    return $ok -eq 10 -and $after.available -eq 0 -and $after.locked -eq 10
+}
+
 Invoke-Case 'API-INI-053' '清理：删补偿记录' {
     Invoke-Psql "DELETE FROM pending_stock_release WHERE biz_no LIKE 'COMP-REL-$($script:suffix)%';" | Out-Null
     return $true
