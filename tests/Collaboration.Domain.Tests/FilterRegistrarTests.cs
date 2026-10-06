@@ -80,6 +80,46 @@ public sealed class FilterRegistrarTests
         }
     }
 
+    /// <summary>
+    /// 商户账号的租户条件必须**同时**带 platform_id 与 merchant_id（TEST_CASES API-TEN-002）。
+    /// </summary>
+    /// <remarks>
+    /// 只加 platform_id 是最容易被漏掉的一种：商户 A 与商户 B 在同一个平台下，
+    /// 少一个 merchant_id 条件，A 就能在列表里看到 B 的全部店铺数据。
+    /// 端到端很难覆盖到这一层（要先建出平台维度的商户账号再比对列表），
+    /// 所以在这里对着生成的 SQL 断言 —— 条件数量不对，测试立刻红。
+    /// </remarks>
+    [Fact]
+    public void Register_ShouldScopeMerchantAccountToItsOwnMerchant()
+    {
+        const long MerchantId = 555666777888999;
+
+        TenantContextHolder.Set(new TenantContext
+        {
+            Access = AccessContext.Admin,
+            TenantType = 2,          // 商户账号
+            PlatformId = PlatformId,
+            MerchantId = MerchantId
+        });
+
+        try
+        {
+            using var db = BuildFreeSql();
+            FilterRegistrar.Register(db, typeof(Merchant).Assembly);
+
+            var merchantSql = db.Select<Merchant>().ToSql();
+
+            // 两个条件各出现且**只出现一次**：重复叠加同样是有问题的 SQL
+            Assert.Equal(1, CountOccurrences(merchantSql, $"\"platform_id\" = {PlatformId}"));
+            Assert.Equal(1, CountOccurrences(merchantSql, $"\"merchant_id\" = {MerchantId}"));
+            Assert.Equal(1, CountOccurrences(merchantSql, "\"is_deleted\" = 'f'"));
+        }
+        finally
+        {
+            TenantContextHolder.Clear();
+        }
+    }
+
     /// <summary>构造不连接数据库的 FreeSql，仅用于生成 SQL。</summary>
     private static IFreeSql BuildFreeSql()
         => new FreeSqlBuilder()
