@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Infrastructure;
 using MediatR;
 using MarketingService.Application.Services;
 using MarketingService.Domain.Entities;
@@ -47,6 +48,19 @@ public sealed class AddSessionItemHandler : IRequestHandler<AddSessionItemComman
             return ApiResults.Fail<long>(BaseApiResponseCode.NotFound, "SKU 不存在或已下架");
         }
 
+        // 同一场次内同一个 SKU 只能有一条：库里已经有唯一约束
+        // （uk_seckill_item_session_sku）兜底，但**不能靠它报错** ——
+        // 唯一约束抛出来会变成 500「服务器内部错误，请稍后重试」，
+        // 运营看到的是一句让他重试的提示，于是他会再点一次、再吃一个 500，
+        // 最后当成系统故障报上来。这里先查一次，给一句能看懂的话。
+        var existingItems = await _seckill.ListItemsAsync(session.Id, ct);
+        if (existingItems.Any(a => a.SkuId == request.SkuId))
+        {
+            return ApiResults.Fail<long>(
+                BaseApiResponseCode.BusinessError,
+                "该商品已在本次场次中，同一场次内一个商品只能配置一条");
+        }
+
         // 秒杀价比原价还贵没有意义，而且会让用户对整个价格体系失去信任。
         // 这条比「价格必须大于 0」重要得多
         if (request.SeckillPrice >= sku.Price)
@@ -76,7 +90,21 @@ public sealed class AddSessionItemHandler : IRequestHandler<AddSessionItemComman
             SortOrder = request.SortOrder
         };
 
-        var id = await _seckill.InsertItemAsync(item, ct);
+        long id;
+        try
+        {
+            id = await _seckill.InsertItemAsync(item, ct);
+        }
+        catch (Exception ex) when (PostgresErrors.IsUniqueViolationOn(ex, "uk_seckill_item_session_sku"))
+        {
+            // 两个并发请求同时加同一个 SKU：上面的预检查都放行了，
+            // 由唯一约束决定谁赢。这里把输的那个翻译成同一句业务提示，
+            // 而不是让约束异常冒泡成 500。
+            return ApiResults.Fail<long>(
+                BaseApiResponseCode.BusinessError,
+                "该商品已在本次场次中，同一场次内一个商品只能配置一条");
+        }
+
         return ApiResults.Ok(id, "添加成功");
     }
 }

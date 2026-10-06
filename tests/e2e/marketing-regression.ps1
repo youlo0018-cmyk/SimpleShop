@@ -581,6 +581,26 @@ Invoke-Case 'API-SKL-003' '加商品成功，快照下商品名 / 规格 / 图 /
         -and $row.seckillStock -eq $script:sklQty -and $row.remaining -eq $script:sklQty -and $row.soldCount -eq 0
 }
 
+Invoke-Case 'API-SKL-004' '🔴 同一 SKU 在同一场次内加第二次：给业务提示，不是 500' {
+    # 限购幂等键是 {itemId}:{customerId}，所以同一场次里同一个 SKU 若有两条记录，
+    # 同一个人就能各买一次 —— 「每人每场次限购 1 件」直接失效。
+    # 库里已有唯一约束 uk_seckill_item_session_sku 兜底，但**不能让约束异常冒泡**：
+    # 那会变成 500「服务器内部错误，请稍后重试」，运营看到「稍后重试」就会再点一次，
+    # 再吃一个 500，最后当成系统故障报上来。
+    try {
+        $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/Add' -Method Post `
+            -Body (@{ sessionId = $script:sklSessionId; skuId = $script:sklSkuId; seckillPrice = 88.00; seckillStock = 1; perUserLimit = 1 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 20
+        Write-Host ("        success={0} msg={1}" -f $r.success, $r.message) -ForegroundColor DarkGray
+        return (-not $r.success) -and $r.message -match '已在本次场次'
+    } catch {
+        $status = [int]$_.Exception.Response.StatusCode
+        Write-Host ("        HTTP {0}（不该是 500）" -f $status) -ForegroundColor DarkGray
+        # 500 说明唯一约束异常冒泡了 —— 这正是要挡掉的
+        return $false
+    }
+}
+
 Invoke-Case 'API-SKL-010' '🔴 P0 发布：库存从常规池划到秒杀池（50 → 40）' {
     $before = (Get-SkuStock $script:sklSkuId).available
     $r = Publish-Skl $script:sklSessionId
