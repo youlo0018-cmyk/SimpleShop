@@ -279,6 +279,44 @@ PV / 操作 / 异常中间件 → RabbitMQ → LogService → Elasticsearch（�
 
 **验证点**：ES 不可用时中间件**不阻塞业务请求**（异步 + 失败降级）。
 
+## 机制对照：BUSINESS.md 20.2 的七个锁键
+
+规格按「Redis 分布式锁」写，实现里只有两处真的用 Redis 锁，其余用**同等强度、更便宜的机制**
+达成了同一保证（并发正确性由各自的回归用例验证）。这张表是为了让后来者不必再去代码里找
+「那个不存在的锁」：
+
+| 规格锁键 | 实现 | 为什么够用 |
+|---|---|---|
+| `lock:order:create:{customerId}` | **Redis 锁**（`RedisOrderCreateLock`） | 下单要跨「占券 / 锁积分 / 锁库存 / 落单」四步，没有单一数据库行可以承载互斥 |
+| `lock:job:{jobName}` | **Redis 锁**（`JobRunner`） | 多实例定时任务互斥，锁本身就是需求 |
+| `lock:order:{orderId}` | 条件更新 `WHERE status = from`（乐观 CAS） | 状态机迁移天然可条件化：并发只有一个 `ExecuteAffrows` 返回 1，比锁更短、无死锁 |
+| `lock:payment:order\|callback\|refund:{bizNo}` | 唯一索引 + 条件更新 | 幂等键本来就是唯一索引，加锁只是重复一遍数据库已经做的事 |
+| `lock:stock:{skuId}` | 条件更新 `WHERE available >= qty` | 扣减是原子的，**不会超卖**；`lock:stock` 式加锁会把并发压成串行 |
+| `lock:point:{customerId}` | 条件更新 + `point_lock` 记录 | 余额不足时条件更新影响 0 行，天然挡住并发透支 |
+| `lock:seckill:item:{seckillItemId}` | Redis 原子预扣 `seckill:stock:{itemId}` | 与规格同一思路，键名不同；200 线程并发用例断言恰好成交 10 件 |
+
+## 机制对照：BUSINESS.md 20.1 的十个 Topic
+
+规格把跨服务协作写成「发事件、各自消费」，实现里**只有日志链路真的走 MQ**
+（`pv.log` / `operation.log` / `exception.log` + 死信重放）与商品索引同步（`product.changed`）。
+其余链路一律是**内网 HTTP 同步调用**。这不是漏做，是取舍：
+
+| 规格 Topic | 实现 | 为什么 |
+|---|---|---|
+| `payment.succeeded` | `OrderPaymentCompleter` 同步调库存 / 积分 / 营销，最后改状态 | 顺序有硬要求（**下游先做、状态最后改**），失败要立刻把「钱收了但单没成就」暴露给调用方；MQ 化之后这个顺序得靠编排，反而更难保证 |
+| `payment.refunded` | 退款审批通过后同步调订单 / 库存 / 积分 | 同上：审批接口要能立刻回答「退成功了没有」 |
+| `order.completed` | 签收 / 核销完成后同步调积分发放 | 用户点「确认收货」要立刻看到积分到账 |
+| `order.cancelled` | 取消 / 关单时同步回退券占用 | 券要立刻回到可用，否则用户马上下单会发现券被占着 |
+| `product.created` | 商品保存时同步初始化库存 | 库存没初始化，商品上架即超卖 |
+| `product.changed` | **MQ 发布**（索引同步） | 索引是最终一致的旁路，允许延迟，适合异步 |
+| `evaluate.created` | 评价发布时同步调积分发放（首评 +20） | 同 `order.completed`：用户要立刻看到 |
+| `seckill.order.requested` | 抢购时同步调订单服务落单 | 抢购结果要**立刻**回给客户端轮询（`GrabResult`），异步落单等于把「抢到了吗」变成第二次等待 |
+| `seckill.session.ended` | 场次结束时同步回补库存 | 回补失败要有明确失败点，便于补偿重试 |
+| `pv.log` / `operation.log` / `exception.log` | **MQ 发布 → LogService → ES（带 DLQ）** | 日志是纯旁路，绝不能拖慢业务请求；且量大，适合削峰 |
+
+**幂等与补偿的要求不因同步而降低**：每一步都必须能重跑（唯一索引 / 条件更新 / 业务单号），
+失败一律**先回滚已做的部分**或交给补偿任务（`pending_stock_release`、孤儿预留对账）。
+
 ---
 
 # 第二部分：风险审计
@@ -305,6 +343,7 @@ PV / 操作 / 异常中间件 → RabbitMQ → LogService → Elasticsearch（�
 | 11 | **优惠券不退** | 链路 12 | 券核销后不返还。这是**产品口径**不是缺陷，但需在客服话术与文档中明示 |
 | 12 | **评价均分延迟 24 小时** | 链路 13 / 16 | 每日 03:00 全量重算，发布后均分不立即更新。需在 C 端与运营侧说明，避免被当成 bug |
 | 13 | **C 端可见性过滤被绕过** | `DATA_SPEC` 3.2.1 | 租户过滤与公开可见性过滤是**两个独立维度**。若 AOP 未生效、被 `ClearFilter` 旁路、或新增 C 端接口忘了实现 `IPublicVisible`，**未审核商户与下架商品会直接暴露给顾客**。需在 e2e 中断言「未审核商户在 C 端查不到」 |
+| 13.5 | **C 端跨客户越权（IDOR）** | 链路 11 / 12 / 11.5、`CustomerScope` | 网关把客户令牌转成 `X-Claim-*`，服务侧**必须**用 `CustomerScope.Require`（或支付侧的 `PaymentOwnership`）校验请求里的 `customerId` / 订单归属。营销券接口与支付接口都漏过：前者能让 A 看到并锁死 B 的券，后者能让 A 把 B 的订单标成已支付。**新增任何带 customerId 的 C 端接口，先问一句「这道校验加了吗」**，并在 `marketing-regression.ps1` 的 API-SEC 组补一条 |
 | 14 | **商户资质变更后商品未同步下架** | 链路 3（商户审核 / 停用） | 商户被拒或停用时必须**批量下架**其商品**并发布 `product.changed`**。漏发事件会导致「商品页看不到但搜索搜得到」——因为**搜索走 ES 索引，不走 C 端可见性过滤** |
 | 15 | **ES 索引与商品状态最终一致** | 链路 18 | 索引更新是异步的，存在秒级延迟。运营下架商品后短时间内搜索仍可能搜到，属可接受；**但不能依赖延迟自愈**，状态变更必须显式发事件 |
 

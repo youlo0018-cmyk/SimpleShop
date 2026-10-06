@@ -37,6 +37,10 @@ public sealed class CreatePaymentHandler : IRequestHandler<CreatePaymentCommand,
             return ApiResults.Fail<PaymentDto>(BaseApiResponseCode.NotFound, "订单不存在或订单服务不可用");
         }
 
+        // C 端入口：只能给自己的订单发起支付（订单号是可枚举的字符串，不校验就是越权）
+        var notOwner = PaymentOwnership.RejectIfNotOwner(order);
+        if (notOwner is not null) return notOwner;
+
         if (order.Status != OrderStatusNumbers.PendingPayment)
         {
             return ApiResults.Fail<PaymentDto>(
@@ -74,17 +78,31 @@ public sealed class CreatePaymentHandler : IRequestHandler<CreatePaymentCommand,
 public sealed class QueryPaymentHandler : IRequestHandler<QueryPaymentCommand, ApiResponse<PaymentDto>>
 {
     private readonly IPaymentRepository _payments;
+    private readonly IOrderPort _orders;
 
     /// <summary>构造处理器。</summary>
     /// <param name="payments">支付仓储。</param>
-    public QueryPaymentHandler(IPaymentRepository payments) => _payments = payments;
+    /// <param name="orders">订单端口，只用于校验归属（防 IDOR）。</param>
+    public QueryPaymentHandler(IPaymentRepository payments, IOrderPort orders)
+    {
+        _payments = payments;
+        _orders = orders;
+    }
 
     /// <summary>执行查询。</summary>
     /// <param name="request">命令。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>支付单视图。</returns>
+    /// <remarks>
+    /// 查支付单也要验归属：它带着金额与支付状态，是别人订单的信息。
+    /// 代价是每次查询多一次内网调用 —— 换来的是「顾客看不到别人的单」。
+    /// </remarks>
     public async Task<ApiResponse<PaymentDto>> Handle(QueryPaymentCommand request, CancellationToken ct)
     {
+        var (_, failure) = await PaymentOwnership.LoadOwnedAsync(_orders, request.OrderNo, ct)
+            .ConfigureAwait(false);
+        if (failure is not null) return failure;
+
         var payment = await _payments.GetByOrderNoAsync(request.OrderNo.Trim(), ct).ConfigureAwait(false);
         return payment is null
             ? ApiResults.Fail<PaymentDto>(BaseApiResponseCode.NotFound, "支付单不存在")

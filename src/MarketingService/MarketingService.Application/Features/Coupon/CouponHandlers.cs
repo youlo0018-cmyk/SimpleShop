@@ -22,21 +22,10 @@ public sealed class ClaimCouponHandler : IRequestHandler<ClaimCouponCommand, Api
     /// <returns>成功返回券码列表。</returns>
     public async Task<ApiResponse<ClaimCouponResult>> Handle(ClaimCouponCommand request, CancellationToken ct)
     {
-        var ctx = TenantContextHolder.Current;
-        var customerId = ctx.IsCustomer ? ctx.UserId : request.CustomerId;
-        if (ctx.IsCustomer && request.CustomerId > 0 && request.CustomerId != ctx.UserId)
-        {
-            return ApiResults.Fail<ClaimCouponResult>(
-                BaseApiResponseCode.Forbidden,
-                "不能替其他客户领券");
-        }
-
-        if (customerId <= 0)
-        {
-            return ApiResults.Fail<ClaimCouponResult>(
-                BaseApiResponseCode.Unauthorized,
-                "请先登录后再领券");
-        }
+        // 防 IDOR：客户令牌存在时以令牌里的客户为准，与请求体不一致直接 403
+        // （静默改用令牌客户会把客户端的 bug 藏起来，见 CustomerScope 的说明）。
+        // 抛出的 BaseApiException 由全局异常中间件转成统一响应，与订单 / 积分 / 购物车同一口径。
+        var customerId = CustomerScope.Require(request.CustomerId);
 
         var result = await _coupons.ClaimAsync(
             customerId, request.ActivityId, request.Quantity, DateTime.UtcNow, ct);
@@ -131,8 +120,13 @@ public sealed class OccupyCouponHandler : IRequestHandler<OccupyCouponCommand, A
     /// <returns>成功返回实际优惠金额。</returns>
     public async Task<ApiResponse<CouponOccupyResult>> Handle(OccupyCouponCommand request, CancellationToken ct)
     {
+        // 防 IDOR：`/coupons/Occupy` 经网关对客户令牌开放，不校验的话
+        // 客户 A 能拿客户 B 的券去占用（把 B 的券锁死）。内部调用（订单服务）没有客户上下文，
+        // Require 直接返回请求里的客户 Id，不受影响。
+        var customerId = CustomerScope.Require(request.CustomerId);
+
         var outcome = await _coupons.OccupyAsync(
-            request.CustomerId, request.OrderNo, request.CouponId, request.Lines, DateTime.UtcNow, ct);
+            customerId, request.OrderNo, request.CouponId, request.Lines, DateTime.UtcNow, ct);
 
         if (!outcome.Succeeded)
         {
@@ -166,7 +160,8 @@ public sealed class ConsumeCouponHandler : IRequestHandler<ConsumeCouponCommand,
     /// <returns>成功返回空响应。</returns>
     public async Task<ApiResponse<CouponOccupyResult>> Handle(ConsumeCouponCommand request, CancellationToken ct)
     {
-        var outcome = await _coupons.ConsumeAsync(request.CustomerId, request.OrderNo, ct);
+        var customerId = CustomerScope.Require(request.CustomerId);
+        var outcome = await _coupons.ConsumeAsync(customerId, request.OrderNo, ct);
 
         if (!outcome.Succeeded)
         {
@@ -193,7 +188,8 @@ public sealed class ReleaseCouponHandler : IRequestHandler<ReleaseCouponCommand,
     /// <returns>成功返回空响应。</returns>
     public async Task<ApiResponse<CouponOccupyResult>> Handle(ReleaseCouponCommand request, CancellationToken ct)
     {
-        var outcome = await _coupons.ReleaseAsync(request.CustomerId, request.OrderNo, ct);
+        var customerId = CustomerScope.Require(request.CustomerId);
+        var outcome = await _coupons.ReleaseAsync(customerId, request.OrderNo, ct);
 
         if (!outcome.Succeeded)
         {
@@ -226,10 +222,16 @@ public sealed class SettleCouponsHandler : IRequestHandler<SettleCouponsCommand,
     {
         if (request.CustomerId <= 0)
         {
+            // 游客只算活动价不计券（BUSINESS.md 11.5）：这里返回空列表而不是 401
             return ApiResults.Ok(new SettleCouponResult(false, null, Array.Empty<SettleCouponOption>()));
         }
 
-        var available = await _coupons.ListAvailableAsync(request.CustomerId, DateTime.UtcNow, ct);
+        // 🔴 防 IDOR：结算页试算会把「客户名下有哪些券、各减多少」原样返回，
+        // 不校验归属的话，任何登录客户传别人的 customerId 就能看到别人的券包
+        // （实测过：A 传 B 的 Id 拿到了 B 的券与优惠额）。
+        var customerId = CustomerScope.Require(request.CustomerId);
+
+        var available = await _coupons.ListAvailableAsync(customerId, DateTime.UtcNow, ct);
 
         var options = new List<SettleCouponOption>();
         foreach (var coupon in available)

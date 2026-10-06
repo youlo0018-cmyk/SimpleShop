@@ -1,4 +1,5 @@
 using Collaboration.Domain.Common;
+using Collaboration.Domain.Context;
 using MarketingService.Domain.Entities;
 using MarketingService.Domain.IRepository;
 using MarketingService.Domain.Services;
@@ -451,14 +452,10 @@ public sealed class QueryMyCouponsHandler
     public async Task<ApiResponse<PagedResult<CouponRecordItem>>> Handle(
         QueryMyCouponsCommand request, CancellationToken ct)
     {
-        var ctx = Collaboration.Domain.Context.TenantContextHolder.Current;
-        var customerId = ctx.IsCustomer ? ctx.UserId : request.CustomerId;
-        if (customerId <= 0)
-        {
-            return ApiResults.Fail<PagedResult<CouponRecordItem>>(
-                BaseApiResponseCode.Unauthorized,
-                "请先登录后再查看券包");
-        }
+        // 防 IDOR：客户令牌存在时以令牌里的客户为准，与请求体不一致直接 403。
+        // 之前是「静默改用令牌客户」，虽然没泄露数据，但客户端传错 Id 时界面照常显示，
+        // bug 会一直藏着；而且与订单 / 积分 / 购物车的口径不一致（那三处都是 403）。
+        var customerId = CustomerScope.Require(request.CustomerId);
 
         var page = await _coupons.PageUserCouponsAsync(
             request.Page, request.PageSize, request.Status,

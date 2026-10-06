@@ -115,7 +115,12 @@ public sealed class GlobalExceptionMiddleware
         context.Response.Clear();
         context.Response.StatusCode = (int)status;
         context.Response.ContentType = "application/json; charset=utf-8";
-        var code = status == HttpStatusCode.BadRequest ? BaseApiResponseCode.BadRequest : BaseApiResponseCode.InternalError;
+        // 响应体里的 code 必须与 HTTP 状态一致：前端按 code 分支（401 去登录、403 提示无权限、
+        // 404 提示不存在）。原来只有 400 映射正确，403 / 401 / 404 一律回 500 ——
+        // 小程序会把「没权限」当「服务器挂了」处理，用户看到「请稍后重试」而不是「无权限」。
+        var code = Enum.IsDefined(typeof(BaseApiResponseCode), (int)status)
+            ? (BaseApiResponseCode)(int)status
+            : BaseApiResponseCode.InternalError;
         await context.Response.WriteAsync(JsonSerializer.Serialize(ApiResults.Fail<object>(code, message, errors), JsonOpts));
     }
 }

@@ -506,6 +506,9 @@ S0 基础设施
 | 11 | **活动报表与下钻订单明细根本没做** | BUSINESS.md 17 / 19、TEST_CASES API-RPT-003 | 营销效果报表只有「券」那一半；活动的参与订单数 / 参与金额 / 折扣总额没有任何数据源（订单行只存折扣额、不存命中了哪个活动），`MarketingActivityRecord` 实体在 BUSINESS 19 里写着却不存在。已补 `marketing_activity_record` + 下单试算时记参与 + 报表逐活动段 + 下钻接口与页面 |
 | 12 | 活动表单上的**每单限购 / 总限量是假旋钮** | DATA_SPEC 5.11（字段表里根本没有这两项）、CODING_STANDARD | `per_order_limit` / `total_quantity` / `used_quantity` 只在 CRUD 里读写，**没有任何业务逻辑读它们**：活动粒度是「一单命中一次」，任何 ≥1 的每单限购都与 1 等价；活动也没有总量限制。运营配了「总限量 5」而活动照跑不误。已从命令、校验与表单里去掉（列保留兼容历史数据），旧客户端继续带这两个字段也不会 400 |
 | 13 | 活动的**新建与编辑校验不一致**（编辑少一条） | DATA_SPEC 5.11 约束、CODING_STANDARD 3.3 | 编辑校验漏了「指定 SPU / SKU 时必须填商品 Id 列表」：同样的活动**建不出来、却能改出来**，改完适用金额恒为 0 —— 列表上显示「已启用」，实际对谁都生效不了。两条路径各写一份规则必然会漂移，已抽成 `IPromotionActivitySpec` + 泛型规则集由新建与编辑共用 |
+| 14 | 🔴 **营销券接口没有归属校验（IDOR）** | BUSINESS.md 5.3、TEST_CASES 6.2（P0-ACL-007） | `/coupons/My`、`/coupons/Settle`、`/coupons/Occupy|Consume|Release` 都没调 `CustomerScope`：实测客户 A 传客户 B 的 `customerId` 就能拿到 B 的**券与优惠额**（结算试算原样回显券包），还能用 B 的券去占单（把别人的券锁死）。订单 / 购物车 / 积分 / 评价四处早有这道校验，营销侧漏了 |
+| 15 | 🔴 **支付接口没有归属校验（IDOR）** | BUSINESS.md 10.1、TEST_CASES 6.2 | 支付命令里只有**订单号**（可枚举），`/payments/Confirm` 又是 C 端路径：任何登录客户都能把**别人的订单**标成已支付（`Create` / `Query` 同理，Query 还会回显别人的金额与支付状态）。已加 `PaymentOwnership`：客户令牌存在时订单归属必须匹配 |
+| 16 | 异常中间件把 401 / 403 / 404 的**业务码写成 500** | DATA_SPEC 4.5（前端按 code 分支） | `WriteAsync` 里 `code = status == 400 ? 400 : 500`：HTTP 状态是对的，但响应体 code 一律 500，小程序会把「没权限」当「服务器挂了」提示「请稍后重试」 |
 
 **更新规则**：每阶段结束时把该行改为「已完成」并填完成日期，同时在 `AI_HANDOFF.md` 进度日志追加条目（`AI_HANDOFF` 第 3 节第 1 条）。
 

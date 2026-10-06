@@ -1496,6 +1496,104 @@ Invoke-Case 'API-SKL-018' '清理：删商品 → 删分类' {
     return $true
 }
 
+Write-Host "`n=== SEC 跨客户越权（IDOR）===" -ForegroundColor Cyan
+
+# 网关把客户令牌转成 X-Claim-*，服务侧用 CustomerScope 校验请求体里的 customerId。
+# 所以这几条**必须经网关**调用：直连服务没有客户上下文，测不出这条防线。
+#
+# 背景：营销侧的券包 / 结算试算 / 占券原来都没有这道校验 ——
+# 实测客户 A 传客户 B 的 customerId 能拿到 B 的券与优惠额（甚至能把 B 的券锁死）。
+
+$script:idorCustomerA = 0
+$script:idorCustomerB = 0
+$script:idorTokenA = ''
+
+function New-CustomerViaGateway([string]$tag, [int]$offset) {
+    # 手机号必须 11 位且 1[3-9] 开头，两个客户要用不同的号
+    $tail = ([string]($script:suffix + $offset)).PadLeft(8, '0').Substring(0, 8)
+    return Invoke-RestMethod "$Gateway/gateway/customers/Register" -Method Post -ContentType 'application/json' `
+        -Body (@{
+            customerName = "$tag$($script:suffix)"; password = 'Gc12345678'
+            phone = "137$tail"; nickName = $tag
+        } | ConvertTo-Json) -TimeoutSec 30
+}
+
+# 带客户令牌打网关，并把响应体里的 code 也带出来（前端按它分支）
+function Post-AsCustomer([string]$path, $body, [string]$token) {
+    try {
+        $r = Invoke-RestMethod "$Gateway$path" -Method Post -Headers @{ Authorization = "Bearer $token" } `
+            -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 6) -TimeoutSec 30
+        return [pscustomobject]@{ status = 200; success = $r.success; code = $r.code; data = $r.data }
+    } catch {
+        $raw = $_.ErrorDetails.Message
+        $code = -1
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            try { $code = ($raw | ConvertFrom-Json).code } catch { $code = -1 }
+        }
+        return [pscustomobject]@{
+            status = [int]$_.Exception.Response.StatusCode; success = $false; code = $code; data = $null
+        }
+    }
+}
+
+Invoke-Case 'API-SEC-010' '准备：经网关注册两个客户，各自拿到客户令牌' {
+    $a = New-CustomerViaGateway 'idorA' 0
+    $b = New-CustomerViaGateway 'idorB' 7
+    $script:idorCustomerA = [long]$a.data.customerId
+    $script:idorCustomerB = [long]$b.data.customerId
+    $script:idorTokenA = [string]$a.data.token
+    return $script:idorCustomerA -gt 0 -and $script:idorCustomerB -gt 0 `
+        -and $script:idorCustomerA -ne $script:idorCustomerB -and $script:idorTokenA.Length -gt 20
+}
+
+Invoke-Case 'API-SEC-011' '🔴 客户 A 用客户 B 的 Id 查券包 → 403（曾能拿到别人的券）' {
+    $r = Post-AsCustomer '/gateway/coupons/My' @{
+        customerId = $script:idorCustomerB; status = 0; page = 1; pageSize = 10
+    } $script:idorTokenA
+
+    # HTTP 与响应体的 code 都必须是 403：前端按 code 分支，
+    # 原来异常中间件把 403 写成 500，小程序会当「服务器挂了」处理。
+    return $r.status -eq 403 -and $r.code -eq 403
+}
+
+Invoke-Case 'API-SEC-012' '🔴 客户 A 用客户 B 的 Id 试算券 → 403（结算页会回显券包内容）' {
+    $r = Post-AsCustomer '/gateway/coupons/Settle' @{
+        customerId = $script:idorCustomerB
+        lines = @(@{ spuId = 100; skuId = 1001; amount = 200 })
+    } $script:idorTokenA
+
+    return $r.status -eq 403 -and $null -eq $r.data
+}
+
+Invoke-Case 'API-SEC-013' '🔴 客户 A 用客户 B 的 Id 占券 → 403（否则能把别人的券锁死）' {
+    $r = Post-AsCustomer '/gateway/coupons/Occupy' @{
+        customerId = $script:idorCustomerB; orderNo = "IDOR-$($script:suffix)"; couponId = 0
+        lines = @(@{ spuId = 100; skuId = 1001; amount = 200 })
+    } $script:idorTokenA
+
+    return $r.status -eq 403
+}
+
+Invoke-Case 'API-SEC-014' '客户 A 用自己的 Id 查券包 → 200（防线不误伤正常请求）' {
+    $r = Post-AsCustomer '/gateway/coupons/My' @{
+        customerId = $script:idorCustomerA; status = 0; page = 1; pageSize = 10
+    } $script:idorTokenA
+
+    return $r.status -eq 200 -and $r.success
+}
+
+Invoke-Case 'API-SEC-015' '🔴 客户 A 查别人订单的支付单 → 403（支付接口参数只有订单号）' {
+    # 支付侧的命令里只有订单号（可枚举），所以「是不是自己的单」只能在服务端查订单归属。
+    # 用前面那笔报表订单：它属于另一个客户，A 拿令牌来查必须被拒。
+    if ([string]::IsNullOrWhiteSpace($script:rptOrderNo)) { return $false }
+
+    $r = Post-AsCustomer '/gateway/payments/Query' @{ orderNo = $script:rptOrderNo } $script:idorTokenA
+
+    # 支付侧是「处理器直接返回失败」而不是抛异常，所以 HTTP 可能是 200 ——
+    # 判业务码，不判 HTTP（本项目两种失败形态并存，只认 success/code 才不会被表象骗过）。
+    return (-not $r.success) -and $r.code -eq 403
+}
+
 Write-Host "`n=== 汇总 ===" -ForegroundColor Cyan
 Write-Host ("  通过: " + $script:pass + "  失败: " + $script:fail)
 

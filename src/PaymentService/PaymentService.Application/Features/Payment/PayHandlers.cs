@@ -24,8 +24,20 @@ public sealed class ConfirmPaymentHandler : IRequestHandler<ConfirmPaymentComman
     /// <param name="request">命令。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>支付单视图。</returns>
+    /// <remarks>
+    /// 🔴 <b>先验归属再确认</b>：这是 C 端入口，命令里只有订单号（可枚举）。
+    /// 不校验的话，任何登录客户都能把别人的订单标成已支付 ——
+    /// 与 <c>/payments/Simulate</c> 那个洞同一形状（那个洞靠权限点挡住了）。
+    /// </remarks>
     public async Task<ApiResponse<PaymentDto>> Handle(ConfirmPaymentCommand request, CancellationToken ct)
-        => await PaymentExecutor.ExecuteAsync(request.OrderNo, succeed: true, _payments, _orders, null, ct);
+    {
+        var (_, failure) = await PaymentOwnership.LoadOwnedAsync(_orders, request.OrderNo, ct)
+            .ConfigureAwait(false);
+        if (failure is not null) return failure;
+
+        return await PaymentExecutor.ExecuteAsync(request.OrderNo, succeed: true, _payments, _orders, null, ct)
+            .ConfigureAwait(false);
+    }
 }
 
 /// <summary>模拟支付处理器（后台订单列表每行的按钮）。</summary>
