@@ -151,8 +151,16 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
 
                 if (existingOccupancy is not null)
                 {
+                    // 幂等命中也要把**逐行分摊**一起回给订单侧：重试的下单如果拿不到分摊，
+                    // 就会退化成「按全行比例自己算」，同一张单两次下单得到两套逐行金额。
                     var alreadyCoupon = _db.Select<UserCoupon>().Where(a => a.Id == existingOccupancy.CouponId).First();
-                    result = new CouponOutcome(true, true, existingOccupancy.CouponId, existingOccupancy.DiscountAmount);
+                    result = new CouponOutcome(true, true, existingOccupancy.CouponId, existingOccupancy.DiscountAmount)
+                    {
+                        LineDiscounts = alreadyCoupon is null
+                            ? []
+                            : CouponCalculator.AllocateToCoveredLines(
+                                alreadyCoupon, lines, existingOccupancy.DiscountAmount)
+                    };
                     return;
                 }
 
@@ -248,7 +256,12 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
                     }
                 }
 
-                result = new CouponOutcome(true, false, coupon.Id, quote.DiscountAmount);
+                // 逐行分摊在这里算：只有营销侧知道这张券覆盖了哪几行
+                // （订单侧只有「总额」，按全行比例分会把优惠摊到作用域外的行上）。
+                result = new CouponOutcome(true, false, coupon.Id, quote.DiscountAmount)
+                {
+                    LineDiscounts = CouponCalculator.AllocateToCoveredLines(coupon, lines, quote.DiscountAmount)
+                };
             }), ct);
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
@@ -256,7 +269,16 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
             // 唯一索引挡住了重复占同一订单
             var existing = await _db.Select<CouponOccupancy>().Where(a => a.OrderNo == orderNo).FirstAsync(ct);
             if (existing is null) throw;
-            return new CouponOutcome(true, true, existing.CouponId, existing.DiscountAmount);
+
+            var existingCoupon = await _db.Select<UserCoupon>()
+                .Where(a => a.Id == existing.CouponId).FirstAsync(ct).ConfigureAwait(false);
+
+            return new CouponOutcome(true, true, existing.CouponId, existing.DiscountAmount)
+            {
+                LineDiscounts = existingCoupon is null
+                    ? []
+                    : CouponCalculator.AllocateToCoveredLines(existingCoupon, lines, existing.DiscountAmount)
+            };
         }
 
         return result;

@@ -120,7 +120,7 @@ public interface ICouponPort
     /// <param name="lines">订单行，用于算券优惠。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>占用结果。没券可用时返回 0 与 0 折扣，<b>不算失败</b>。</returns>
-    Task<(long CouponId, decimal Discount)> OccupyAsync(
+    Task<CouponOccupancy> OccupyAsync(
         long customerId, string orderNo, long couponId,
         IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default);
 
@@ -152,17 +152,45 @@ public interface ICouponPort
     /// <summary>只读试算：列出当前可用券与各自的优惠额，<b>绝不占用</b>。</summary>
     /// <param name="customerId">客户 Id。</param>
     /// <param name="lines">订单行。</param>
+    /// <param name="couponId">
+    /// 客户端当前选中的券 Id，0 表示还没选。传了的话会额外回一份这张券的**逐行分摊**，
+    /// 让结算页的逐行优惠与下单后的逐行优惠逐分一致（券有作用域，分摊只有营销侧算得对）。
+    /// </param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>可用券及优惠额；没有可用券时返回空集合。</returns>
+    /// <returns>可用券、优惠额与（指定券时）逐行分摊；没有可用券时 Options 为空集合。</returns>
     /// <remarks>
     /// 结算页要在下单**之前**把「有哪些券能用、各减多少、哪张最优惠」告诉用户
     /// （用户需求 K9），所以这里必须是只读的。
     /// 复用 <c>OccupyAsync</c> 来试算会在用户每看一眼结算页时就锁掉一张券 ——
     /// 看了三次页面，客户的券就被占没了。
     /// </remarks>
-    Task<IReadOnlyList<CouponQuoteOption>> QuoteAsync(
-        long customerId, IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default);
+    Task<CouponQuoteResult> QuoteAsync(
+        long customerId, IReadOnlyList<CouponPortLine> lines, long couponId = 0,
+        CancellationToken ct = default);
 }
+
+/// <summary>券试算结果。</summary>
+/// <param name="Options">可用券及各自优惠额。</param>
+/// <param name="ChosenLineDiscounts">
+/// 命令里指定的那张券的逐行分摊额，长度与订单行一致；空数组表示没指定或指定的券不可用。
+/// </param>
+public readonly record struct CouponQuoteResult(
+    IReadOnlyList<CouponQuoteOption> Options, IReadOnlyList<decimal> ChosenLineDiscounts);
+
+/// <summary>占券结果。</summary>
+/// <param name="CouponId">实际占用的券 Id，0 表示没占到（没券可用不算失败）。</param>
+/// <param name="Discount">整单券优惠额，两位小数。</param>
+/// <param name="LineDiscounts">
+/// 券优惠的**逐行分摊额**，长度与订单行一致；空数组表示上游没给（老版本或没有可分摊的行），
+/// 此时调用方退回本地按全行比例分摊。
+/// </param>
+/// <remarks>
+/// <b>逐行分摊必须由营销侧给出</b>：券有作用域（全场 / 指定 SPU / 指定 SKU），
+/// 只有它知道这张券覆盖了哪几行。订单侧按全行比例自己分会把优惠摊到作用域外的行上
+/// （实测：只减 SKU A 的券被摊成 A、B 各 10 元），而部分退款正是按行应付退的。
+/// </remarks>
+public readonly record struct CouponOccupancy(
+    long CouponId, decimal Discount, IReadOnlyList<decimal> LineDiscounts);
 
 /// <summary>一张可用券在当前订单下的试算结果。</summary>
 /// <param name="CouponId">用户券 Id。</param>

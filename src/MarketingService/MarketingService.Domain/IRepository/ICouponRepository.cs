@@ -14,7 +14,19 @@ public sealed record CouponOutcome(
     bool AlreadyApplied,
     long CouponId,
     decimal DiscountAmount,
-    string Error = "");
+    string Error = "")
+{
+    /// <summary>
+    /// 券优惠按行的分摊额（与结算页同一份算法，见
+    /// <see cref="Services.CouponCalculator.AllocateToCoveredLines"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 空数组表示「没有可分摊的行」或「这次操作不涉及分摊」（领券 / 核销 / 回退）。
+    /// 订单侧拿到非空时必须**原样使用**，不要再按全行比例算一遍 ——
+    /// 券有作用域，只有这里知道它覆盖了哪几行。
+    /// </remarks>
+    public IReadOnlyList<decimal> LineDiscounts { get; init; } = [];
+}
 
 /// <summary>领券结果。</summary>
 /// <param name="Outcome">操作结果。</param>

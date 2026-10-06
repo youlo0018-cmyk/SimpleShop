@@ -155,6 +155,59 @@ public static class CouponCalculator
         return Round2(hit);
     }
 
+    /// <summary>把券优惠额按行金额比例分摊到它<b>覆盖到</b>的那些行上。</summary>
+    /// <param name="coupon">用户券（用快照字段判定作用域）。</param>
+    /// <param name="lines">订单行。</param>
+    /// <param name="discountTotal">整单券优惠额，通常来自 <see cref="Quote"/>。</param>
+    /// <returns>逐行分摊额，长度与 <paramref name="lines"/> 一致；未覆盖的行是 0。</returns>
+    /// <remarks>
+    /// <para><b>为什么必须在这里分摊</b>：券有作用域（全场 / 指定 SPU / 指定 SKU），
+    /// 只有营销侧知道这张券覆盖了哪几行。订单侧自己按「全部行原价比例」分摊的话，
+    /// 一张「只减 SKU A」的券会把优惠摊到 SKU B 上 —— 实测过：两行各 100 元、
+    /// 券只对 A 生效，订单侧把 20 元摊成了 10 / 10，B 也被减了 10 元。
+    /// 总额没变，但**逐行归属错了**，而部分退款正是按行应付退的。</para>
+    ///
+    /// <para>算法与 <see cref="PromotionCalculator"/> 的 <c>ApplyDiscount</c> 完全一致
+    /// （按覆盖行原价比例、余数给金额最大的那一行），这样结算页的逐行优惠与订单逐行优惠逐分相同。</para>
+    /// </remarks>
+    public static IReadOnlyList<decimal> AllocateToCoveredLines(
+        Entities.UserCoupon coupon, IReadOnlyList<CouponOrderLine> lines, decimal discountTotal)
+    {
+        var result = new decimal[lines.Count];
+        if (lines.Count == 0 || discountTotal <= 0m) return result;
+
+        var covered = new List<int>();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (CoversLine(coupon, lines[i])) covered.Add(i);
+        }
+
+        if (covered.Count == 0) return result;
+
+        var baseSum = Round2(covered.Sum(i => lines[i].Amount));
+        if (baseSum <= 0m) return result;
+
+        var largest = covered[0];
+        foreach (var i in covered)
+        {
+            if (lines[i].Amount > lines[largest].Amount) largest = i;
+        }
+
+        // 余数全给金额最大的那一行：逐行按比例 Round 一定会丢几分钱，
+        // 结果就是「各行优惠之和 ≠ 整单优惠」，对账时又是一次「差一分钱」
+        var allocated = 0m;
+        foreach (var i in covered)
+        {
+            if (i == largest) continue;
+            var part = Round2(discountTotal * lines[i].Amount / baseSum);
+            result[i] = part;
+            allocated = Round2(allocated + part);
+        }
+
+        result[largest] = Round2(discountTotal - allocated);
+        return result;
+    }
+
     /// <summary>这张券是否覆盖某个订单行。</summary>
     /// <param name="coupon">用户券。</param>
     /// <param name="line">订单行。</param>

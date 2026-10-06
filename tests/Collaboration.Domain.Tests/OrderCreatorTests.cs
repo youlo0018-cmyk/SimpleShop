@@ -816,6 +816,42 @@ public class OrderCreatorTests
     }
 
     [Fact]
+    public async Task 券优惠按营销侧给的逐行分摊落库_作用域外的行不减()
+    {
+        // 券只对第一个 SKU 生效：营销侧回的分摊是 [10, 0]。
+        // 下单侧若按全行原价比例自己分，会变成 [5, 5] —— 作用域外的行也被减了钱。
+        var coupons = new FakeCouponPort { CouponId = 77, Discount = 10m, LineDiscounts = [10m, 0m] };
+        var store = new FakeOrderStore();
+
+        var result = await Build(coupons, new FakePointPort(), new FakeInventoryPort(), store)
+            .CreateAsync(Request(couponId: 77));
+
+        Assert.True(result.Succeeded);
+        var items = store.SavedItems.OrderBy(a => a.SkuId).ToList();
+        Assert.Equal(10m, items[0].CouponDiscount);
+        Assert.Equal(0m, items[1].CouponDiscount);
+        Assert.Equal(10m, store.Saved!.CouponDiscount);
+    }
+
+    [Fact]
+    public async Task 上游没给逐行分摊时退回本地按全行比例分()
+    {
+        // 老版本下游（或没占到券的路径）不给 lineDiscounts，此时只能本地分摊 ——
+        // 两条等额行、券 10 元 → 各 5 元。这是兜底，不是正确路径：
+        // 有作用域的券必须走上面那条（营销侧给分摊）。
+        var coupons = new FakeCouponPort { CouponId = 77, Discount = 10m };
+        var store = new FakeOrderStore();
+
+        var result = await Build(coupons, new FakePointPort(), new FakeInventoryPort(), store)
+            .CreateAsync(Request(couponId: 77));
+
+        Assert.True(result.Succeeded);
+        var items = store.SavedItems.OrderBy(a => a.SkuId).ToList();
+        Assert.Equal(5m, items[0].CouponDiscount);
+        Assert.Equal(5m, items[1].CouponDiscount);
+    }
+
+    [Fact]
     public async Task 指定了券却没占到时按没券继续下单而不是整单失败()
     {
         // 券可能在这几秒里被别人领走或过期。这属于正常业务，不该把整单判失败。
@@ -895,14 +931,17 @@ public class OrderCreatorTests
         public bool ThrowOnRelease;
         public List<CouponPortLine> LastLines = new();
 
-        public Task<(long CouponId, decimal Discount)> OccupyAsync(
+        /// <summary>营销侧给的逐行券分摊；留空表示上游没给，下单侧退回本地分摊。</summary>
+        public IReadOnlyList<decimal> LineDiscounts = [];
+
+        public Task<CouponOccupancy> OccupyAsync(
             long customerId, string orderNo, long couponId,
             IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
         {
             OccupyCount++;
             LastLines = lines.ToList();
             if (ThrowOnOccupy) throw new InvalidOperationException("营销服务不可用");
-            return Task.FromResult((CouponId, Discount));
+            return Task.FromResult(new CouponOccupancy(CouponId, Discount, LineDiscounts));
         }
 
         public Task ReleaseAsync(long customerId, string orderNo, CancellationToken ct = default)
@@ -938,11 +977,12 @@ public class OrderCreatorTests
         /// <summary>被试算的次数。结算试算是只读的，占用次数不该因此增加。</summary>
         public int QuoteCount { get; private set; }
 
-        public Task<IReadOnlyList<CouponQuoteOption>> QuoteAsync(
-            long customerId, IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
+        public Task<CouponQuoteResult> QuoteAsync(
+            long customerId, IReadOnlyList<CouponPortLine> lines, long couponId = 0,
+            CancellationToken ct = default)
         {
             QuoteCount++;
-            return Task.FromResult<IReadOnlyList<CouponQuoteOption>>(QuoteOptions);
+            return Task.FromResult(new CouponQuoteResult(QuoteOptions, []));
         }
     }
 

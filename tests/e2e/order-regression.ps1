@@ -1515,6 +1515,90 @@ Invoke-Case 'API-ORD-145' '试算会拦下未过审 / 已下架的商品（而�
     return (-not $preview.success) -and ($preview.message -match '下架')
 }
 
+Invoke-Case 'API-ORD-146' '🔴 P0 指定 SKU 的券只减适用行（逐行分摊由营销侧给出）' {
+    # 券的作用域只有营销侧知道。订单侧按「全部行原价比例」自己分的话，
+    # 一张「只减 SKU A」的券会把优惠摊到 SKU B 上（修之前实测 A、B 各 10 元），
+    # 而部分退款是按行应付退的 —— 逐行归属错了，钱就跟着错。
+    $skuA = [long]$script:skuIds[0]      # ORD-A：25.50
+    $skuB = [long]$script:secondSkuId    # ORD-B：10.00
+    $now = [DateTime]::UtcNow
+
+    $template = (Invoke-Api "$Marketing/marketing/coupon-templates/Create" 'Post' @{
+        templateName = "作用域券$($script:suffix)"; couponType = 1; thresholdAmount = 100; discountAmount = 20
+        validDays = 30; totalQuantity = 50; perUserLimit = 5; perOrderLimit = 1
+        platformId = 0; status = 1
+    }).data
+    $activity = (Invoke-Api "$Marketing/marketing/coupon-activities/Create" 'Post' @{
+        activityName = "作用域券活动$($script:suffix)"; templateId = $template
+        claimStartTime = $now.AddMinutes(-5).ToString('o'); claimEndTime = $now.AddDays(1).ToString('o')
+        claimQuantity = 50; perUserLimit = 5
+        targetType = 3; targets = "[$skuA]"; platformId = 0; status = 1
+    }).data
+    $claim = Invoke-Api "$Marketing/coupons/Claim" 'Post' @{
+        customerId = $script:customerId; activityId = $activity; quantity = 1
+    }
+    if (-not $claim.success) { Write-Host ("        领券失败: " + $claim.message) -ForegroundColor DarkYellow; return $false }
+
+    $my = Invoke-Api "$Marketing/coupons/My" 'Post' @{
+        customerId = $script:customerId; status = 0; page = 1; pageSize = 20
+    }
+    $couponId = [long](@($my.data.items | Where-Object { [long]$_.templateId -eq $template })[0].couponId)
+    if ($couponId -le 0) { return $false }
+
+    # A 行 4 × 25.50 = 102.00（达门槛 100）→ 券减 20；B 行 4 × 10.00 = 40.00（券不覆盖）
+    $lines = @(
+        @{ spuId = [long]$script:productId; skuId = $skuA; quantity = 4; unitPrice = 25.50
+           productName = "订单商品$($script:suffix)"; skuSpecText = '红'; deliveryType = 1 }
+        @{ spuId = [long]$script:productId; skuId = $skuB; quantity = 4; unitPrice = 10.00
+           productName = "订单商品B$($script:suffix)"; skuSpecText = '蓝'; deliveryType = 1 }
+    )
+
+    $preview = Invoke-Api "$Order/orders/Preview" 'Post' @{
+        customerId = $script:customerId; platformId = $script:platformId; merchantId = 0
+        lines = @($lines | ForEach-Object { @{ spuId = $_.spuId; skuId = $_.skuId; quantity = $_.quantity } })
+        couponId = $couponId; pointsToUse = 0
+    }
+    if (-not $preview.success) { Write-Host ("        试算失败: " + $preview.message) -ForegroundColor DarkYellow; return $false }
+
+    # ⚠️ 局部变量名不能叫 $order：PowerShell 变量名大小写不敏感，它会**覆盖脚本参数 $Order**
+    # （订单服务地址），后面所有 $Order/... 的调用都会变成「Invalid URI」。
+    $createdOrder = OrderPost 'Create' @{
+        customerId = $script:customerId; platformId = $script:platformId; merchantId = 0
+        idempotencyKey = (New-IdempotencyKey 'couponScope')
+        receiverName = '张三'; receiverPhone = '13800000000'; receiverAddress = '某地某小区 1 号楼 101'
+        lines = $lines; couponId = $couponId; pointsToUse = 0
+    }
+    if (-not $createdOrder.success) {
+        Write-Host ("        下单失败: " + $createdOrder.message) -ForegroundColor DarkYellow
+        return $false
+    }
+
+    $d = Get-Order $createdOrder.data.orderNo
+    $lineA = @($d.items | Where-Object { [long]$_.skuId -eq $skuA })[0]
+    $lineB = @($d.items | Where-Object { [long]$_.skuId -eq $skuB })[0]
+    $pvA = @($preview.data.lines | Where-Object { [long]$_.skuId -eq $skuA })[0]
+    $pvB = @($preview.data.lines | Where-Object { [long]$_.skuId -eq $skuB })[0]
+
+    Write-Host ("        下单 A行 券={0} 应付={1} | B行 券={2} 应付={3} | 整单券={4} 实付={5}" -f `
+        $lineA.couponDiscount, $lineA.payableAmount, $lineB.couponDiscount, $lineB.payableAmount,
+        $d.couponDiscount, $d.payableAmount) -ForegroundColor DarkGray
+
+    $ok = $lineA.couponDiscount -eq 20.00 -and $lineA.payableAmount -eq 82.00 `
+        -and $lineB.couponDiscount -eq 0.00 -and $lineB.payableAmount -eq 40.00 `
+        -and $d.couponDiscount -eq 20.00 -and $d.payableAmount -eq 122.00 `
+        -and $pvA.couponDiscount -eq 20.00 -and $pvB.couponDiscount -eq 0.00
+
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
+    Invoke-Api "$Marketing/marketing/coupon-activities/Update" 'Post' @{
+        activityId = $activity; activityName = "作用域券活动$($script:suffix)"; templateId = $template
+        claimStartTime = $now.AddMinutes(-5).ToString('o'); claimEndTime = $now.AddDays(1).ToString('o')
+        claimQuantity = 50; perUserLimit = 5; targetType = 3; targets = "[$skuA]"; sortOrder = 0; status = 2
+    } | Out-Null
+    Invoke-Api "$Marketing/marketing/coupon-templates/Delete" 'Post' @{ templateId = $template } | Out-Null
+
+    return $ok
+}
+
 Invoke-Case 'API-ORD-150' '🔴 P0 商户账号读不到别家的订单详情（订单表必须被租户裁剪）' {
     # 🔴 这条在修之前是**红的**，而且是实打实的越权：
     # Order 继承的是 EntityBase（订单表没有审计列），不是 AdminEntityBase，

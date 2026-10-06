@@ -120,6 +120,54 @@ public class CouponCalculatorTests
     }
 
     [Fact]
+    public void 券分摊只落在作用域内的行上()
+    {
+        // 只对 SKU 2001 生效的券：优惠额必须全部落在第二行，第一行是 0。
+        // 订单侧按「全行原价比例」自己分的话会变成 8 / 12（按 200:300），
+        // 作用域外的行也被减了钱 —— 部分退款按行应付退，逐行归属错了钱就跟着错。
+        var coupon = MakeCoupon(discountAmount: 20m, targetType: TargetTypes.BySku, targets: "[2001]");
+
+        var parts = CouponCalculator.AllocateToCoveredLines(coupon, TwoLines, 20m);
+
+        Assert.Equal(2, parts.Count);
+        Assert.Equal(0m, parts[0]);
+        Assert.Equal(20m, parts[1]);
+    }
+
+    [Fact]
+    public void 券分摊的余数给金额最大的那一行_合计恰好等于券面额()
+    {
+        // 全场券 100 元，两行 200 / 300：按比例是 40 / 60，合计正好 100。
+        // 换成除不尽的比例（如 3 行 10 元、优惠 10 元）时余数必须补给某一行，
+        // 否则「各行之和 ≠ 整单优惠」，对账时又是差一分钱。
+        var coupon = MakeCoupon(discountAmount: 10m);
+        var lines = new CouponOrderLine[]
+        {
+            new(100L, 1001L, 10m),
+            new(100L, 1002L, 10m),
+            new(100L, 1003L, 10m)
+        };
+
+        var parts = CouponCalculator.AllocateToCoveredLines(coupon, lines, 10m);
+
+        // 10 / 30 × 10 = 3.3333… → 每行 3.33，余 0.01 补给「金额最大」的那一行（等额时取第一行）
+        Assert.Equal(10m, parts.Sum());
+        Assert.Equal(3.34m, parts[0]);
+        Assert.Equal(3.33m, parts[1]);
+        Assert.Equal(3.33m, parts[2]);
+    }
+
+    [Fact]
+    public void 券分摊_没有覆盖任何行或金额为0时全是0()
+    {
+        var coupon = MakeCoupon(discountAmount: 20m, targetType: TargetTypes.BySku, targets: "[9999]");
+        Assert.All(CouponCalculator.AllocateToCoveredLines(coupon, TwoLines, 20m), p => Assert.Equal(0m, p));
+
+        var all = MakeCoupon(discountAmount: 20m);
+        Assert.All(CouponCalculator.AllocateToCoveredLines(all, TwoLines, 0m), p => Assert.Equal(0m, p));
+    }
+
+    [Fact]
     public void 代金券可无门槛()
     {
         var quote = CouponCalculator.Quote(MakeCoupon(type: CouponTypes.Cash, discountAmount: 30m), TwoLines);

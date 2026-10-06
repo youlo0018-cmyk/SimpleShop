@@ -241,6 +241,7 @@ public sealed class OrderCreator
         // 「哪张券最优」由 /coupons/Settle 在结算页算好传给这里，服务端不重复这个决策。
         long couponId = 0;
         decimal couponDiscount = 0m;
+        IReadOnlyList<decimal> occupyLineDiscounts = [];
 
         if (request.CouponId > 0)
         {
@@ -249,6 +250,7 @@ public sealed class OrderCreator
                 var occupy = await _coupons.OccupyAsync(request.CustomerId, orderNo, request.CouponId, couponLines, ct);
                 couponId = occupy.CouponId;
                 couponDiscount = occupy.Discount;
+                occupyLineDiscounts = occupy.LineDiscounts;
 
                 // 指定了券却没占到（已被别人用掉、已过期、门槛被活动改高了）：
                 // 这是正常业务，按没券继续下单，不能把整单判失败。
@@ -276,9 +278,18 @@ public sealed class OrderCreator
         // ⚠️ goodsPayable 的单位是**元**，积分的单位是**分**，所以要 ×100。
         // 漏掉这个 100 的话上限会变成 1.02 元 —— 积分基本等于不能用，
         // 而且症状是「实付怎么都降不下来」，很难联想到是这里少了 100 倍。
+        // 券优惠的逐行分摊：**优先用营销侧给的那份**（券有作用域，只有它知道覆盖了哪几行），
+        // 拿不到（老版本下游、或上游没给）才退回本地按全行原价比例分。
+        // 本地分摊会把作用域外的行也减掉一笔 —— 实测过「只减 SKU A」的券被摊成 A、B 各 10 元，
+        // 而部分退款按行应付退，逐行归属错了钱就跟着错。
+        var couponLineDiscounts =
+            occupyLineDiscounts.Count == amountLines.Length && couponDiscount > 0m
+                ? occupyLineDiscounts
+                : OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount);
+
         var goodsPayable = OrderAmountCalculator.Calculate(
             amountLines,
-            OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
+            couponLineDiscounts,
             activityDiscounts,
             default,
             pointsToUse: 0).GoodsTotal;
@@ -363,7 +374,7 @@ public sealed class OrderCreator
         {
             var amount = OrderAmountCalculator.Calculate(
                 amountLines,
-                OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
+                couponLineDiscounts,
                 activityDiscounts,
                 freightRule,
                 pointsUsed,

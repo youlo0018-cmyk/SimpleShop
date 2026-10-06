@@ -141,7 +141,11 @@ public sealed class OccupyCouponHandler : IRequestHandler<OccupyCouponCommand, A
                 : $"占券成功，优惠 {outcome.DiscountAmount:0.00}";
 
         return ApiResults.Ok(
-            new CouponOccupyResult(outcome.CouponId, outcome.DiscountAmount, outcome.AlreadyApplied, msg), msg);
+            new CouponOccupyResult(outcome.CouponId, outcome.DiscountAmount, outcome.AlreadyApplied, msg)
+            {
+                // 逐行分摊原样回给订单侧（券的作用域只有这里知道）
+                LineDiscounts = outcome.LineDiscounts
+            }, msg);
     }
 }
 
@@ -234,6 +238,7 @@ public sealed class SettleCouponsHandler : IRequestHandler<SettleCouponsCommand,
         var available = await _coupons.ListAvailableAsync(customerId, DateTime.UtcNow, ct);
 
         var options = new List<SettleCouponOption>();
+        IReadOnlyList<decimal> chosenLineDiscounts = [];
         foreach (var coupon in available)
         {
             var quote = CouponCalculator.Quote(coupon, request.Lines);
@@ -242,12 +247,25 @@ public sealed class SettleCouponsHandler : IRequestHandler<SettleCouponsCommand,
             options.Add(new SettleCouponOption(
                 coupon.Id, coupon.CouponCode, TypeName(coupon.CouponType),
                 quote.DiscountAmount, coupon.ExpireAt.ToString("yyyy-MM-dd HH:mm"), false));
+
+            // 客户端当前选中的那张券：把逐行分摊也算出来一起回。
+            // 券有作用域（全场 / 指定 SPU / 指定 SKU），只有这里算得对 ——
+            // 结算页按全行比例自己分的话，作用域外的行也会被减掉一笔，
+            // 与下单后的逐行优惠对不上。
+            if (coupon.Id == request.CouponId)
+            {
+                chosenLineDiscounts = CouponCalculator.AllocateToCoveredLines(
+                    coupon, request.Lines, quote.DiscountAmount);
+            }
         }
 
         var hasBest = CouponCalculator.TryPickBest(available, request.Lines, out var bestQuote);
         if (!hasBest)
         {
-            return ApiResults.Ok(new SettleCouponResult(false, null, options));
+            return ApiResults.Ok(new SettleCouponResult(false, null, options)
+            {
+                ChosenLineDiscounts = chosenLineDiscounts
+            });
         }
 
         var bestOption = new SettleCouponOption(
@@ -257,7 +275,10 @@ public sealed class SettleCouponsHandler : IRequestHandler<SettleCouponsCommand,
             available.First(a => a.Id == bestQuote.Value.CouponId).ExpireAt.ToString("yyyy-MM-dd HH:mm"),
             true);
 
-        return ApiResults.Ok(new SettleCouponResult(true, bestOption, options));
+        return ApiResults.Ok(new SettleCouponResult(true, bestOption, options)
+        {
+            ChosenLineDiscounts = chosenLineDiscounts
+        });
     }
 
     private static string TypeName(int type) => type switch

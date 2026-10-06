@@ -149,13 +149,23 @@ public sealed class PreviewOrderHandler
             .Select(a => new CouponPortLine(
                 a.SpuId, a.SkuId, OrderAmountCalculator.Round2(a.UnitPrice * a.Quantity)))
             .ToArray();
-        var options = await _coupons.QuoteAsync(request.CustomerId, couponPortLines, ct)
+        // 把「客户端当前选中的券」一起传过去：营销侧会额外回一份**逐行分摊**，
+        // 券有作用域（全场 / 指定 SPU / 指定 SKU），只有它算得对。
+        var quote = await _coupons.QuoteAsync(request.CustomerId, couponPortLines, request.CouponId, ct)
             .ConfigureAwait(false);
+        var options = quote.Options;
 
         // 客户选中的券；没选（0）或选的那张已经不可用时按 0 优惠算，
         // 与下单口径一致 —— 下单时占不到券也是照常下单。
         var chosen = options.FirstOrDefault(a => a.CouponId == request.CouponId);
         var couponDiscount = chosen.CouponId > 0 ? chosen.DiscountAmount : 0m;
+
+        // 逐行分摊优先用营销侧给的那份，拿不到（老版本下游）才退回本地按全行比例分 ——
+        // 本地分摊会把优惠摊到券作用域外的行上，与下单后的逐行优惠对不上。
+        var couponLineDiscounts =
+            quote.ChosenLineDiscounts.Count == amountLines.Length && couponDiscount > 0m
+                ? quote.ChosenLineDiscounts
+                : OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount);
 
         // 试算传空订单号：用户只是看了一眼结算页，不该在营销服务留下发放承诺
         var activityBySku = await _activities.QuoteAsync(
@@ -172,7 +182,7 @@ public sealed class PreviewOrderHandler
         // 先不算积分算一遍，拿到商品实付 —— 它决定最多能抵多少积分。
         var beforePoints = OrderAmountCalculator.Calculate(
             amountLines,
-            OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
+            couponLineDiscounts,
             activityDiscounts,
             freight,
             pointsToUse: 0);
@@ -197,7 +207,7 @@ public sealed class PreviewOrderHandler
 
         var amount = OrderAmountCalculator.Calculate(
             amountLines,
-            OrderAmountCalculator.AllocateCouponDiscount(amountLines, couponDiscount),
+            couponLineDiscounts,
             activityDiscounts,
             freight,
             pointsToUse,

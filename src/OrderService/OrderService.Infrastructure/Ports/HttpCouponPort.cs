@@ -31,7 +31,7 @@ public sealed class HttpCouponPort : ICouponPort
     }
 
     /// <inheritdoc />
-    public async Task<(long CouponId, decimal Discount)> OccupyAsync(
+    public async Task<CouponOccupancy> OccupyAsync(
         long customerId, string orderNo, long couponId,
         IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
     {
@@ -41,7 +41,11 @@ public sealed class HttpCouponPort : ICouponPort
         var body = await PostAsync<CouponOccupyResponse>("coupons/Occupy", command, ct).ConfigureAwait(false);
 
         // 走到这里说明业务成功。没占到券时 CouponId 为 0、优惠 0 —— 这不是失败，不要抛。
-        return (body.Data?.CouponId ?? 0, body.Data?.DiscountAmount ?? 0m);
+        return new CouponOccupancy(
+            body.Data?.CouponId ?? 0,
+            body.Data?.DiscountAmount ?? 0m,
+            // 逐行分摊由营销侧给出（券的作用域只有它知道）；老版本没这个字段时是空数组
+            body.Data?.LineDiscounts ?? []);
     }
 
     /// <inheritdoc />
@@ -83,19 +87,27 @@ public sealed class HttpCouponPort : ICouponPort
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<CouponQuoteOption>> QuoteAsync(
-        long customerId, IReadOnlyList<CouponPortLine> lines, CancellationToken ct = default)
+    public async Task<CouponQuoteResult> QuoteAsync(
+        long customerId, IReadOnlyList<CouponPortLine> lines, long couponId = 0,
+        CancellationToken ct = default)
     {
         var body = await PostAsync<SettleCouponResponse>(
             "coupons/Settle",
-            new SettleRequest(customerId, lines.Select(a => new Line(a.SpuId, a.SkuId, a.Amount)).ToArray()),
+            new SettleRequest(
+                customerId,
+                lines.Select(a => new Line(a.SpuId, a.SkuId, a.Amount)).ToArray(),
+                couponId),
             ct).ConfigureAwait(false);
 
         var options = body.Data?.Options ?? [];
-        return options
+        var mapped = options
             .Select(a => new CouponQuoteOption(
                 a.CouponId, a.CouponTypeName, a.DiscountAmount, a.ExpireAt, a.IsBest))
             .ToList();
+
+        // 逐行分摊由营销侧给出（券的作用域只有它知道）；老版本没这个字段时是空数组，
+        // 调用方会退回本地按全行比例分摊。
+        return new CouponQuoteResult(mapped, body.Data?.ChosenLineDiscounts ?? []);
     }
 
     /// <summary>统一发 POST 并检查业务结果。</summary>
@@ -160,11 +172,13 @@ public sealed class HttpCouponPort : ICouponPort
     /// <param name="DiscountAmount">优惠金额。</param>
     /// <param name="AlreadyApplied">是否命中幂等（重复请求）。</param>
     /// <param name="Message">下游提示。</param>
+    /// <param name="LineDiscounts">券优惠的逐行分摊额（营销侧算好），未覆盖的行是 0。</param>
     private sealed record CouponOccupyResponse(
         [property: JsonPropertyName("couponId")] long CouponId,
         [property: JsonPropertyName("discountAmount")] decimal DiscountAmount,
         [property: JsonPropertyName("alreadyApplied")] bool AlreadyApplied,
-        [property: JsonPropertyName("message")] string Message);
+        [property: JsonPropertyName("message")] string Message,
+        [property: JsonPropertyName("lineDiscounts")] IReadOnlyList<decimal>? LineDiscounts);
 
     /// <summary>回退请求体。</summary>
     /// <param name="CustomerId">客户 Id。</param>
@@ -189,16 +203,19 @@ public sealed class HttpCouponPort : ICouponPort
     /// <summary>只读试算请求体。字段名与营销服务的 <c>SettleCouponsCommand</c> 对齐。</summary>
     /// <param name="CustomerId">客户 Id。</param>
     /// <param name="Lines">订单行。</param>
-    private sealed record SettleRequest(long CustomerId, Line[] Lines);
+    /// <param name="CouponId">客户端当前选中的券 Id，0 表示还没选。</param>
+    private sealed record SettleRequest(long CustomerId, Line[] Lines, long CouponId);
 
     /// <summary>试算响应数据。</summary>
     /// <param name="HasCoupon">是否有可用券。</param>
     /// <param name="Best">最优券；无可用券时为 null。</param>
     /// <param name="Options">全部可用券及各自优惠额。</param>
+    /// <param name="ChosenLineDiscounts">指定券的逐行分摊额。</param>
     private sealed record SettleCouponResponse(
         [property: JsonPropertyName("hasCoupon")] bool HasCoupon,
         [property: JsonPropertyName("best")] SettleCouponOption? Best,
-        [property: JsonPropertyName("options")] SettleCouponOption[]? Options);
+        [property: JsonPropertyName("options")] SettleCouponOption[]? Options,
+        [property: JsonPropertyName("chosenLineDiscounts")] IReadOnlyList<decimal>? ChosenLineDiscounts);
 
     /// <summary>一张可用券的试算结果。</summary>
     /// <param name="CouponId">用户券 Id。</param>

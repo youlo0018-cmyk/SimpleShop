@@ -30,7 +30,24 @@ public record OccupyCouponCommand(
     : IRequest<ApiResponse<CouponOccupyResult>>;
 
 /// <summary>占券结果。</summary>
-public sealed record CouponOccupyResult(long CouponId, decimal DiscountAmount, bool AlreadyApplied, string Message);
+/// <param name="CouponId">实际占用的券 Id，0 表示没占到。</param>
+/// <param name="DiscountAmount">整单券优惠额。</param>
+/// <param name="AlreadyApplied">是否命中幂等（重复请求）。</param>
+/// <param name="Message">提示文案。</param>
+public sealed record CouponOccupyResult(
+    long CouponId, decimal DiscountAmount, bool AlreadyApplied, string Message)
+{
+    /// <summary>
+    /// 券优惠的**逐行分摊额**（与结算页同一份算法），长度与订单行一致；未覆盖的行是 0。
+    /// </summary>
+    /// <remarks>
+    /// 订单侧必须**原样使用**：券有作用域（全场 / 指定 SPU / 指定 SKU），
+    /// 只有营销侧知道它覆盖了哪几行。订单侧按「全部行原价比例」自己分会把优惠
+    /// 摊到作用域外的行上（实测：只减 SKU A 的券被摊成 A、B 各 10 元），
+    /// 而部分退款是按行应付退的。
+    /// </remarks>
+    public IReadOnlyList<decimal> LineDiscounts { get; init; } = [];
+}
 
 /// <summary>核销券（支付成功）。</summary>
 /// <param name="CustomerId">客户 Id。</param>
@@ -45,14 +62,28 @@ public record ReleaseCouponCommand(long CustomerId, string OrderNo) : IRequest<A
 /// <summary>结算试算：列出可用券并标出最优。</summary>
 /// <param name="CustomerId">客户 Id，0 表示游客。</param>
 /// <param name="Lines">订单行。</param>
-public record SettleCouponsCommand(long CustomerId, IReadOnlyList<CouponOrderLine> Lines)
+/// <param name="CouponId">
+/// 客户端**当前选中**的券 Id，0 表示还没选。传了的话会额外回一份这张券的逐行分摊，
+/// 让结算页的逐行优惠与下单后的逐行优惠逐分一致（券有作用域，分摊只有营销侧算得对）。
+/// </param>
+public record SettleCouponsCommand(long CustomerId, IReadOnlyList<CouponOrderLine> Lines, long CouponId = 0)
     : IRequest<ApiResponse<SettleCouponResult>>;
 
 /// <summary>结算试算结果。</summary>
 /// <param name="HasCoupon">是否存在可用券。</param>
 /// <param name="Best">最优券；无可用券时为 null。</param>
 /// <param name="Options">全部可用券及各自优惠额。</param>
-public sealed record SettleCouponResult(bool HasCoupon, SettleCouponOption? Best, IReadOnlyList<SettleCouponOption> Options);
+public sealed record SettleCouponResult(bool HasCoupon, SettleCouponOption? Best, IReadOnlyList<SettleCouponOption> Options)
+{
+    /// <summary>
+    /// 命令里指定的那张券的**逐行分摊额**，长度与订单行一致；未覆盖的行是 0。
+    /// </summary>
+    /// <remarks>
+    /// 空数组表示「没指定券」或「指定的券不可用」。结算页必须原样使用，
+    /// 否则它自己按全行比例分会把优惠摊到券作用域外的行上（下单侧不再这么算了，两边就对不上）。
+    /// </remarks>
+    public IReadOnlyList<decimal> ChosenLineDiscounts { get; init; } = [];
+}
 
 /// <summary>一张可用券在当前订单下的试算结果。</summary>
 public sealed record SettleCouponOption(
@@ -146,6 +177,7 @@ public static class CouponValidators
         public SettleCouponsValidator()
         {
             RuleFor(x => x.CustomerId).GreaterThanOrEqualTo(0).WithMessage("客户 Id 不能为负数（0 表示游客）");
+            RuleFor(x => x.CouponId).GreaterThanOrEqualTo(0).WithMessage("券 Id 不能为负数（0 表示还没选）");
             RuleFor(x => x.Lines).Cascade(CascadeMode.Stop)
                 .NotNull().WithMessage("订单行不能为空")
                 .Must(l => l!.Count > 0).WithMessage("订单行不能为空")
