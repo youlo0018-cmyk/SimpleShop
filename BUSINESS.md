@@ -1121,32 +1121,75 @@
 
 ## 20. 事件与锁
 
-### 20.1 MQ Topic
+### 20.1 事件与内部调用：**当前实现以同步调用为主**
+
+> **这一节曾经写成一张「10 个 Topic 的生产者 / 消费者」表，但那张表描述的是目标架构，不是当前实现。**
+> 实际代码里：**只有 4 处**真的在发消息（3 个日志 Topic + `product.changed`），
+> 而且 `product.changed` **没有任何消费者**；其余 6 个业务 Topic 只有常量、没有生产者。
+> 照着那张表读代码，会以为「支付成功后靠 MQ 驱动库存 / 券 / 积分」，实际全是同步内部调用。
+
+**业务链路：同步内部调用**（`/internal/**` HTTP），不用 MQ。理由：
+
+| 项 | 说明 |
+|---|---|
+| 失败要立刻知道 | 下单 / 支付失败必须当场告诉用户。异步事件化之后「钱扣了货没锁」这类问题只能靠对账发现 |
+| 一致性靠幂等键 + 状态机条件更新 | 跨服务没有分布式事务，靠 `bizNo` 幂等、`UPDATE ... WHERE 状态 = 期望值` 兜住重试与并发（见 7.4、10.2） |
+| 重试由调用方决定 | 内部调用失败时，调用方能决定「整单失败」还是「降级继续」（例如活动试算失败按无优惠继续下单） |
+
+**MQ 当前只承担日志**：
 
 | Topic | 生产者 | 消费者 |
 |---|---|---|
-| `payment.succeeded` | 支付确认（含实付 0 自动支付，幂等补发） | OrderService（标记已支付）、InventoryService（扣库存）、MarketingService（核销券 + 满赠发券）、PointService（实扣冻结积分） |
-| `payment.refunded` | 退款审批 | OrderService（订单转 60）、InventoryService（回补库存）、PointService（回收积分） |
-| `order.completed` | 签收 / 核销完成 | PointService（发放订单积分）、EvaluateService（开放评价） |
-| `order.cancelled` | 主动取消 + 超时关单 | MarketingService（回退券占用） |
-| `product.created` | 商品创建 | InventoryService（初始化库存） |
-| `product.changed` | 商品新建/修改/上下架/改价 | ProductService 索引同步方（更新 ES 索引） |
-| `evaluate.created` | 发表首评 | PointService（发放 +20 积分） |
-| `seckill.order.requested` | 抢购预扣成功 | OrderService（异步落单） |
-| `seckill.session.ended` | 场次结束 / 手动中止 | InventoryService（回补剩余秒杀库存） |
-| `pv.log` / `operation.log` / `exception.log` | 中间件 | LogService |
+| `pv.log` / `operation.log` | `RequestLogMiddleware`（16 个服务共用） | LogService（写 ES） |
+| `exception.log` | `GlobalExceptionMiddleware` | LogService（写 ES） |
 
-### 20.2 分布式锁
+日志走 MQ 是因为它**与业务结果无关**：丢了不影响交易，写失败也不该让请求失败。
+消费端有 DLQ 与重试上限（见 21 节 RabbitMQ 一行）。
 
-| 锁键 | 粒度 |
+**保留但暂未使用的 Topic 常量**（`Collaboration.Domain.Messaging.EventTopics`）：
+
+| Topic | 目标用途（将来切异步时） |
 |---|---|
-| `lock:order:create:{customerId}` | 下单（按客户） |
-| `lock:order:{orderId}` | 订单状态机互斥（支付消费/关单/发货/签收/取消/退款/取货核销） |
-| `lock:payment:order\|callback\|refund:{bizNo}` | 支付创建/确认/退款（按业务单号） |
-| `lock:stock:{skuId}` | 库存（按 SKU） |
-| `lock:point:{customerId}` | 积分（按客户） |
-| `lock:seckill:item:{seckillItemId}` | 秒杀商品 |
-| `lock:job:{jobName}` | 定时任务多实例互斥（全局扫描锁） |
+| `payment.succeeded` | OrderService 标记已支付、InventoryService 扣库存、MarketingService 核销券 + 满赠发券、PointService 实扣冻结积分 |
+| `payment.refunded` | OrderService 转 60、InventoryService 回补、PointService 回收积分 |
+| `order.completed` | PointService 发订单积分、EvaluateService 开放评价 |
+| `order.cancelled` | MarketingService 回退券占用 |
+| `product.created` | InventoryService 初始化库存 |
+| `product.changed` | 索引同步方更新 ES（**已发布，暂无消费者**；当前 ES 同步由 ProductService 自己同步完成） |
+| `evaluate.created` | PointService 发放 +20 积分 |
+| `seckill.order.requested` | OrderService 异步落单（当前是同步下单，见 12.5 的说明） |
+| `seckill.session.ended` | InventoryService 回补剩余秒杀库存 |
+
+> ⚠️ **改异步之前先建消费者**：只把 `PublishAsync` 接上、没建队列绑定的话，
+> 消息会被交换机直接丢掉，而业务侧看起来「发成功了」—— 这是最难查的一类故障。
+
+### 20.2 并发互斥：**条件更新为主，Redis 锁只用在两处**
+
+> 这一节原来列了 7 个 Redis 锁键，但其中 **5 个从未实现**。不是漏了，是**刻意换掉了** ——
+> 换成了数据库条件更新（乐观并发）。照着旧表去补一把 Redis 锁，会把原子性更差的方案装回来。
+
+**主机制：DB 条件更新**（`UPDATE ... WHERE 状态/余额 = 我刚才读到的值`，影响 0 行就回滚或直接返回）：
+
+| 场景 | 守卫字段 | 位置 |
+|---|---|---|
+| 订单状态迁移（支付 / 关单 / 发货 / 签收 / 取消 / 退款 / 取货核销） | `status = 期望值` | `TryTransitStatusAsync` / `TryApplyRefundAsync` |
+| 库存（可用 / 锁定 / 已扣三个池子） | 三个池子的**原值**都进 `WHERE` | `StockRepository.ApplyAsync`（事务内，未命中抛错回滚） |
+| 积分账户 | `available = 原值 AND frozen = 原值` | `PointRepository.Commit` |
+| 退款审批 | `status = 待审批` + 余额条件 | `TryApproveAsync` |
+| 券活动池 / 券模板池 | `claimed_quantity = 原值` / `issued_quantity = 原值` | `CouponRepository` 领券事务 |
+| 秒杀库存 | Redis 原子预扣 + `sold_count + 本次 ≤ seckill_stock` 条件更新（回退时用 `sold_count ≥ 本次`） | `SeckillRepository.TryIncreaseSold / TryDecreaseSold` |
+| 幂等 | 唯一索引（`biz_no` + 动作） | 库存流水、积分流水、退款单、券码等 |
+
+**Redis 锁只用在两处**（这两处没法用「某一行数据」当守卫）：
+
+| 锁键 | 为什么必须用锁 |
+|---|---|
+| `lock:order:create:{customerId}` | 下单要先查幂等键再落单，两个并发请求会**都**查到「没下过」。这里要保护的是「查 + 写」这个区间，没有哪一行能当守卫 |
+| `lock:job:{jobName}` | 定时任务是扫描型作业（扫一批订单 / 场次），同样没有单行可守卫；多实例必须只有一个在跑 |
+
+**为什么不用「每个业务对象一把 Redis 锁」**：Redis 锁有 TTL，业务执行超过 TTL 就自动释放、
+别人能进来；释放时还可能删掉别人刚拿到的锁；而且它与 DB 事务**不同步**（锁释放了事务还没提交）。
+条件更新的语义是「只有状态还是我看到的那样才允许改」，与事务天然原子，失败还留下可审计的「影响 0 行」。
 
 ---
 

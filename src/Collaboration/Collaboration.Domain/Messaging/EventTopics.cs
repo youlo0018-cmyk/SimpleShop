@@ -1,6 +1,12 @@
 namespace Collaboration.Domain.Messaging;
 
 /// <summary>事件 Topic 常量（对应 BUSINESS.md 20.1）。</summary>
+/// <remarks>
+/// <b>常量齐全 ≠ 都在用</b>：当前只有 3 个日志 Topic 真的走 MQ，
+/// `ProductChanged` 会被发布但**没有消费者**（ES 同步由 ProductService 自己同步完成），
+/// 其余业务 Topic 只有常量、没有生产者 —— 业务链路走的是同步内部调用。
+/// 细节与「改异步前先建消费者」的提醒见 BUSINESS.md 20.1。
+/// </remarks>
 public static class EventTopics
 {
     /// <summary>交换机名。单一 topic 交换机，用 routing key 区分事件。</summary>

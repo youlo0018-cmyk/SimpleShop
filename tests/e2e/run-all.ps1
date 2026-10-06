@@ -40,6 +40,36 @@ if ($permExit -ne 0) {
     exit 1
 }
 
+# ---------- 服务存活预检 ----------
+#
+# 为什么必须有这一步：服务没起时，脚本里第一句 `Invoke-RestMethod` 会**卡在连接超时上**
+# （不是立刻报错），整套回归会「静默挂十几分钟」，看起来像脚本写死了。
+# 实测踩过：`build.ps1` 检测到 dll 被占用时会自动 `stop-services.ps1` 再重编
+# （见 build.ps1 的说明），于是「构建成功 → 直接跑回归」必然是一整套服务全没起。
+# 这里先探一遍 /health，缺谁就把名字列出来并直接退出，把「挂住」变成「一眼看明白」。
+$registryPath = Join-Path $PSScriptRoot '..\..\scripts\service-registry.json'
+$services = (Get-Content $registryPath -Raw -Encoding UTF8 | ConvertFrom-Json).services |
+    Where-Object { $_.implemented -and $_.port }
+
+$unhealthy = @()
+foreach ($svc in $services) {
+    try {
+        $probe = Invoke-WebRequest "http://127.0.0.1:$($svc.port)/health" -UseBasicParsing -TimeoutSec 3
+        if ($probe.StatusCode -ne 200) { $unhealthy += "$($svc.name)($($svc.port))" }
+    }
+    catch {
+        $unhealthy += "$($svc.name)($($svc.port))"
+    }
+}
+
+if ($unhealthy.Count -gt 0) {
+    Write-Host ("服务未就绪：" + ($unhealthy -join '、')) -ForegroundColor Red
+    Write-Host '请先运行 ./scripts/start-services.ps1（构建脚本在 dll 被占用时会自动停掉全部服务，构建完必须重新启动）' -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host ("服务存活预检通过（" + $services.Count + " 个）") -ForegroundColor Green
+
 $scripts = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*-regression.ps1' | Sort-Object Name
 if ($Filter) { $scripts = $scripts | Where-Object { $_.Name -like "*$Filter*" } }
 

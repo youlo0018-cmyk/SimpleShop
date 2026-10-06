@@ -297,14 +297,16 @@ PV / 操作 / 异常中间件 → RabbitMQ → LogService → Elasticsearch（�
 | `lock:job:{jobName}` | **Redis 锁**（`JobRunner`） | 多实例定时任务互斥，锁本身就是需求 |
 | `lock:order:{orderId}` | 条件更新 `WHERE status = from`（乐观 CAS） | 状态机迁移天然可条件化：并发只有一个 `ExecuteAffrows` 返回 1，比锁更短、无死锁 |
 | `lock:payment:order\|callback\|refund:{bizNo}` | 唯一索引 + 条件更新 | 幂等键本来就是唯一索引，加锁只是重复一遍数据库已经做的事 |
-| `lock:stock:{skuId}` | 条件更新 `WHERE available >= qty` | 扣减是原子的，**不会超卖**；`lock:stock` 式加锁会把并发压成串行 |
+| `lock:stock:{skuId}` | 条件更新：三个池子的**原值**都进 `WHERE`（`available = 读到的值 AND locked = … AND deducted = …`），事务内先算新值、为负直接失败 | 并发扣减只有一个能命中（另一个的条件更新返回 0 行 → 抛错回滚），**不会超卖**；`lock:stock` 式加锁会把并发压成串行，而且有 TTL 泄漏问题 |
 | `lock:point:{customerId}` | 条件更新 + `point_lock` 记录 | 余额不足时条件更新影响 0 行，天然挡住并发透支 |
 | `lock:seckill:item:{seckillItemId}` | Redis 原子预扣 `seckill:stock:{itemId}` | 与规格同一思路，键名不同；200 线程并发用例断言恰好成交 10 件 |
 
 ## 机制对照：BUSINESS.md 20.1 的十个 Topic
 
 规格把跨服务协作写成「发事件、各自消费」，实现里**只有日志链路真的走 MQ**
-（`pv.log` / `operation.log` / `exception.log` + 死信重放）与商品索引同步（`product.changed`）。
+（`pv.log` / `operation.log` / `exception.log` + 死信重放）。
+`product.changed` 会被发布，但**没有任何消费者**（ES 同步由 ProductService 自己同步完成），
+所以它不构成一条协作链路 —— 只发不消费等于消息黑洞。
 其余链路一律是**内网 HTTP 同步调用**。这不是漏做，是取舍：
 
 | 规格 Topic | 实现 | 为什么 |
