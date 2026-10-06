@@ -165,11 +165,17 @@ Invoke-Case 'API-INI-021' '后台调库存走调整量而不是最终值' {
     return $r.success -and $r.data.available -eq 15
 }
 
-Invoke-Case 'API-INI-022' '后台调成负数被拒' {
+Invoke-Case 'API-INI-022' '🔴 后台调成负数被拒（4001 且库存纹丝不动）' {
+    # 只断言「失败」不够：参数校验失败、动作名写错、库存记录不存在都回失败，
+    # 而这里要验的是「负数被库存守卫拦下」——所以要断言**业务码**与**库存没变**。
     $r = Invoke-RestMethod -Uri "$Gateway/gateway/inventory/Adjust" -Method Post -Headers $script:headers `
         -Body (@{ skuId = $script:sku; availableAdjust = -999; remark = '试图调成负数' } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 30
-    return -not $r.success
+
+    $after = (Get-Snapshot $script:sku).available
+    if (-not $r.success) { Write-Host ("        被拒：" + $r.message + "；可用仍为 " + $after) -ForegroundColor DarkGray }
+
+    return (-not $r.success) -and ([int]$r.code -eq 4001) -and $after -eq 15
 }
 
 Invoke-Case 'API-INI-023' '调整原因为空被拒（必须写明为什么改库存）' {
