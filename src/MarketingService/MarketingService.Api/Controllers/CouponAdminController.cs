@@ -57,6 +57,22 @@ public sealed class CouponAdminController : ControllerBase
         [FromBody] QueryCouponTemplatesCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>券模板下拉（DATA_SPEC 4.2）：只返回启用模板。</summary>
+    /// <param name="keyword">按模板名模糊搜索。</param>
+    /// <param name="limit">最多返回多少条，1-200。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下拉项 <c>{ value, label, couponType, couponTypeName }</c>。</returns>
+    /// <remarks>
+    /// 券活动与满赠活动都要选模板，走列表接口再自己过滤的话，
+    /// 下拉里会出现停用模板 —— 选中后用户点「领取」只会拿到「模板不存在或已停用」。
+    /// </remarks>
+    [HttpGet("coupon-templates/Options")]
+    public Task<ApiResponse<List<CouponTemplateOption>>> TemplateOptions(
+        [FromQuery] string keyword = "",
+        [FromQuery] int limit = 200,
+        CancellationToken ct = default)
+        => _mediator.Send(new QueryCouponTemplateOptionsCommand(keyword, limit), ct);
+
     /// <summary>编辑券模板。</summary>
     /// <param name="command">命令。</param>
     /// <param name="ct">取消令牌。</param>

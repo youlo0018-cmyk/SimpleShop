@@ -951,6 +951,61 @@ Invoke-Case 'API-ADM-097' '🔴 订单列表返回平台 / 商户**名称**而�
         -and $row.merchantName -notmatch '^\d+$'
 }
 
+Write-Host "`n=== 下拉接口清单（DATA_SPEC 4.2）===" -ForegroundColor Cyan
+
+Invoke-Case 'API-ADM-098' '🔴 7 个下拉接口都返回 { value, label }（不是让前端自己过滤列表）' {
+    # 这些接口在补之前**一个都不存在**：前端只能调列表接口自己过滤，
+    # 于是下拉里出现停用品牌 / 已下架商品 / 已结束场次 —— 选了之后保存必被拒。
+    $eps = @(
+        @{ Path = '/gateway/brands/Options'; Name = '品牌' },
+        @{ Path = '/gateway/products/Options'; Name = '商品' },
+        @{ Path = '/gateway/products/Designable'; Name = '装修选品' },
+        @{ Path = '/gateway/marketing/coupon-templates/Options'; Name = '券模板' },
+        @{ Path = '/gateway/marketing/seckill/sessions/Options'; Name = '秒杀场次' },
+        @{ Path = '/gateway/roles/Options'; Name = '角色' }
+    )
+
+    foreach ($ep in $eps) {
+        $r = Invoke-RestMethod -Uri ($Gateway + $ep.Path) -Headers $auth -TimeoutSec 30
+        if (-not $r.success) { Write-Host ("        " + $ep.Name + " 失败：" + $r.message) -ForegroundColor DarkYellow; return $false }
+
+        $items = @($r.data)
+        if ($items.Count -eq 0) { Write-Host ("        " + $ep.Name + " 返回空列表") -ForegroundColor DarkYellow; return $false }
+
+        # 每项都要有 value 与 label，且 value 必须是字符串（雪花 Id 不能丢精度）
+        $bad = @($items | Where-Object {
+            [string]::IsNullOrWhiteSpace($_.value) -or [string]::IsNullOrWhiteSpace($_.label) -or $_.value -isnot [string]
+        })
+        if ($bad.Count -gt 0) { Write-Host ("        " + $ep.Name + " 有 " + $bad.Count + " 项缺 value/label") -ForegroundColor DarkYellow; return $false }
+
+        Write-Host ("        {0,-10} {1} 项，首项 = {2}" -f $ep.Name, $items.Count, $items[0].label) -ForegroundColor DarkGray
+    }
+
+    return $true
+}
+
+Invoke-Case 'API-ADM-099' '🔴 SKU 下拉随 SPU 联动，且只给启用 SKU' {
+    $products = @((Invoke-RestMethod -Uri "$Gateway/gateway/products/Options?limit=5" -Headers $auth -TimeoutSec 30).data)
+    if ($products.Count -eq 0) { return $false }
+
+    $spuId = [long]$products[0].value
+    $r = Invoke-RestMethod -Uri "$Gateway/gateway/products/Skus?spuId=$spuId" -Headers $auth -TimeoutSec 30
+    if (-not $r.success) { return $false }
+
+    $skus = @($r.data)
+    Write-Host ("        商品「{0}」下有 {1} 个启用 SKU" -f $products[0].label, $skus.Count) -ForegroundColor DarkGray
+
+    return $skus.Count -gt 0 `
+        -and @($skus | Where-Object { [string]::IsNullOrWhiteSpace($_.value) -or [string]::IsNullOrWhiteSpace($_.label) }).Count -eq 0 `
+        -and @($skus | Where-Object { $_.price -le 0 }).Count -eq 0
+}
+
+Invoke-Case 'API-ADM-100' '不存在的商品查 SKU 返回 404（不是空列表）' {
+    # 空列表会让前端提示「暂无规格」，而真正的原因是商品 Id 写错了 —— 排查方向完全错
+    $r = Invoke-RestMethod -Uri "$Gateway/gateway/products/Skus?spuId=999999999" -Headers $auth -TimeoutSec 30
+    (-not $r.success) -and ([int]$r.code -eq 404)
+}
+
 # 收尾：把临时账号停用。
 # 不清理的话每跑一次就在库里多一个启用状态的账号——跑几十次之后
 # 账号列表被测试数据淹没，看起来像真的出了问题。

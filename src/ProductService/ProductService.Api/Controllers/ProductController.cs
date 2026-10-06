@@ -56,6 +56,52 @@ public sealed class ProductController : ControllerBase
     public Task<ApiResponse<ProductDetailDto>> Detail([FromQuery] long productId, CancellationToken ct)
         => _mediator.Send(new QueryProductDetailCommand(productId), ct);
 
+    /// <summary>商品下拉（DATA_SPEC 4.2）：只返回**已上架**商品。</summary>
+    /// <param name="keyword">按商品名模糊搜索。</param>
+    /// <param name="limit">最多返回多少条，1-200。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下拉项 <c>{ value, label, deliveryType }</c>。</returns>
+    /// <remarks>
+    /// 带 <c>deliveryType</c>：发货表单按它动态渲染（快递填物流、虚拟与自提不填），
+    /// 前端选了商品却不知道配送方式，就只能再查一次详情。
+    /// </remarks>
+    [HttpGet("Options")]
+    public Task<ApiResponse<List<ProductOption>>> Options(
+        [FromQuery] string keyword = "",
+        [FromQuery] int limit = 200,
+        CancellationToken ct = default)
+        => _mediator.Send(new QueryProductOptionsCommand(keyword, limit), ct);
+
+    /// <summary>装修可选商品下拉（DATA_SPEC 4.2）：**审核通过 + 已上架**。</summary>
+    /// <param name="keyword">按商品名模糊搜索。</param>
+    /// <param name="limit">最多返回多少条，1-200。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下拉项。</returns>
+    /// <remarks>
+    /// 后台上下文不注入公开可见性过滤（3.2.1），所以装修页必须走这个显式过滤的接口，
+    /// 否则装修能把没过审的商品摆到首页。保存时的兜底在
+    /// <c>/internal/products/check-for-design</c>。
+    /// </remarks>
+    [HttpGet("Designable")]
+    public Task<ApiResponse<List<ProductOption>>> Designable(
+        [FromQuery] string keyword = "",
+        [FromQuery] int limit = 200,
+        CancellationToken ct = default)
+        => _mediator.Send(new QueryDesignableProductsCommand(keyword, limit), ct);
+
+    /// <summary>按 SPU 取 SKU 下拉（DATA_SPEC 4.2）：只返回启用 SKU，随 SPU 联动。</summary>
+    /// <param name="spuId">商品 Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下拉项 <c>{ value, label, price }</c>；商品不存在返回 404。</returns>
+    /// <remarks>
+    /// 用查询参数而不是 <c>/products/{spuId}/Skus</c>：网关 RBAC 只支持**结尾**通配
+    /// （`/*`），路径中间的占位符没法映射权限点，会退化成「查不到映射 → 后台令牌被拒」。
+    /// </remarks>
+    [HttpGet("Skus")]
+    public Task<ApiResponse<List<SkuOption>>> Skus(
+        [FromQuery] long spuId, CancellationToken ct)
+        => _mediator.Send(new QueryProductSkusCommand(spuId), ct);
+
     /// <summary>保存商品。ProductId 传 0 表示新建。</summary>
     /// <param name="command">保存命令。</param>
     /// <param name="ct">取消令牌。</param>

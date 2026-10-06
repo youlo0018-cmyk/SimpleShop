@@ -278,6 +278,41 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
 
+### 2026-10-07：DATA_SPEC 4.2 的下拉接口清单里，一大半根本没实现
+
+按 4.2 逐条核对「下拉字段的数据来源」时发现：11 条里只有 4 条存在
+（`platforms/Options`、`merchants/Options`、`categories/Tree`、`permissions/Tree`），
+其余 7 条**一个都没有**。前端只能调 List 接口自己过滤，后果是下拉里出现
+停用品牌 / 已下架商品 / 已结束场次 —— 选了之后保存必被拒，
+属于「界面上能选、实际不能用」。
+
+| 新增接口 | 数据 | 权限点 |
+|---|---|---|
+| `GET /gateway/brands/Options` | 启用品牌 | `product:read` |
+| `GET /gateway/products/Options` | 已上架商品（带 `deliveryType`） | `product:read` |
+| `GET /gateway/products/Designable` | 审核通过 + 已上架（装修选品） | `product:read` |
+| `GET /gateway/products/Skus?spuId=` | 该 SPU 的启用 SKU（带 `price`） | `product:read` |
+| `GET /gateway/marketing/coupon-templates/Options` | 启用券模板 | `coupon-template:read` |
+| `GET /gateway/marketing/seckill/sessions/Options` | 未开始 / 进行中场次 | `seckill:read` |
+| `GET /gateway/roles/Options` | 启用角色（带 `allowedScopes`） | `permission:read` |
+
+统一返回 `{ value, label }`，`value` 一律字符串（4.6 雪花 Id 不能丢精度）；
+按需追加 `deliveryType` / `price` / `couponType` / `status` / `allowedScopes`，
+**枚举文案一并下发**（4.5，前端不写死）。
+
+两条设计取舍：
+- **`products/{spuId}/Skus` 改成 `products/Skus?spuId=`**：网关 RBAC 只支持**结尾**通配（`/*`），
+  路径中间的占位符没法映射权限点，会退化成「查不到映射 → 后台令牌被拒」。
+- **商品不存在返回 404 而不是空列表**：空列表会让前端提示「暂无规格」，
+  而真正原因是商品 Id 写错，排查方向完全错。
+
+新增的 7 条路径**同步写进了权限种子**（`seed-permissions.ps1`）并重跑播种 ——
+漏配的后果不是 403，而是「查不到映射 → 后台令牌被拒」，
+`check-permission-paths.ps1` 的反向核对（网关可达端点必须有映射）会当场拦住。
+
+**验证**：构建 0 警告 0 错误；E2E **678/678**（18 个脚本，
+新增 API-ADM-098/099/100）。
+
 ### 2026-10-07：列表把雪花 Id 当成名称显示（账号列表 `PlatformName` = `PlatformId.ToString()`）
 
 按 DATA_SPEC 4.3（必须冗余返回的展示字段）逐行取证时发现：**名称根本没有取到过**。

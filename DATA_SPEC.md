@@ -451,21 +451,33 @@ workerId 空间只有 64 个，开发机一天重启十几次服务，跑满 64 
 
 ### 4.2 下拉接口清单
 
-| 接口 | 数据来源 | 备注 |
-|---|---|---|
-| `GET /gateway/platforms/Options` | `platform` 表 | 启用状态平台；平台账号**不请求**（自动锁定本平台） |
-| `GET /gateway/merchants/Options` | `merchant` 表 | 已审核通过 + 启用；商户账号**不请求**（无 `merchant:read` 会 403） |
-| `GET /gateway/brands/Options` | `brand` 表 | 启用状态 |
-| `GET /gateway/categories/Tree` | `category` 表 | **树形结构**，最多三级 |
-| `GET /gateway/products/Options` | `product` 表 | 已上架商品；`DeliveryType` 决定后续发货表单 |
-| `GET /gateway/products/Designable` | `product` 表 | **装修可选商品**：已审核通过 + 已上架。后台上下文不注入可见性过滤（3.2.1），故需此接口单独过滤 |
-| `GET /gateway/products/{spuId}/Skus` | `sku` 表 | **随 SpuId 联动**，只返回启用 SKU |
-| `GET /gateway/coupon-templates/Options` | `coupon_template` 表 | 启用状态；供券活动与满赠活动选择 |
-| `GET /gateway/seckill-sessions/Options` | `seckill_session` 表 | **只返回未开始 / 进行中**的场次 |
-| `GET /gateway/permissions/Options` | `permission` 表 | 按模块分组树，供穿梭框使用 |
-| `GET /gateway/roles/Options` | `role` 表 | 启用状态，供建号多选 |
+| 接口 | 数据来源 | 权限点 | 备注 |
+|---|---|---|---|
+| `GET /gateway/platforms/Options` | `platform` 表 | `platform:read` | 启用状态平台；平台账号**不请求**（自动锁定本平台） |
+| `GET /gateway/merchants/Options` | `merchant` 表 | `merchant:read` | 已审核通过 + 启用；商户账号**不请求** |
+| `GET /gateway/brands/Options` | `brand` 表 | `product:read` | 启用状态 |
+| `GET /gateway/categories/Tree` | `category` 表 | `category:read` | **树形结构**，最多三级 |
+| `GET /gateway/products/Options` | `product` 表 | `product:read` | 已上架商品；带 `deliveryType`（决定后续发货表单） |
+| `GET /gateway/products/Designable` | `product` 表 | `product:read` | **装修可选商品**：已审核通过 + 已上架。后台上下文不注入可见性过滤（3.2.1），故需此接口单独过滤 |
+| `GET /gateway/products/Skus?spuId=` | `sku` 表 | `product:read` | **随 SpuId 联动**，只返回启用 SKU；商品不存在返回 **404**（不是空列表） |
+| `GET /gateway/marketing/coupon-templates/Options` | `coupon_template` 表 | `coupon-template:read` | 启用状态；供券活动与满赠活动选择 |
+| `GET /gateway/marketing/seckill/sessions/Options` | `seckill_session` 表 | `seckill:read` | **只返回未开始 / 进行中**的场次；进行中排前面 |
+| `GET /gateway/permissions/Tree` | `permission` 表 | `permission:read` | 按模块分组树（含 Checked / Indeterminate / Disabled），供权限树与穿梭框使用 |
+| `GET /gateway/roles/Options` | `role` 表 | `permission:read` | 启用状态，供建号多选；带 `allowedScopes`，建号页按账号类型过滤 |
 
 **通用约定**：所有 `Options` 接口按当前 `TenantContext` 自动过滤（AOP），**商家与商户账号不需要自己传 tenant 参数**。
+
+**统一返回形状**：每项至少 `{ value, label }`，`value` 一律是**字符串**（4.6：雪花 Id 前端必须保持字符串）。
+各接口按需追加：商品带 `deliveryType`、SKU 带 `price`、券模板带 `couponType`/`couponTypeName`、
+场次带 `status`/`statusName`、角色带 `allowedScopes`/`scopeName`。
+
+> 踩过：这 11 条里有一大半**根本没有实现**（只有 List 接口）。让前端调 List 自己过滤的后果是
+> 下拉里出现停用品牌 / 已下架商品 / 已结束场次 —— 选了之后保存必被拒，
+> 属于「界面上能选、实际不能用」。回归：`API-ADM-098` / `099` / `100`。
+>
+> 另外 `products/{spuId}/Skus` 这种**路径中间带占位符**的写法在这里行不通：
+> 网关 RBAC 只支持**结尾**通配（`/*`），中间占位符没法映射权限点，
+> 会退化成「查不到映射 → 后台令牌被拒」。改成查询参数 `?spuId=`。
 
 ### 4.3 必须冗余返回的展示字段
 

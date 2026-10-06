@@ -32,8 +32,10 @@ public static class ApiServiceCollectionExtensions
         // 嵌套静态类里的校验器 AddValidatorsFromAssembly 扫不到，显式注册
         CouponValidators.AddCouponValidators(services);
         AdminCouponValidators.AddAdminCouponValidators(services);
+        CouponTemplateOptionValidators.AddCouponTemplateOptionValidators(services);
         PromotionValidators.AddPromotionValidators(services);
         SeckillValidators.AddSeckillValidators(services);
+        SeckillSessionOptionValidators.AddSeckillSessionOptionValidators(services);
         GrabValidators.AddGrabValidators(services);
 
         // 私有静态方法不能用扩展方法语法（扩展方法要求方法可被外部访问），所以直接调用

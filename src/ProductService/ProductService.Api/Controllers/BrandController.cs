@@ -32,6 +32,23 @@ public sealed class BrandController : ControllerBase
         CancellationToken ct = default)
         => _mediator.Send(new QueryBrandsCommand(page, pageSize, keyword, includeDisabled), ct);
 
+    /// <summary>品牌下拉（DATA_SPEC 4.2）：只返回启用品牌。</summary>
+    /// <param name="keyword">按品牌名模糊搜索。</param>
+    /// <param name="limit">最多返回多少条，1-200。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下拉项 <c>{ value, label }</c>。</returns>
+    /// <remarks>
+    /// 单独开一个接口而不是让前端调 List 再自己过滤：
+    /// 下拉里出现停用品牌时，运营选了之后保存会被拒（或存下一个已停用品牌），
+    /// 属于「界面上能选、实际不能用」的典型坑。
+    /// </remarks>
+    [HttpGet("Options")]
+    public Task<ApiResponse<List<BrandOption>>> Options(
+        [FromQuery] string keyword = "",
+        [FromQuery] int limit = 200,
+        CancellationToken ct = default)
+        => _mediator.Send(new QueryBrandOptionsCommand(keyword, limit), ct);
+
     /// <summary>新建品牌。品牌名全局唯一。</summary>
     /// <param name="command">新建命令。</param>
     /// <param name="ct">取消令牌。</param>

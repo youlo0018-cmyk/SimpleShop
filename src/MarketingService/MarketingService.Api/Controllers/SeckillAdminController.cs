@@ -40,6 +40,19 @@ public sealed class SeckillAdminController : ControllerBase
     public Task<ApiResponse<SeckillSessionPage>> List([FromBody] QuerySessionsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>秒杀场次下拉（DATA_SPEC 4.2）：只返回未开始 / 进行中的场次。</summary>
+    /// <param name="limit">最多返回多少条，1-200。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下拉项 <c>{ value, label, status, statusName }</c>。</returns>
+    /// <remarks>
+    /// 加场次商品时要选场次，走列表接口再自己过滤的话，
+    /// 下拉里会出现已结束 / 已取消的场次 —— 选中后加商品必然失败。
+    /// </remarks>
+    [HttpGet("Options")]
+    public Task<ApiResponse<List<SeckillSessionOption>>> Options(
+        [FromQuery] int limit = 200, CancellationToken ct = default)
+        => _mediator.Send(new QuerySeckillSessionOptionsCommand(limit), ct);
+
     /// <summary>发布场次：<b>从常规库存划出</b>并置为进行中。</summary>
     /// <param name="command">命令。</param>
     /// <param name="ct">取消令牌。</param>

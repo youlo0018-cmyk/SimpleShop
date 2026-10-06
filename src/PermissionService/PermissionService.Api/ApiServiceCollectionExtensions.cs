@@ -32,6 +32,7 @@ public static class ApiServiceCollectionExtensions
 
         // AddValidatorsFromAssembly 扫不到嵌套静态类里的校验器，这里显式注册
         RoleValidators.AddRoleValidators(services);
+        RoleOptionValidators.AddRoleOptionValidators(services);
         ResolvePermissionsValidators.AddResolvePermissionsValidators(services);
 
         services.AddInfrastructure();

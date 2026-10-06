@@ -52,7 +52,7 @@ $leaves = [ordered]@{
     # 之前四个角色权限点全绑成了 /gateway/permissions/Roles*，
     # 那里根本没有 Roles 子路径 —— 网关查不到映射就**放行**，
     # 等于「角色增删改」四个接口完全不鉴权（scripts/check-permission-paths.ps1 抓出来的）。
-    '2103' = @(@('permission:read', '角色列表', '/gateway/roles/List,/gateway/roles/Detail'), @('permission:create', '新建角色', '/gateway/roles/Create'),
+    '2103' = @(@('permission:read', '角色列表', '/gateway/roles/List,/gateway/roles/Detail,/gateway/roles/Options'), @('permission:create', '新建角色', '/gateway/roles/Create'),
              @('permission:update', '编辑角色', '/gateway/roles/Update'), @('permission:delete', '删除角色', '/gateway/roles/Delete'),
              @('permission:manage', '权限点管理与角色授权', '/gateway/permissions/*,/gateway/roles/BindPermissions'))
     # platform:audit 之前绑 /gateway/platforms/Audit，而该端点**根本不存在**
@@ -80,7 +80,7 @@ $leaves = [ordered]@{
     # 拆成两个端点还有一个好处：「能改价」与「能建档」变成两种可分别授予的能力。
     # products/Detail 是后台商品编辑页的详情接口，brands/* 按 DATA_SPEC 5.21 复用 product:*。
     # 这两组此前都没绑，而「查不到映射 = 放行」—— 后台详情与品牌增删改一直是不鉴权的。
-    '2109' = @(@('product:read', '商品列表', '/gateway/products/List,/gateway/products/Detail,/gateway/brands/List'), @('product:create', '新建商品', '/gateway/products/Create,/gateway/brands/Create'),
+    '2109' = @(@('product:read', '商品列表', '/gateway/products/List,/gateway/products/Detail,/gateway/products/Options,/gateway/products/Designable,/gateway/products/Skus,/gateway/brands/List,/gateway/brands/Options'), @('product:create', '新建商品', '/gateway/products/Create,/gateway/brands/Create'),
              @('product:update', '编辑 / 提交审核 / 上下架', '/gateway/products/Save,/gateway/products/SubmitAudit,/gateway/products/ChangeListing,/gateway/brands/Update'), @('product:audit', '商品审核', '/gateway/products/Audit'),
              @('product:delete', '删除商品', '/gateway/products/Delete,/gateway/brands/Delete'))
     # inventory/Flows 是库存流水（后台「库存」页的明细），同样漏绑。
@@ -117,7 +117,7 @@ $leaves = [ordered]@{
              @('marketing:update', '编辑 / 启停活动', '/gateway/marketing/activities/Update,/gateway/marketing/activities/SetStatus'), @('marketing:delete', '删除活动', '/gateway/marketing/activities/Delete'))
     # 券模板 / 券活动之前只绑了 List 与 Create，但真实端点当时只有 Get 与 Create，
     # 于是 List / Update / Delete 全都查不到映射 —— 不鉴权。端点已补齐，路径对齐。
-    '2115' = @(@('coupon-template:read', '券模板列表', '/gateway/marketing/coupon-templates/List,/gateway/marketing/coupon-templates/Get'), @('coupon-template:create', '新建券模板', '/gateway/marketing/coupon-templates/Create'),
+    '2115' = @(@('coupon-template:read', '券模板列表', '/gateway/marketing/coupon-templates/List,/gateway/marketing/coupon-templates/Get,/gateway/marketing/coupon-templates/Options'), @('coupon-template:create', '新建券模板', '/gateway/marketing/coupon-templates/Create'),
              @('coupon-template:update', '编辑券模板', '/gateway/marketing/coupon-templates/Update'), @('coupon-template:delete', '删除券模板', '/gateway/marketing/coupon-templates/Delete'),
              @('coupon-activity:read', '券活动列表', '/gateway/marketing/coupon-activities/List,/gateway/marketing/coupon-activities/Get'), @('coupon-activity:create', '新建券活动', '/gateway/marketing/coupon-activities/Create'),
              @('coupon-activity:update', '编辑券活动', '/gateway/marketing/coupon-activities/Update'), @('coupon-record:read', '券核销记录', '/gateway/marketing/coupon-records/List'))
@@ -125,7 +125,7 @@ $leaves = [ordered]@{
     '2116' = @(@('marketing-config:read', '营销配置查看', '/gateway/marketing/marketing-config/Get'), @('marketing-config:update', '营销配置维护', '/gateway/marketing/marketing-config/Save'))
     # 秒杀场次是 **seckill/sessions/**（两段），不是 seckill-sessions（一段）。
     # 结束动作的真名是 Finish，不是 End。
-    '2117' = @(@('seckill:read', '秒杀场次列表', '/gateway/marketing/seckill/sessions/List'), @('seckill:create', '新建场次', '/gateway/marketing/seckill/sessions/Create'),
+    '2117' = @(@('seckill:read', '秒杀场次列表', '/gateway/marketing/seckill/sessions/List,/gateway/marketing/seckill/sessions/Options'), @('seckill:create', '新建场次', '/gateway/marketing/seckill/sessions/Create'),
              @('seckill:update', '编辑 / 发布 / 场次商品', '/gateway/marketing/seckill/sessions/Update,/gateway/marketing/seckill/sessions/Publish,/gateway/marketing/seckill/sessions/Items/*'), @('seckill:end', '结束中止场次', '/gateway/marketing/seckill/sessions/Finish'))
     # 后台积分流水走 points/RecordsAll（跨客户），C 端的 points/Records 是「只看自己的」，
     # 刻意不绑权限点：它是客户令牌访问的，带上后台权限点会把小程序自己的积分页挡掉。

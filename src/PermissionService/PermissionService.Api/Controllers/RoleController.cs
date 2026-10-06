@@ -27,6 +27,22 @@ public sealed class RoleController : ControllerBase
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string keyword = "", CancellationToken ct = default)
         => _mediator.Send(new QueryRolesCommand(page, pageSize, keyword), ct);
 
+    /// <summary>角色下拉（DATA_SPEC 4.2）：只返回启用角色，供建号多选。</summary>
+    /// <param name="keyword">按角色名或编码模糊搜索。</param>
+    /// <param name="limit">最多返回多少条，1-200。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>下拉项 <c>{ value, label, allowedScopes, scopeName }</c>。</returns>
+    /// <remarks>
+    /// 带 <c>allowedScopes</c>：建号页要按账号类型过滤可选角色，
+    /// 否则用户会选到不匹配的角色，保存时才被服务端拒（5.18 作用域校验）。
+    /// </remarks>
+    [HttpGet("Options")]
+    public Task<ApiResponse<List<RoleOption>>> Options(
+        [FromQuery] string keyword = "",
+        [FromQuery] int limit = 200,
+        CancellationToken ct = default)
+        => _mediator.Send(new QueryRoleOptionsCommand(keyword, limit), ct);
+
     /// <summary>查询角色详情与已绑定权限点，用于权限树回显。</summary>
     /// <param name="roleId">角色 Id。</param>
     /// <param name="ct">取消令牌。</param>
