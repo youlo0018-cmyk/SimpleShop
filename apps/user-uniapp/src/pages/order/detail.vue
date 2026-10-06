@@ -134,7 +134,7 @@ function toEvaluate() {
 
 function toRefund() {
   uni.navigateTo({
-    url: `/pages/refund/form?orderNo=${orderNo.value}&orderId=${order.orderId}`,
+    url: `/pages/refund/form?orderNo=${orderNo.value}&orderId=${order.value.orderId}`,
   });
 }
 

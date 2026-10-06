@@ -53,6 +53,7 @@ import AppHeader from '@/components/AppHeader.vue';
 import { request } from '@/core/http';
 import { getPlatformCode } from '@/core/session-storage';
 import { useSessionStore } from '@/stores/session';
+import { isPhone } from '@/common/validators';
 
 const session = useSessionStore();
 const addressId = ref('');
@@ -182,7 +183,7 @@ function validate(): boolean {
     uni.showToast({ title: '请填写收货人', icon: 'none' });
     return false;
   }
-  if (!/^1[3-9]\d{9}$/.test(form.consigneePhone.trim())) {
+  if (!isPhone(form.consigneePhone.trim())) {
     uni.showToast({ title: '手机号格式不正确', icon: 'none' });
     return false;
   }

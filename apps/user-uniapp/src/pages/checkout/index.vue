@@ -131,6 +131,7 @@ import AppHeader from '@/components/AppHeader.vue';
 import { request } from '@/core/http';
 import { amount } from '@/core/format';
 import { useSessionStore } from '@/stores/session';
+import { isPhone } from '@/common/validators';
 
 const session = useSessionStore();
 const loading = ref(true);
@@ -278,7 +279,7 @@ async function submit() {
     uni.showToast({ title: '请选择收货地址', icon: 'none' });
     return;
   }
-  if (!/^1[3-9]\d{9}$/.test(String(selectedAddress.value.consigneePhone || '').trim())) {
+  if (!isPhone(String(selectedAddress.value.consigneePhone || '').trim())) {
     uni.showToast({ title: '手机号格式不正确', icon: 'none' });
     return;
   }

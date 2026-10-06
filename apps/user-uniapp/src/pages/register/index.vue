@@ -30,6 +30,7 @@
 import { reactive, ref } from 'vue';
 import AppHeader from '@/components/AppHeader.vue';
 import { useSessionStore } from '@/stores/session';
+import { isCustomerName, isPassword, isPhone } from '@/common/validators';
 
 const session = useSessionStore();
 const loading = ref(false);
@@ -46,11 +47,11 @@ const errors = reactive({
 });
 
 function validate() {
-  errors.customerName = /^[A-Za-z0-9_]{3,64}$/.test(form.customerName.trim())
+  errors.customerName = isCustomerName(form.customerName.trim())
     ? ''
     : '登录名需为 3-64 位字母、数字或下划线';
-  errors.phone = /^1[3-9]\d{9}$/.test(form.phone.trim()) ? '' : '手机号格式不正确';
-  errors.password = /^(?=.*[A-Za-z])(?=.*\d).{8,32}$/.test(form.password)
+  errors.phone = isPhone(form.phone.trim()) ? '' : '手机号格式不正确';
+  errors.password = isPassword(form.password)
     ? ''
     : '密码至少 8 位且同时包含字母和数字';
   return !errors.customerName && !errors.phone && !errors.password;
