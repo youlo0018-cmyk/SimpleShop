@@ -40,7 +40,7 @@ public class OrderCreatorTests
     // 换成假实现就等于把「0 元单有没有结清占用」这件事从测试里抹掉了。
     private static OrderCreator Build(
         FakeCouponPort coupons, FakePointPort points, FakeInventoryPort inventory, FakeOrderStore store,
-        FakeOrderCreateLock? createLock = null, FakeProductPort? products = null,
+        FakeOrderCreateLock? createLock = null, IProductPort? products = null,
         FakePlatformPort? platforms = null)
     {
         var completer = new OrderPaymentCompleter(
@@ -214,6 +214,68 @@ public class OrderCreatorTests
         // 多出来的 897.99 元积分**永久消失**，一分钱也没多省。
         Assert.Equal(0m, store.Saved!.PayableAmount);
         Assert.Equal(102.00m, store.Saved.PointsDeduction);
+    }
+
+    [Fact]
+    public async Task 订单归属平台按商品算而不是客户端传的0()
+    {
+        var store = new FakeOrderStore();
+
+        // 客户令牌里没有 platform_id，小程序只能硬编码 0。
+        // 订单服务若照单全收，平台运费就永远按「0 元平台」去查 ——
+        // 后台把运费配成 10 元，顾客照样免运费，而且订单的归属平台全是 0。
+        var req = Request(couponId: 0, lineCount: 1) with { PlatformId = 0 };
+
+        var result = await Build(
+            new FakeCouponPort { CouponId = 0, Discount = 0m }, new FakePointPort(),
+            new FakeInventoryPort(), store,
+            products: new FakeProductPort { PlatformId = 8888 },
+            platforms: new FakePlatformPort { ShippingFee = 10m }).CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(8888L, store.Saved!.PlatformId);
+        Assert.Equal(10m, store.Saved.Freight);
+        Assert.Equal(61.00m, store.Saved.PayableAmount);
+    }
+
+    [Fact]
+    public async Task 购物车里混了不同平台的商品则拒单()
+    {
+        var store = new FakeOrderStore();
+
+        // 跨平台凑一单：运费按哪个平台算都不对，结算与对账也说不清。
+        // 必须在落库前拒掉 —— 落库之后再发现就只能靠人工拆单了。
+        var req = Request(couponId: 0, lineCount: 2);
+        var productPort = new PerSkuPlatformProductPort(id => id == 1000L ? 100L : 200L);
+
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            products: productPort).CreateAsync(req);
+
+        Assert.False(result.Succeeded);
+        Assert.Null(store.Saved);
+    }
+
+    /// <summary>按 SKU 分别返回不同平台的端口替身，用来构造跨平台购物车。</summary>
+    private sealed class PerSkuPlatformProductPort : IProductPort
+    {
+        private readonly Func<long, long> _platformOf;
+
+        public PerSkuPlatformProductPort(Func<long, long> platformOf) => _platformOf = platformOf;
+
+        public Task<IReadOnlyDictionary<long, SkuPriceInfo>> GetSkuPricesAsync(
+            IReadOnlyCollection<long> skuIds, CancellationToken ct = default)
+        {
+            var result = new Dictionary<long, SkuPriceInfo>();
+            foreach (var id in skuIds)
+            {
+                result[id] = new SkuPriceInfo(
+                    id, 25.50m, Enabled: true, SpuApproved: true, SpuOnShelf: true,
+                    MerchantId: 0, PlatformId: _platformOf(id), DeliveryTypeIds.PhysicalExpress);
+            }
+
+            return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(result);
+        }
     }
 
     [Fact]
@@ -636,6 +698,9 @@ public class OrderCreatorTests
         /// <summary>权威配送方式，默认实物快递。用于验证运费只对快递收取。</summary>
         public int DeliveryType { get; set; } = DeliveryTypeIds.PhysicalExpress;
 
+        /// <summary>商品归属平台。订单归属与运费都按它算，不采信客户端传的 platformId。</summary>
+        public long PlatformId { get; set; }
+
         /// <summary>被回查过的 SKU 集合。</summary>
         public List<long> Queried { get; } = [];
 
@@ -654,7 +719,7 @@ public class OrderCreatorTests
                 result[id] = new SkuPriceInfo(
                     id, AuthoritativePrice ?? 25.50m,
                     Enabled: true, SpuApproved: true, SpuOnShelf: true, MerchantId: 0,
-                    DeliveryType);
+                    PlatformId, DeliveryType);
             }
 
             return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(result);

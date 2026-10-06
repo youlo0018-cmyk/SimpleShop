@@ -176,7 +176,13 @@ public sealed class InternalProductController : ControllerBase
                 spu?.Status == ListingStatuses.OnShelf,
                 spu?.MerchantId ?? 0,
                 spu?.PlatformId ?? 0,
-                spu?.DeliveryType ?? DeliveryTypes.PhysicalExpress);
+                spu?.DeliveryType ?? DeliveryTypes.PhysicalExpress,
+
+                // SkuName 在保存时就已经写成「商品名 规格」，不要再拼一次商品名，
+                // 否则结算页会显示成「截图商品 截图商品 红」。
+                a.SkuName,
+                a.SkuSpecText,
+                a.Image ?? string.Empty);
         }).ToList();
 
         return Ok(ApiResults.Ok(list));
@@ -241,6 +247,10 @@ public sealed record SkuSnapshot(
 /// <param name="MerchantId">归属商户 Id，0 表示平台自营。</param>
 /// <param name="PlatformId">归属平台 Id。</param>
 /// <param name="DeliveryType">配送方式，挂在 SPU 上。</param>
+/// <param name="SkuName">商品名快照，结算试算要直接显示，不该让调用方自己再查一遍。</param>
+/// <param name="SkuSpecText">规格文本快照。</param>
+/// <param name="Image">SKU 图。</param>
 public sealed record SkuPricing(
     long SkuId, long ProductId, decimal Price, int SkuEnabled,
-    bool SpuApproved, bool SpuOnShelf, long MerchantId, long PlatformId, int DeliveryType);
+    bool SpuApproved, bool SpuOnShelf, long MerchantId, long PlatformId, int DeliveryType,
+    string SkuName, string SkuSpecText, string Image);

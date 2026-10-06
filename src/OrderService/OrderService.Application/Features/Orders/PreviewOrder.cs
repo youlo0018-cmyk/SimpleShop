@@ -130,7 +130,13 @@ public sealed class PreviewOrderHandler
 
         var resolved = outcome.Lines;
         var ctx = TenantContextHolder.Current;
-        var platformId = ctx.PlatformId > 0 ? ctx.PlatformId : request.PlatformId;
+
+        // 与下单同一口径：平台以**商品**为准。
+        // 客户令牌里没有 platform_id，小程序硬编码 0，照它算就会漏掉平台运费 ——
+        // 试算显示 113.50、下单收 123.50，差额在界面上无处可解释。
+        var platformId = outcome.PlatformId > 0
+            ? outcome.PlatformId
+            : (ctx.PlatformId > 0 ? ctx.PlatformId : request.PlatformId);
 
         var amountLines = resolved
             .Select(a => new OrderLineInput(a.SkuId, a.Quantity, a.UnitPrice)).ToArray();

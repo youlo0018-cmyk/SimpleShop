@@ -177,6 +177,10 @@ public sealed class OrderCreator
 
         var resolved = outcome0.Lines;
 
+        // 平台以商品为准。客户令牌里没有 platform_id，小程序只能硬编码 0；
+        // 照它算的话平台运费永远按「0 元平台」查，后台配了 10 元也收不到。
+        var platformId = outcome0.PlatformId > 0 ? outcome0.PlatformId : request.PlatformId;
+
         var amountLines = request.Lines
             .Select((a, i) => new OrderLineInput(
                 a.SkuId, a.Quantity, resolved[i].UnitPrice))
@@ -192,7 +196,7 @@ public sealed class OrderCreator
         //
         // 只有含实物快递行时才去读配置：虚拟 / 自提单的运费恒为 0，
         // 没必要为它们多一次跨服务调用，也就不该被商户平台服务的抖动拖住。
-        var freightRule = await _resolver.ResolveFreightAsync(request.PlatformId, resolved, ct)
+        var freightRule = await _resolver.ResolveFreightAsync(platformId, resolved, ct)
             .ConfigureAwait(false);
 
         var couponLines = request.Lines
@@ -207,7 +211,7 @@ public sealed class OrderCreator
         // 试算就会当客户没用券 → 活动又算一遍 → 券和活动优惠叠加，
         // 结算页算一套、下单算另一套。
         var activityBySku = await _activities.QuoteAsync(
-            request.CustomerId, request.PlatformId, 0,
+            request.CustomerId, platformId, 0,
             request.CouponId,
             couponLines.Select(a => (a.SpuId, a.SkuId, a.Amount)).ToArray(),
             ct).ConfigureAwait(false);
@@ -356,7 +360,8 @@ public sealed class OrderCreator
                 OrderNo = orderNo,
                 CustomerId = request.CustomerId,
                 CustomerNo = request.CustomerNo,
-                PlatformId = request.PlatformId,
+                // 归属平台同样以商品为准（见上面 platformId 的说明）
+                PlatformId = platformId,
                 MerchantId = request.MerchantId,
                 Status = amount.PayableAmount == 0m
                     ? OrderStatuses.PendingShipment    // 实付 0 元直接跳 20，跳过支付

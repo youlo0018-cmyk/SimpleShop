@@ -38,7 +38,7 @@ public sealed class OrderPricingResolver
     /// <summary>按权威数据纠正订单行。</summary>
     /// <param name="lines">客户端报的行。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>纠正后的行；失败时返回失败原因。</returns>
+    /// <returns>纠正后的行与订单归属平台；失败时返回失败原因。</returns>
     public async Task<ResolveOutcome> ResolveAsync(
         IReadOnlyList<OrderLineRequest> lines, CancellationToken ct)
     {
@@ -85,10 +85,37 @@ public sealed class OrderPricingResolver
             {
                 UnitPrice = isSeckill ? line.UnitPrice : sku.Price,
                 DeliveryType = sku.DeliveryType,
+
+                // 名称与规格同样以商品服务为准。订单行是最长久的对账凭据，
+                // 客户端写什么就永久记什么的话，商家改完名之后
+                // 历史订单显示的是旧名、商品卡是新名，两边对不上。
+                // 秒杀行的名称场次里已经带了，也一并纠正 —— 场次快照同样来自商品服务。
+                ProductName = sku.SkuName,
+                SkuSpecText = sku.SkuSpecText,
             });
         }
 
-        return ResolveOutcome.Ok(resolved);
+        // 订单归属哪个平台由**商品**决定，不采信请求里的 platformId。
+        //
+        // 客户令牌里没有 platform_id（CustomerTokenService 只签 sub 与 tenant_type），
+        // 小程序于是硬编码 platformId = 0。后果是平台运费永远按「0 元平台」去查 ——
+        // 后台把运费配成 10 元，顾客结算与下单都显示 0 元，一分钱收不到。
+        // 而商品服务本来就知道每个 SPU 属于哪个平台，问它比问客户端可靠得多。
+        var platformIds = resolved.Select(a => a.SkuId)
+            .Distinct()
+            .Select(a => pricing[a].PlatformId)
+            .Distinct()
+            .ToArray();
+
+        if (platformIds.Length > 1)
+        {
+            // 跨平台凑一单：运费按哪个平台算都不对，结算与对账也说不清。
+            // 必须在落库前拒掉 —— 落库之后再发现就只能靠人工拆单了。
+            _logger.LogError("下单被拒：购物车里有跨平台商品（{PlatformIds}）", string.Join(",", platformIds));
+            return ResolveOutcome.Fail("购物车里有不同平台的商品，请分开结算");
+        }
+
+        return ResolveOutcome.Ok(resolved, platformIds.Length == 1 ? platformIds[0] : 0);
     }
 
     /// <summary>按平台配置算出本单该收多少运费（BUSINESS.md 6.2）。</summary>
@@ -123,8 +150,11 @@ public sealed class OrderPricingResolver
 /// <param name="Succeeded">是否成功。</param>
 /// <param name="Lines">纠正后的行。</param>
 /// <param name="Error">失败原因。</param>
+/// <param name="PlatformId">
+/// 订单归属的平台，<b>由商品决定</b>；不采信客户端传的 platformId。
+/// </param>
 public readonly record struct ResolveOutcome(
-    bool Succeeded, IReadOnlyList<OrderLineRequest> Lines, string Error)
+    bool Succeeded, IReadOnlyList<OrderLineRequest> Lines, string Error, long PlatformId = 0)
 {
     /// <summary>构造一个失败结果。</summary>
     /// <param name="error">失败原因。</param>
@@ -134,6 +164,7 @@ public readonly record struct ResolveOutcome(
     /// <summary>构造一个成功结果。</summary>
     /// <param name="lines">纠正后的行。</param>
     /// <returns>成功结果。</returns>
-    public static ResolveOutcome Ok(IReadOnlyList<OrderLineRequest> lines) => new(true, lines, string.Empty);
+    public static ResolveOutcome Ok(IReadOnlyList<OrderLineRequest> lines, long platformId = 0)
+        => new(true, lines, string.Empty, platformId);
 }
 

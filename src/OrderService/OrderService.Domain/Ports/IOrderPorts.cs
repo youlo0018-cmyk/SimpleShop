@@ -59,6 +59,10 @@ public interface IProductPort
 /// <param name="SpuApproved">所属 SPU 是否审核通过。</param>
 /// <param name="SpuOnShelf">所属 SPU 是否已上架。</param>
 /// <param name="MerchantId">归属商户 Id。</param>
+/// <param name="PlatformId">归属平台 Id。</param>
+/// <param name="SkuName">商品名的权威快照（已含规格前缀）。</param>
+/// <param name="SkuSpecText">规格文本的权威快照。</param>
+/// <param name="Image">SKU 图。</param>
 /// <param name="DeliveryType">
 /// 配送方式，挂在 SPU 上（BUSINESS.md 6.1）。1 实物快递 / 2 虚拟商品 / 3 实物自提。
 /// </param>
@@ -67,9 +71,18 @@ public interface IProductPort
 /// 而配送方式此前同样由客户端上报：把自提商品报成快递就能凭空收一笔运费，
 /// 反过来把快递报成自提就能白嫖免运费。
 /// </remarks>
+/// <para>带上 <c>PlatformId</c> 是因为<b>订单归属哪个平台必须由商品决定</b>。
+/// 客户端令牌里没有 platform_id（CustomerTokenService 只签 sub 与 tenant_type），
+/// 小程序于是硬编码 platformId = 0 —— 结果是平台运费永远按 0 元平台去查，
+/// 后台把运费配成 10 元也一分钱收不到，订单的归属平台也全是 0。
+/// 而商品服务本来就知道每个 SPU 属于哪个平台。</para>
+/// <para>带上名称与规格是因为<b>订单行是最长久的对账凭据</b>，而 ProductName /
+/// SkuSpecText 此前直接取客户端传来的值 —— 客户端写什么，订单就永久记什么。
+/// 商家改完名之后，历史订单会显示成改名前的名字，而商品卡是另一个名字，对不上。</para>
 public readonly record struct SkuPriceInfo(
     long SkuId, decimal Price, bool Enabled, bool SpuApproved, bool SpuOnShelf, long MerchantId,
-    int DeliveryType = DeliveryTypeIds.PhysicalExpress);
+    long PlatformId = 0, int DeliveryType = DeliveryTypeIds.PhysicalExpress,
+    string SkuName = "", string SkuSpecText = "", string Image = "");
 
 /// <summary>平台端口。运费是平台级配置，算运费的职责在订单服务，配置本身归商户平台服务。</summary>
 public interface IPlatformPort

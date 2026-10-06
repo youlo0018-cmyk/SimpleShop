@@ -61,9 +61,12 @@
             @blur="applyPoints"
           />
         </view>
-        <text class="muted">
-          积分是最后一道优惠，本单最多可抵 {{ preview?.maxPointsToUse || 0 }} 积分
+        <!-- 上限单独一行：和说明文字挤在一行时，「积分」两个字会被折到下一行，
+             读起来像「……最多可抵 11350 积 / 分」 -->
+        <text v-if="preview?.maxPointsToUse" class="muted points__hint">
+          本单最多可抵 {{ preview.maxPointsToUse }} 积分
         </text>
+        <text class="muted">积分是最后一道优惠，可与券同用</text>
       </view>
 
       <view class="amount-summary">
@@ -414,6 +417,12 @@ onLoad(() => {
   border-radius: $radius-sm;
   background: $bg-page;
   text-align: right;
+}
+
+.points__hint {
+  display: block;
+  margin-top: $space-2;
+  color: $brand;
 }
 
 .amount-summary {
