@@ -89,11 +89,31 @@ public sealed class SearchIndexSyncHandler
         var orphans = 0;
         if (request.DeleteOrphans)
         {
-            foreach (var id in indexed)
-            {
-                if (seen.Contains(id)) continue;
+            // 🔴 候选孤儿**必须回库逐个确认**，不能只信上面那一轮分页扫描的 seen。
+            //
+            // 分页扫描期间数据在变（有人在新建 / 删除商品），页边界会整体漂移，
+            // 于是某个真实存在的商品可能一次都没被扫到。只按 seen 判断的话，
+            // 它会被当成孤儿从索引里删掉 —— 商品还在售，却搜不到，
+            // 而且下一轮对账才会补回来（15 分钟）。
+            //
+            // 反过来误删的代价远大于多留一个孤儿文档：孤儿最多是「搜到点进去 404」，
+            // 误删是「在售商品搜不到」，直接影响成交。
+            var candidates = indexed.Where(a => !seen.Contains(a)).ToList();
 
-                if (await _search.DeleteAsync(id, ct).ConfigureAwait(false)) orphans++;
+            for (var i = 0; i < candidates.Count; i += 200)
+            {
+                var batch = candidates.Skip(i).Take(200).ToList();
+                var alive = (await _products.GetByIdsAsync(batch, ct).ConfigureAwait(false))
+                    .Select(a => a.Id)
+                    .ToHashSet();
+
+                foreach (var id in batch)
+                {
+                    // 回库查得到 → 不是孤儿，只是分页没扫到。保留索引文档。
+                    if (alive.Contains(id)) continue;
+
+                    if (await _search.DeleteAsync(id, ct).ConfigureAwait(false)) orphans++;
+                }
             }
         }
 
