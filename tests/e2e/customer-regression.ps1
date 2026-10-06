@@ -15,6 +15,7 @@
 [CmdletBinding()]
 param(
     [string]$Gateway = 'http://127.0.0.1:5008',
+    [string]$Inventory = 'http://127.0.0.1:5062',
     [switch]$StopOnFail
 )
 
@@ -130,6 +131,54 @@ Invoke-Case 'API-CUS-000c' '客户令牌可上传评价图片（复用统一上�
     } finally {
         if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
     }
+}
+
+Invoke-Case 'API-CUS-000d' '🔴 客户 B 用 A 的订单申请退款 → 403（不能替别人退）' {
+    # 找一个有库存的上架商品，用客户 A 建一张待支付订单；客户 B 拿订单号申请退款必须被拒。
+    # 这条专门守住「退款申请也走 PaymentOwnership」——退款入口只有订单号，订单号是可枚举的。
+    $products = Invoke-RestMethod "$Gateway/gateway/shop/products/List" -Method Post `
+        -ContentType 'application/json' `
+        -Body (@{ customerId = '0'; page = 1; pageSize = 20 } | ConvertTo-Json) -TimeoutSec 30
+
+    $order = $null
+    foreach ($item in @($products.data.items)) {
+        $detail = Invoke-RestMethod "$Gateway/gateway/shop/products/Detail" -Method Post `
+            -ContentType 'application/json' `
+            -Body (@{ customerId = $script:customerA; productId = $item.productId } | ConvertTo-Json) -TimeoutSec 30
+        # 前台详情只返回启用中的 SKU（停用 SKU 已在服务端过滤），这里直接取第一条。
+        $sku = @($detail.data.skus)[0]
+        if (-not $sku) { continue }
+
+        $snapshot = Invoke-RestMethod "$Inventory/internal/inventory/Snapshot?skuIds=$($sku.skuId)" -TimeoutSec 20
+        if ([int]$snapshot.data[0].available -lt 1) { continue }
+
+        $body = @{
+            customerId = $script:customerA; platformId = 0; merchantId = 0
+            idempotencyKey = "CUS-REFUND-$($script:suffix)"
+            receiverName = '越权测试'; receiverPhone = '13800000000'; receiverAddress = '某地 1 号楼 101'
+            lines = @(@{
+                spuId = $item.productId; skuId = $sku.skuId; quantity = 1
+                unitPrice = $sku.finalPrice; productName = $sku.skuName
+                skuSpecText = $sku.skuSpecText; deliveryType = $detail.data.deliveryType
+            })
+            couponId = 0; pointsToUse = 0; freight = 0
+        }
+        $created = Post-As '/gateway/orders/Create' $body $script:tokenA
+        if ($created.success) { $order = $created.data; break }
+    }
+
+    if ($null -eq $order) {
+        Write-Host '        找不到有库存的上架商品，无法构造退款越权用例' -ForegroundColor DarkYellow
+        return $false
+    }
+
+    $refund = Post-As '/gateway/refunds/Apply' @{
+        orderId = $order.orderId; orderNo = $order.orderNo
+        items = @(); reason = '越权退款测试'
+    } $script:tokenB
+
+    # 业务失败是 HTTP 200 + code=403（与全项目一致），不能断言 HTTP 状态码。
+    return $refund.code -eq 403 -and $refund.message -match '其他客户'
 }
 
 Invoke-Case 'API-CUS-001' '查自己的资料：手机号打码下发' {

@@ -291,11 +291,12 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | 地址簿 | `pages/address/list|form`：列表 / 新增 / 编辑 / 删除 / 设默认；结算页改为从地址簿选择默认地址 |
 | 收藏 | `pages/favorite/list`：商品摘要、已下架置灰、取消收藏；商品详情加收藏按钮 |
 | 评价 | `pages/evaluate/form`：星级 / 文字 / 最多 9 图 / 匿名；追评 30 天内最多 3 条；订单详情与「我的评价」都有入口 |
+| 退款 | `pages/refund/form`：整单退款 + 必填原因；网关按客户令牌放行 `/gateway/refunds/Apply`，服务端 `PaymentOwnership` 校验订单归属 |
 | 地区库 | 新增匿名接口 `GET /gateway/regions/Public?platformCode=`，地址表单三级联动不再依赖后台令牌 |
 | 图片上传 | 网关新增 `CustomerAllowedPaths`，客户令牌可复用 `/gateway/files/Upload`（仍然先验签，只是跳过后台权限点） |
 
-**验证**：后台 UI 回归 31 菜单页 + 27 非菜单页 + 10 流程全绿；小程序 UI 回归 **21/21** 页全绿（新增 4 页）；
-后端 E2E **689/689**（customer-regression 17、merchantplatform-regression 40）；单元 **384/384**；
+**验证**：后台 UI 回归 31 菜单页 + 27 非菜单页 + 10 流程全绿；小程序 UI 回归 **22/22** 页全绿（新增 5 页）；
+后端 E2E **690/690**（customer-regression 18、merchantplatform-regression 40）；单元 **384/384**；
 `npm run build`（后台）、`npm run build:h5`、`npm run build:mp-weixin` 均通过。
 
 **下一步**：继续按 `FRONTEND_DESIGN.md` 复核小程序剩余固定模板页（退款申请、秒杀 PV 归因），再进入视觉基线与最终收尾。

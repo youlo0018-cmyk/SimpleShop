@@ -128,6 +128,12 @@
       }
     },
     {
+      "path": "pages/refund/form",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/shop/store",
       "style": {
         "navigationStyle": "custom"

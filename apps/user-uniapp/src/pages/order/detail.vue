@@ -64,6 +64,7 @@
         <button v-if="Number(order.status) === 50" class="button-primary" @tap="toEvaluate">
           评价商品
         </button>
+        <button v-if="canRefund" class="button-primary" @tap="toRefund">申请退款</button>
       </view>
     </template>
     <view v-else class="empty">订单不存在</view>
@@ -72,7 +73,7 @@
 
 <script setup lang="ts">
 import { onLoad } from '@dcloudio/uni-app';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import AppHeader from '@/components/AppHeader.vue';
 import { request } from '@/core/http';
 import { amount } from '@/core/format';
@@ -130,6 +131,19 @@ async function confirmReceipt() {
 function toEvaluate() {
   uni.navigateTo({ url: `/pages/evaluate/list?orderNo=${orderNo.value}` });
 }
+
+function toRefund() {
+  uni.navigateTo({
+    url: `/pages/refund/form?orderNo=${orderNo.value}&orderId=${order.orderId}`,
+  });
+}
+
+const canRefund = computed(() => {
+  const status = Number(order.value.status);
+  const items = order.value.items || [];
+  const hasVirtual = items.some((item: any) => Number(item.deliveryType) === 2);
+  return hasVirtual ? [20, 30].includes(status) : [20, 30, 40, 50].includes(status);
+});
 
 onLoad((options) => {
   orderNo.value = String(options?.orderNo || '');

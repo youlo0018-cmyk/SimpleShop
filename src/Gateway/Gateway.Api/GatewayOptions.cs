@@ -75,7 +75,8 @@ public sealed class GatewayOptions
     /// </remarks>
     public string[] CustomerAllowedPaths { get; set; } =
     [
-        "/gateway/files/Upload"
+        "/gateway/files/Upload",
+        "/gateway/refunds/Apply"
     ];
 }
 

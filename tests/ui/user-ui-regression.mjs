@@ -135,6 +135,7 @@ async function main() {
     ['address-list', '/pages/address/list'],
     ['address-form', '/pages/address/form'],
     ['favorite', '/pages/favorite/list'],
+    ['refund-form', '/pages/refund/form?orderNo=UI-TEST&orderId=1'],
     ['shop-store', '/pages/shop/store?merchantId=0'],
   ];
 

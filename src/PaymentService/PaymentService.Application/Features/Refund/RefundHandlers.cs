@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using MediatR;
+using PaymentService.Application.Features.Payment;
 using PaymentService.Application.Services;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.IRepository;
@@ -37,6 +38,14 @@ public sealed class ApplyRefundHandler : IRequestHandler<ApplyRefundCommand, Api
         if (order is null)
         {
             return ApiResults.Fail<long>(BaseApiResponseCode.NotFound, "订单不存在或订单服务不可用");
+        }
+
+        // 归属校验必须在退款窗口之前：客户令牌下，别人的订单无论什么状态都只能看到 403，
+        // 不能通过「状态不可退」的提示反推别人的订单状态。
+        var ownershipError = PaymentOwnership.OwnershipError(order);
+        if (ownershipError is not null)
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.Forbidden, ownershipError);
         }
 
         // 配送方式取订单行的：虚拟与实物混在一单里时，按虚拟的严格窗口处理

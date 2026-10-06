@@ -178,6 +178,9 @@ try {
         # 小程序发表评价要传图，复用统一上传接口；网关按客户令牌放行，
         # 接口本身仍要求登录（见 GatewayOptions.CustomerAllowedPaths）
         '/files/Upload',
+        # 客户申请退款；归属由 PaymentOwnership 在服务端校验，
+        # 后台代客退款仍走同一个入口并持有 refund:apply 权限点
+        '/refunds/Apply',
         '/marketing/activities/FinalPrice', '/marketing/activities/FinalPriceBatch',
         '/marketing/seckill/grab/result',
         # 报表：/reports/Point 是**客户自己的**积分报表（C 端积分页用），

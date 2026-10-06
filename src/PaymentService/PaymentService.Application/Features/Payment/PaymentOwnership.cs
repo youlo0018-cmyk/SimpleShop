@@ -21,12 +21,26 @@ internal static class PaymentOwnership
     /// <returns>越权时返回失败响应；通过返回 null。</returns>
     internal static ApiResponse<PaymentDto>? RejectIfNotOwner(OrderForPayment order)
     {
+        var error = OwnershipError(order);
+        if (error is null) return null;
+
+        return ApiResults.Fail<PaymentDto>(BaseApiResponseCode.Forbidden, error);
+    }
+
+    /// <summary>返回越权提示；通过时返回 null。</summary>
+    /// <param name="order">已取回的订单。</param>
+    /// <returns>客户令牌存在且订单不属于该客户时返回中文提示。</returns>
+    /// <remarks>
+    /// 退款申请返回的是 <c>ApiResponse&lt;long&gt;</c>，与支付接口的泛型不同，
+    /// 所以这里单独提供字符串版本；判断逻辑只保留这一处，避免两条路径漂移。
+    /// </remarks>
+    internal static string? OwnershipError(OrderForPayment order)
+    {
         var context = TenantContextHolder.Current;
         if (!context.IsCustomer) return null;
         if (context.UserId == order.CustomerId) return null;
 
-        return ApiResults.Fail<PaymentDto>(
-            BaseApiResponseCode.Forbidden, "不能操作其他客户的订单");
+        return "不能操作其他客户的订单";
     }
 
     /// <summary>按订单号取订单并校验归属。</summary>
