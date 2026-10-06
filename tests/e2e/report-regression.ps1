@@ -93,6 +93,29 @@ Invoke-Case 'API-RPT-005' '🔴 非法档位 99 被校验挡住（400 而不是 
     return $r.StatusCode -eq 400 -and $r.Body -match 'Range'
 }
 
+Invoke-Case 'API-RPT-004b' '🔴 工作台指标卡带 Label 与已格式化的 Value（前端不写死文案）' {
+    # DATA_SPEC 4.3：每个指标带 Label 与 Value，前端不写死文案。
+    # 只有扁平数值字段的话，前端得自己写「成交额 / 订单数 / 客单价…」这张表 ——
+    # 加了新指标就要改前端，而两张报表页各写一遍迟早不一致。
+    $r = Report 3
+    if (-not $r.success) { return $false }
+
+    $metrics = @($r.data.metrics)
+    if ($metrics.Count -lt 5) { return $false }
+
+    $gmv = @($metrics | Where-Object { $_.key -eq 'gmv' })[0]
+    if ($null -eq $gmv) { return $false }
+
+    Write-Host ("        首张卡：{0} = {1}{2}（共 {3} 张）" -f `
+        $gmv.label, $gmv.value, $gmv.unit, $metrics.Count) -ForegroundColor DarkGray
+
+    # 每张卡都要有中文 Label 与 Value；成交额的值要带两位小数
+    return @($metrics | Where-Object { [string]::IsNullOrWhiteSpace($_.label) }).Count -eq 0 `
+        -and @($metrics | Where-Object { [string]::IsNullOrWhiteSpace($_.value) }).Count -eq 0 `
+        -and $gmv.label -eq '成交额' `
+        -and $gmv.value -match '^\d{1,3}(,\d{3})*\.\d{2}$'
+}
+
 Invoke-Case 'API-RPT-006' '🔴 档位 0 被拒（不能静默按默认档算一个数出来）' {
     $r = PostExpectingReject @{ range = 0 }
     if ($null -eq $r) { return $false }

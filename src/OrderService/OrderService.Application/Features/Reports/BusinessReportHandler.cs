@@ -75,10 +75,39 @@ public sealed class BusinessReportHandler
             avgOrderValue,
             refund,
             refundRate,
-            lowStockCount);
+            lowStockCount,
+            BuildMetrics(gmv, agg.OrderCount, agg.PaidOrderCount, agg.CompletedOrderCount,
+                avgOrderValue, refund, refundRate, lowStockCount));
 
         return ApiResults.Ok(report);
     }
+
+    /// <summary>组装工作台的指标卡（文案由后端下发，前端不写死）。</summary>
+    /// <param name="gmv">成交额。</param>
+    /// <param name="orderCount">订单数。</param>
+    /// <param name="paidOrderCount">支付订单数。</param>
+    /// <param name="completedOrderCount">完成订单数。</param>
+    /// <param name="avgOrderValue">客单价。</param>
+    /// <param name="refund">退款金额。</param>
+    /// <param name="refundRate">退款率（小数）。</param>
+    /// <param name="lowStockCount">库存预警数。</param>
+    /// <returns>指标卡清单，顺序即展示顺序。</returns>
+    private static IReadOnlyList<ReportMetric> BuildMetrics(
+        decimal gmv, long orderCount, long paidOrderCount, long completedOrderCount,
+        decimal avgOrderValue, decimal refund, decimal refundRate, int lowStockCount)
+        =>
+        [
+            new("gmv", "成交额", gmv.ToString("N2"), "元"),
+            new("orderCount", "订单数", orderCount.ToString("N0"), "单"),
+            new("paidOrderCount", "支付订单", paidOrderCount.ToString("N0"), "单"),
+            new("completedOrderCount", "完成订单", completedOrderCount.ToString("N0"), "单"),
+            new("avgOrderValue", "客单价", avgOrderValue.ToString("N2"), "元"),
+            new("refundAmount", "退款金额", refund.ToString("N2"), "元"),
+            // 比率在这里就转成百分数**字符串**：4.6 要求数值以小数下发，
+            // 但展示层统一由后端给出，免得两个页面各写一套百分比格式化
+            new("refundRate", "退款率", (refundRate * 100m).ToString("N2") + "%", ""),
+            new("lowStockCount", "库存预警", lowStockCount.ToString("N0"), "个"),
+        ];
 
     /// <summary>金额统一保留两位小数、四舍五入远离零。</summary>
     /// <param name="value">原值。</param>

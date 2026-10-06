@@ -13,6 +13,11 @@ namespace OrderService.Application.Features.Reports;
 /// <param name="RefundAmount">退款金额。</param>
 /// <param name="RefundRate">退款率 = 退款金额 / 成交额。分母为 0 时返回 0。</param>
 /// <param name="LowStockCount">库存预警 SKU 数。</param>
+/// <param name="Metrics">
+/// 指标卡片：每项带 <c>Label</c> 与已格式化的 <c>Value</c>，工作台直接渲染，**前端不写死文案**
+/// （DATA_SPEC 4.3）。与上面的同名字段是**同一份数据**：扁平字段给报表页做二次计算，
+/// Metrics 给工作台的指标卡直接用。
+/// </param>
 /// <remarks>
 /// 金额全部两位小数、比率以**小数**下发（0.1234）由前端转百分比——
 /// 服务端下发百分数会让「0.5%」和「50」两种口径混在一起，前端没法统一格式化。
@@ -29,7 +34,20 @@ public sealed record BusinessReport(
     decimal AvgOrderValue,
     decimal RefundAmount,
     decimal RefundRate,
-    int LowStockCount);
+    int LowStockCount,
+    IReadOnlyList<ReportMetric> Metrics);
+
+/// <summary>报表指标卡。</summary>
+/// <param name="Key">指标键，前端做跳转 / 埋点用（不要用它当文案）。</param>
+/// <param name="Label">中文指标名，**后端下发**。</param>
+/// <param name="Value">已格式化的展示值（金额两位小数带千分位、比率已转百分比）。</param>
+/// <param name="Unit">单位后缀，如「元」「单」；无单位为空串。</param>
+/// <remarks>
+/// 值在这里就格式化好，是为了避免「前端各写一套格式化」：同一个月度报表在两个页面
+/// 各写一遍，迟早出现一处两位小数、一处四位小数。比率由服务端转成百分数**字符串**，
+/// 也让 4.6「比率以小数下发」那条规则不会外溢到展示层。
+/// </remarks>
+public sealed record ReportMetric(string Key, string Label, string Value, string Unit);
 
 /// <summary>订单侧的原始聚合结果。</summary>
 /// <param name="OrderCount">下单数。</param>

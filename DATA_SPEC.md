@@ -477,7 +477,7 @@ workerId 空间只有 64 个，开发机一天重启十几次服务，跑满 64 
 | 评价列表 | `ProductName`（SPU 名）、`SkuSpecTextList`、`ReplyContent`、`IsAnonymous` |
 | 积分流水 | `BizNo`（业务号，订单积分就是订单号；签到是日期）+ `ActionName`（动作中文名）。C 端与后台**都要带文案**：只给 `action` 编码的话小程序得自己写对照表（4.5 禁止），后端加新动作就有一处漏改 |
 | 秒杀管理 | `SessionName`、`ProductName`、`SkuSpecText`、`SoldCount` |
-| 工作台报表 | 每个指标带 `Label` 与 `Value`，**前端不写死文案** |
+| 工作台报表 | `metrics` 数组：每项 `{key, label, value, unit}`，`label` 是中文指标名、`value` 是**已格式化**的展示值（金额两位小数带千分位、比率已转百分数）。扁平数值字段照旧保留（报表页做二次计算用）。回归 `API-RPT-004b` |
 | 日志列表 | `OperatorName`、`ModuleText` |
 
 **名称怎么来**：平台名与店铺名只存在于 MerchantPlatformService。其它服务要冗余返回名称时，
