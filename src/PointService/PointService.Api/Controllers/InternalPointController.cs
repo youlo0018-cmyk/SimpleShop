@@ -28,6 +28,28 @@ public sealed class InternalPointController : ControllerBase
     public Task<ApiResponse<PointBalance>> Earn([FromBody] EarnPointsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>发放注册赠送积分。<b>金额由积分规则决定</b>，调用方不传。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额。</returns>
+    /// <remarks>
+    /// 与 <c>Earn</c> 分开是因为金额的归属不同：注册赠送的数额是积分规则里的一项，
+    /// 让客户服务传金额等于把规则抄了一份过去 —— 运营改了规则那边不生效，且不会报错。
+    /// </remarks>
+    [HttpPost("EarnRegisterGift")]
+    public Task<ApiResponse<PointBalance>> EarnRegisterGift(
+        [FromBody] GrantRegisterGiftCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
+    /// <summary>发放发表首评赠送积分。<b>金额由积分规则决定</b>，调用方不传。</summary>
+    /// <param name="command">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回最新余额。</returns>
+    [HttpPost("EarnEvaluateGift")]
+    public Task<ApiResponse<PointBalance>> EarnEvaluateGift(
+        [FromBody] GrantEvaluateGiftCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>下单冻结积分。</summary>
     /// <param name="command">冻结命令。</param>
     /// <param name="ct">取消令牌。</param>

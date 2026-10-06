@@ -247,6 +247,53 @@ Invoke-Case 'API-PNT-074' '🔴 重复跑过期任务不重复扣（幂等）' {
     return $after.available -eq 0 -and $after.totalUsed -eq 800
 }
 
+Invoke-Case 'API-PNT-076' '🔴 注册赠送的金额由积分规则决定，改了就要生效' {
+    # 🔴 注册赠送的数额是积分规则里的一项（register_gift，后台可改），
+    # 但调用方（客户服务）一度把它写死成 100 —— 运营改成 250 也不会生效，
+    # 而且不会有任何报错，只是「改了没反应」。
+    #
+    # 现在金额由积分服务自己按规则决定：调用方只传客户 Id，
+    # 调 internal/points/EarnRegisterGift。
+    $before = (Invoke-RestMethod "$PointService/points/Rules" -Method Post -ContentType 'application/json' `
+        -Body '{}' -TimeoutSec 20).data
+
+    try {
+        # 把注册赠送改成 250
+        Invoke-RestMethod "$PointService/points/SaveRules" -Method Post -ContentType 'application/json' `
+            -Body (@{
+                balanceCap = $before.balanceCap; validDays = $before.validDays
+                registerGift = 250; firstEvaluateGift = $before.firstEvaluateGift
+                pointsPerYuan = $before.pointsPerYuan; earnPointsPerYuan = $before.earnPointsPerYuan
+                signInRewards = $before.signInRewards
+            } | ConvertTo-Json -Depth 6) -TimeoutSec 20 | Out-Null
+
+        $customerId = 790000000 + $script:suffix
+        $r = Invoke-RestMethod "$PointService/internal/points/EarnRegisterGift" -Method Post `
+            -ContentType 'application/json' `
+            -Body (@{ customerId = $customerId } | ConvertTo-Json) -TimeoutSec 20
+
+        $bal = Get-Balance $customerId
+        Write-Host ("        规则 250 → 客户拿到 {0}" -f $bal.totalEarned) -ForegroundColor DarkGray
+
+        # 幂等：同一条命令再发一次不能翻倍
+        Invoke-RestMethod "$PointService/internal/points/EarnRegisterGift" -Method Post `
+            -ContentType 'application/json' `
+            -Body (@{ customerId = $customerId } | ConvertTo-Json) -TimeoutSec 20 | Out-Null
+        $again = Get-Balance $customerId
+
+        return $r.success -and $bal.totalEarned -eq 250 -and $again.totalEarned -eq 250
+    } finally {
+        # 还原规则：留着 250 会让后面别的脚本拿到意料之外的赠送额
+        Invoke-RestMethod "$PointService/points/SaveRules" -Method Post -ContentType 'application/json' `
+            -Body (@{
+                balanceCap = $before.balanceCap; validDays = $before.validDays
+                registerGift = $before.registerGift; firstEvaluateGift = $before.firstEvaluateGift
+                pointsPerYuan = $before.pointsPerYuan; earnPointsPerYuan = $before.earnPointsPerYuan
+                signInRewards = $before.signInRewards
+            } | ConvertTo-Json -Depth 6) -TimeoutSec 20 | Out-Null
+    }
+}
+
 Invoke-Case 'API-PNT-075' '🔴 已冻结的积分不被过期扣掉（属于在途订单）' {
     $cid = 731000000 + $script:suffix
     $biz = "EXP-FROZEN-$($script:suffix)"

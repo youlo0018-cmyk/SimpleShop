@@ -8,9 +8,13 @@ namespace CustomerService.Infrastructure.Services;
 
 /// <summary>走内网 HTTP 调积分服务发放注册赠送积分（BUSINESS.md 13.2）。</summary>
 /// <remarks>
-/// <para>幂等靠 <c>bizNo</c>：同一个客户重复注册 / 重试只会发一次。
-/// 积分服务侧按 <c>{bizNo}:{action}</c> 判重，所以这里用固定的
-/// <c>REG-{customerId}</c> 而不是随机值。</para>
+/// <para><b>金额不由这里决定</b>：注册赠送的数额是积分规则里的一项
+/// （<c>register_gift</c>，后台可改），所以调的是积分服务的
+/// <c>EarnRegisterGift</c>，由积分服务自己读规则、自己拼幂等键
+/// <c>REG-{customerId}</c>。</para>
+///
+/// <para>之前这里传的是写死的 100 —— 运营把赠送改成 200，客户服务这边还是 100，
+/// 而且不会有任何报错，只是「改了不生效」。</para>
 ///
 /// <para><b>发放失败不让注册失败</b>：客户已经建好了，为了 100 积分把注册整体回滚，
 /// 用户会看到一个「注册失败」却不知道为什么。返回 false 让注册照常成功，
@@ -18,9 +22,6 @@ namespace CustomerService.Infrastructure.Services;
 /// </remarks>
 public sealed class HttpPointGrantClient : IPointGrantClient
 {
-    /// <summary>注册赠送的积分数（BUSINESS.md 13.2）。</summary>
-    private const long RegistrationBonus = 100;
-
     private readonly HttpClient _http;
     private readonly ILogger<HttpPointGrantClient> _logger;
 
@@ -36,16 +37,9 @@ public sealed class HttpPointGrantClient : IPointGrantClient
     /// <inheritdoc />
     public async Task<bool> TryGrantRegistrationBonusAsync(long customerId, CancellationToken ct = default)
     {
-        const string path = "internal/points/Earn";
-        var payload = new
-        {
-            customerId,
-            source = "注册赠送",
-            quantity = RegistrationBonus,
-            bizNo = $"REG-{customerId}",
-            remark = "新客户注册赠送",
-            action = "earn",
-        };
+        // 只传客户 Id，金额由积分服务按规则决定（规则在它那边，它才是归属方）。
+        const string path = "internal/points/EarnRegisterGift";
+        var payload = new { customerId };
 
         try
         {
@@ -68,8 +62,7 @@ public sealed class HttpPointGrantClient : IPointGrantClient
                 return false;
             }
 
-            _logger.LogInformation("客户 {CustomerId} 注册赠送 {Points} 积分已发放",
-                customerId, RegistrationBonus);
+            _logger.LogInformation("客户 {CustomerId} 注册赠送积分已发放", customerId);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

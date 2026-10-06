@@ -7,8 +7,10 @@ namespace EvaluateService.Infrastructure.Services;
 
 /// <summary>走内网 HTTP 调积分服务发放「发表首评」的赠送积分（BUSINESS.md 13.2）。</summary>
 /// <remarks>
-/// <para>幂等靠 <c>bizNo</c>：<c>EVL-{evaluateId}</c> 固定不变，
-/// 所以评价的重复投递 / 重试只会发一次。</para>
+/// <para><b>金额不由这里决定</b>：首评赠送的数额是积分规则里的一项
+/// （<c>first_evaluate_gift</c>，后台可改），所以调的是积分服务的
+/// <c>EarnEvaluateGift</c>，由积分服务自己读规则、自己拼幂等键
+/// <c>EVL-{evaluateId}</c>。</para>
 ///
 /// <para>🔴 这条途径此前**完全没有实现**：BUSINESS.md 13.2 写着「发表首评 +20」，
 /// 20.1 写着由 PointService 消费 <c>evaluate.created</c>，
@@ -17,9 +19,6 @@ namespace EvaluateService.Infrastructure.Services;
 /// </remarks>
 public sealed class HttpPointGrantClient : IPointGrantClient
 {
-    /// <summary>发表首评赠送的积分数（BUSINESS.md 13.2）。</summary>
-    private const long EvaluateBonus = 20;
-
     private readonly HttpClient _http;
     private readonly ILogger<HttpPointGrantClient> _logger;
 
@@ -36,16 +35,9 @@ public sealed class HttpPointGrantClient : IPointGrantClient
     public async Task<bool> TryGrantEvaluateBonusAsync(
         long customerId, long evaluateId, CancellationToken ct = default)
     {
-        const string path = "internal/points/Earn";
-        var payload = new
-        {
-            customerId,
-            source = "发表首评",
-            quantity = EvaluateBonus,
-            bizNo = $"EVL-{evaluateId}",
-            remark = "发表首评赠送",
-            action = "earn",
-        };
+        // 只传客户与评价 Id，金额由积分服务按规则决定（规则在它那边，它才是归属方）。
+        const string path = "internal/points/EarnEvaluateGift";
+        var payload = new { customerId, evaluateId };
 
         try
         {
@@ -66,8 +58,8 @@ public sealed class HttpPointGrantClient : IPointGrantClient
                 return false;
             }
 
-            _logger.LogInformation("评价 {EvaluateId} 赠送 {Points} 积分已发放给客户 {CustomerId}",
-                evaluateId, EvaluateBonus, customerId);
+            _logger.LogInformation("评价 {EvaluateId} 的首评赠送积分已发放给客户 {CustomerId}",
+                evaluateId, customerId);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
