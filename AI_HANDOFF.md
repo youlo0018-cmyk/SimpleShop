@@ -189,23 +189,26 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | 套件 | 结果 |
 |---|---|
 | `./scripts/build.ps1` | 0 warning 0 error（不达标即失败） |
-| `dotnet test`（单元测试） | **321/321** |
-| `./tests/e2e/run-all.ps1`（端到端汇总） | **460/460**，15 个脚本全绿 |
-| └ `api-regression.ps1` | 15/15 |
-| └ `auth-regression.ps1` | 17/17 |
-| └ `cart-regression.ps1` | 13/13 |
-| └ `design-regression.ps1` | 26/26 |
-| └ `evaluate-regression.ps1` | 38/38 |
-| └ `gateway-regression.ps1` | 13/13 |
-| └ `inventory-regression.ps1` | 25/25 |
+| `dotnet test`（单元测试） | **384/384** |
+| `./tests/e2e/run-all.ps1`（端到端汇总） | **686/686**，18 个脚本全绿 |
+| └ `admin-endpoints-regression.ps1` | 72/72 |
+| └ `api-regression.ps1` | 16/16 |
+| └ `auth-regression.ps1` | 19/19 |
+| └ `cart-regression.ps1` | 17/17 |
+| └ `customer-regression.ps1` | 16/16 |
+| └ `design-regression.ps1` | 35/35 |
+| └ `evaluate-regression.ps1` | 44/44 |
+| └ `gateway-regression.ps1` | 25/25 |
+| └ `inventory-regression.ps1` | 26/26 |
 | └ `log-regression.ps1` | 19/19 |
-| └ `marketing-regression.ps1` | 65/65 |
-| └ `merchantplatform-regression.ps1` | 30/30 |
-| └ `product-regression.ps1` | 62/62 |
-| └ `report-regression.ps1` | 36/36 |
-| └ `order-regression.ps1` | 50/50 |
-| └ `payment-regression.ps1` | 22/22 |
-| └ `point-regression.ps1` | 29/29 |
+| └ `marketing-regression.ps1` | 97/97 |
+| └ `merchantplatform-regression.ps1` | 38/38 |
+| └ `order-regression.ps1` | 88/88 |
+| └ `payment-regression.ps1` | 28/28 |
+| └ `point-regression.ps1` | 31/31 |
+| └ `product-regression.ps1` | 71/71 |
+| └ `report-regression.ps1` | 38/38 |
+| └ `upload-regression.ps1` | 6/6 |
 
 ### 4.2 已确定的关键决策
 
@@ -277,6 +280,24 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-07：REVIEW 存量风险清零（P0 全验证 / P1 可消除项已修 / P2-P3 已收敛）
+
+本轮把 `REVIEW.md` 第二部分逐条复核，不再只看“有没有实现”，而是按风险项逐条找反例：
+
+| 风险 | 结论 |
+|---|---|
+| P0 1~5 | **全部已验证**：下单逆序补偿、多表事务、秒杀并发、积分资损、支付金额服务端反查都有对应 e2e / 并发用例 |
+| P1 6~8 | 业务消费者已改同步内部调用（唯一 MQ 消费者 LogService 有 DLQ）；Outbox 在当前同步架构下不适用；上传已改流式读头，不再整文件进内存 |
+| P1 13 / 13.5 / 14 | C 端可见性、跨客户 IDOR、商户拒绝/停用连带下架均已验证 |
+| P2 19 | 新增 `ActivityRecordCleanupJob`：每 15 分钟按 orderNo 对账，订单服务确认不存在后软删活动参与孤儿记录；报表与下钻不再虚增 |
+| P2 23 | 商品服务新增 `GET /internal/products/spu-summaries`，收藏页一次批量取商品名/价格/可购买状态，消除 N+1 |
+| P3 35 / 36 | 15 个服务统一 `AddAppControllers()` 中文模型绑定错误；FluentValidation 默认文案切 `ChineseLanguageManager`，链式 NotEmpty 不再回英文 |
+
+**验证**：构建 0 警告 0 错误；单元 **384/384**；E2E **686/686**（18 个脚本）；
+`check-permission-paths.ps1` 77 权限点 / 243 端点 / 33 路由全通过；`check-table-columns.ps1` 54 实体 / 61 表全通过。
+
+**下一步**：按用户“这一版的后台抛弃掉”的结论，重新做后台与小程序前端；后台视觉参考 `D:\学习\SimpleShop\apps\admin-vue` 的样式基调，所有需要新页的操作使用独立页面，不用弹窗凑合。
 
 ### 2026-10-07：BUSINESS 17 / 19 两节与实现脱节（秒杀 GMV 不逐场、数据模型表写的是不存在的表）
 
