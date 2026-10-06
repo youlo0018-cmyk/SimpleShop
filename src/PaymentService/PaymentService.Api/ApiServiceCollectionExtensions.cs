@@ -34,9 +34,30 @@ public static class ApiServiceCollectionExtensions
 
         services.AddSingleton<IPaymentOptions, PaymentOptions>();
         AddOrderPort(services, configuration);
+        AddPlatformNameClient(services, configuration);
 
         services.AddInfrastructure();
         return services;
+    }
+
+    /// <summary>注册平台 / 商户名称客户端：退款详情要显示名称而不是雪花 Id（DATA_SPEC 4.3）。</summary>
+    /// <param name="services">服务集合。</param>
+    /// <param name="configuration">应用配置。</param>
+    private static void AddPlatformNameClient(IServiceCollection services, IConfiguration configuration)
+    {
+        var url = configuration["Services:MerchantPlatformServiceBaseUrl"];
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException(
+                "缺少配置 Services:MerchantPlatformServiceBaseUrl，退款详情无法把平台 / 商户 Id 换成名称。");
+        }
+
+        services.AddHttpClient<IPlatformNameClient, HttpPlatformNameClient>(client =>
+        {
+            client.BaseAddress = new Uri(url!.TrimEnd('/') + "/");
+            // 名称只是展示字段：超时给短一点，取不到就回落显示 Id，不拖慢详情
+            client.Timeout = TimeSpan.FromSeconds(5);
+        });
     }
 
     /// <summary>注册订单端口：支付与退款都要按订单的权威数据判断。</summary>

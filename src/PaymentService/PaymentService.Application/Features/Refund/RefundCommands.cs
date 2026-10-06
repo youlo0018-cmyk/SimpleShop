@@ -57,7 +57,8 @@ public sealed record RefundDto(
     long RefundId, string RefundNo, long OrderId, string OrderNo, decimal Amount,
     int RefundType, string RefundTypeName, int Status, string StatusName,
     string Reason, string RejectReason, string ApproverName, string CreatedAt,
-    IReadOnlyList<RefundItemDto> Items);
+    IReadOnlyList<RefundItemDto> Items,
+    string PlatformName, string MerchantName);
 
 /// <summary>退款明细视图。</summary>
 /// <param name="OrderItemId">订单行 Id。</param>

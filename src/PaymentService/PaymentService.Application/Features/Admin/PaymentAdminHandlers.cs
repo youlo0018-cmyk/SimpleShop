@@ -1,5 +1,6 @@
 using Collaboration.Domain.Common;
 using MediatR;
+using PaymentService.Application.Services;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.IRepository;
 
@@ -45,10 +46,16 @@ public sealed class QueryAdminRefundDetailHandler
     : IRequestHandler<QueryAdminRefundDetailCommand, ApiResponse<AdminRefundDetailDto>>
 {
     private readonly IRefundRepository _refunds;
+    private readonly IPlatformNameClient _names;
 
     /// <summary>构造处理器。</summary>
     /// <param name="refunds">退款仓储。</param>
-    public QueryAdminRefundDetailHandler(IRefundRepository refunds) => _refunds = refunds;
+    /// <param name="names">平台 / 商户名称客户端。</param>
+    public QueryAdminRefundDetailHandler(IRefundRepository refunds, IPlatformNameClient names)
+    {
+        _refunds = refunds;
+        _names = names;
+    }
 
     /// <inheritdoc />
     /// <remarks>
@@ -67,6 +74,12 @@ public sealed class QueryAdminRefundDetailHandler
 
         var items = await _refunds.ListItemsAsync(refund.Id, ct).ConfigureAwait(false);
 
+        // 名称只存在于商户平台服务：取不到回落显示 Id（展示字段缺失不该让详情打不开）
+        var names = await _names.GetNamesAsync(
+            refund.PlatformId > 0 ? [refund.PlatformId] : Array.Empty<long>(),
+            refund.MerchantId > 0 ? [refund.MerchantId] : Array.Empty<long>(),
+            ct).ConfigureAwait(false);
+
         var dto = new AdminRefundDetailDto(
             refund.Id, refund.RefundNo, refund.OrderNo, refund.CustomerName,
             refund.Amount,
@@ -78,7 +91,13 @@ public sealed class QueryAdminRefundDetailHandler
             refund.ApprovedAt?.ToString("yyyy-MM-dd HH:mm:ss"),
             refund.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
             items.Select(a => new AdminRefundItemDto(
-                a.OrderItemId, a.SkuId, a.ProductName, a.SkuSpecText, a.Quantity, a.Amount)).ToList());
+                a.OrderItemId, a.SkuId, a.ProductName, a.SkuSpecText, a.Quantity, a.Amount)).ToList(),
+            refund.PlatformId > 0
+                ? names.Platforms.GetValueOrDefault(refund.PlatformId, refund.PlatformId.ToString())
+                : "平台自营",
+            refund.MerchantId > 0
+                ? names.Merchants.GetValueOrDefault(refund.MerchantId, refund.MerchantId.ToString())
+                : "平台自营");
 
         return ApiResults.Ok(dto);
     }

@@ -489,7 +489,7 @@ workerId 空间只有 64 个，开发机一天重启十几次服务，跑满 64 
 | 批量 | 一次带上当前页用到的全部 Id（最多 200 个），**禁止逐行查询** |
 | 失败降级 | 名称是展示字段：取不到**只降级**（回落显示 Id）并记警告，**不**让整个列表打不开。与运费那种「金额相关、失败即抛」的调用刻意区分开 |
 | 0 值 | `platformId = 0` / `merchantId = 0` 表示平台自营，显示「平台自营」，不去查名 |
-| 已落地 | 后台订单列表（`PlatformName` / `MerchantName`）、后台账号列表（`PlatformName` / `MerchantName`）。回归：`API-ADM-096` / `API-ADM-097` |
+| 已落地 | 后台订单列表（`PlatformName` / `MerchantName`）、后台账号列表（`PlatformName` / `MerchantName`）、退款单列表与详情（同两个字段）。回归：`API-ADM-096` / `API-ADM-097` / `API-PAY-046` |
 
 ### 4.4 规格文本约定
 

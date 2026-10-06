@@ -1,6 +1,7 @@
 using Collaboration.Domain.Common;
 using Collaboration.Domain.Context;
 using MediatR;
+using PaymentService.Application.Services;
 using PaymentService.Domain.Entities;
 using PaymentService.Domain.IRepository;
 
@@ -54,10 +55,16 @@ public sealed class RejectRefundHandler : IRequestHandler<RejectRefundCommand, A
 public sealed class QueryRefundsHandler : IRequestHandler<QueryRefundsCommand, ApiResponse<PagedRefundDtos>>
 {
     private readonly IRefundRepository _refunds;
+    private readonly IPlatformNameClient _names;
 
     /// <summary>构造处理器。</summary>
     /// <param name="refunds">退款仓储。</param>
-    public QueryRefundsHandler(IRefundRepository refunds) => _refunds = refunds;
+    /// <param name="names">平台 / 商户名称客户端。</param>
+    public QueryRefundsHandler(IRefundRepository refunds, IPlatformNameClient names)
+    {
+        _refunds = refunds;
+        _names = names;
+    }
 
     /// <summary>执行查询。</summary>
     /// <param name="request">命令。</param>
@@ -67,6 +74,12 @@ public sealed class QueryRefundsHandler : IRequestHandler<QueryRefundsCommand, A
     {
         var page = await _refunds.PageAsync(
             request.Status, request.OrderNo, request.Page, request.PageSize, ct);
+
+        // 平台名 / 店铺名只存在于商户平台服务：按当前页批量取一次（DATA_SPEC 4.3）
+        var names = await _names.GetNamesAsync(
+            page.Items.Where(a => a.PlatformId > 0).Select(a => a.PlatformId).Distinct().ToArray(),
+            page.Items.Where(a => a.MerchantId > 0).Select(a => a.MerchantId).Distinct().ToArray(),
+            ct).ConfigureAwait(false);
 
         var items = new List<RefundDto>(page.Items.Count);
         foreach (var refund in page.Items)
@@ -79,7 +92,13 @@ public sealed class QueryRefundsHandler : IRequestHandler<QueryRefundsCommand, A
                 refund.Reason, refund.RejectReason, refund.ApproverName,
                 RefundAssembler.FormatTime(refund.CreatedAt),
                 details.Select(a => new RefundItemDto(
-                    a.OrderItemId, a.ProductName, a.SkuSpecText, a.Amount)).ToList()));
+                    a.OrderItemId, a.ProductName, a.SkuSpecText, a.Amount)).ToList(),
+                refund.PlatformId > 0
+                    ? names.Platforms.GetValueOrDefault(refund.PlatformId, refund.PlatformId.ToString())
+                    : "平台自营",
+                refund.MerchantId > 0
+                    ? names.Merchants.GetValueOrDefault(refund.MerchantId, refund.MerchantId.ToString())
+                    : "平台自营"));
         }
 
         return ApiResults.Ok(new PagedRefundDtos(items, page.Total, page.Page, page.PageSize));

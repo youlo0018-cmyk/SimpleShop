@@ -584,6 +584,27 @@ Invoke-Case 'API-PAY-045' '🔴 退款原因太短被拒（2~200 字符）' {
 
 Write-Host "`n=== PAY 清理 ===" -ForegroundColor Cyan
 
+Invoke-Case 'API-PAY-046' '🔴 退款单列表 / 详情返回平台与店铺**名称**（不是雪花 Id）' {
+    # DATA_SPEC 4.3：退款单要冗余返回 PlatformName / MerchantName。
+    # 只回 Id 的话运营看到一串数字；平台自营的单显示「平台自营」。
+    $list = PayPost '/refunds/List' @{ status = 0; page = 1; pageSize = 5 }
+    $row = @($list.data.items)[0]
+    if ($null -eq $row) { return $false }
+
+    $detail = PayPost '/refunds/Detail' @{ refundId = [long]$row.refundId }
+    if (-not $detail.success) { return $false }
+
+    Write-Host ("        列表：平台 = {0}；商户 = {1}" -f $row.platformName, $row.merchantName) -ForegroundColor DarkGray
+    Write-Host ("        详情：平台 = {0}；商户 = {1}" -f $detail.data.platformName, $detail.data.merchantName) -ForegroundColor DarkGray
+
+    return -not [string]::IsNullOrWhiteSpace($row.platformName) `
+        -and -not [string]::IsNullOrWhiteSpace($row.merchantName) `
+        -and $row.platformName -notmatch '^\d+$' `
+        -and $row.merchantName -notmatch '^\d+$' `
+        -and $detail.data.platformName -eq $row.platformName `
+        -and $detail.data.merchantName -eq $row.merchantName
+}
+
 Invoke-Case 'API-PAY-090' '删商品 → 删分类' {
     if ($script:productId -gt 0) {
         Invoke-RestMethod "$Gateway/gateway/products/Delete" -Method Post -Headers $script:adminHeaders `

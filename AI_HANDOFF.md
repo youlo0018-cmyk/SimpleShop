@@ -302,6 +302,17 @@ UserService 与 OrderService 各加一个客户端，**按当前页批量取一�
 **验证**：构建 0 警告 0 错误；单测 384/384；E2E **672/672**（18 个脚本，
 新增 API-ADM-096 账号列表名称 / API-ADM-097 订单列表名称）。
 
+**同轮补齐退款单**：4.3 的「退款单」行同样要求 PlatformName / MerchantName，
+而 `RefundDto`（列表）与 `AdminRefundDetailDto`（详情）都没有这两个字段。
+PaymentService 加同一个名称客户端，列表**按当前页批量取一次**、详情取单条，两处一起补。
+回归 API-PAY-046。
+
+> **运维提醒**：PaymentService 第一次加这个客户端时**起不来** ——
+> 报「缺少 Services:MerchantPlatformServiceBaseUrl」，而种子脚本里明明有这一项。
+> 原因是该服务的 AgileConfig 配置是**更早一次播种**留下的，新增的必填键不在里面。
+> `seed-agileconfig.ps1` 是幂等的，加完必填键要**重跑一遍播种**（或至少对改动的服务重跑）。
+> 最终验证：单测 384/384；E2E **673/673**（18 个脚本）。
+
 ### 2026-10-07：内置地区库只有省级（收货地址三级联动用不了）+ 券活动发放量不限模板
 
 按 DATA_SPEC 5.31 / 5.32 逐条取证时发现两处「文档里有、实现没有」：

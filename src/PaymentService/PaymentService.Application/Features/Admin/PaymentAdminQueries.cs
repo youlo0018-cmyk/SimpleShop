@@ -59,7 +59,8 @@ public sealed record AdminRefundDetailDto(
     long RefundId, string RefundNo, string OrderNo, string CustomerName,
     decimal Amount, int RefundType, string RefundTypeName, int Status, string StatusName,
     string Reason, string RejectReason, string ApproverName, string? ApprovedAt, string CreatedAt,
-    IReadOnlyList<AdminRefundItemDto> Items);
+    IReadOnlyList<AdminRefundItemDto> Items,
+    string PlatformName, string MerchantName);
 
 /// <summary>退款明细行。</summary>
 /// <param name="OrderItemId">原订单行 Id。</param>
