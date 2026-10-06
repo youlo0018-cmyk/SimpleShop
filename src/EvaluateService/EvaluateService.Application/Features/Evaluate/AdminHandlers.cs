@@ -116,7 +116,19 @@ public sealed class ReplyEvaluateHandler : IRequestHandler<ReplyEvaluateCommand,
     /// <summary>执行回复。</summary>
     /// <param name="request">命令。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>回复 Id。</returns>
+    /// <returns>回复 Id；身份与回复主体不符返回 403；追评不属于该评价返回 400。</returns>
+    /// <remarks>
+    /// 两条归属校验都在这里做，缺一条就等于把评价区的归属凭据交给调用方：
+    /// <list type="number">
+    /// <item><b>回复主体</b>：商户账号只能发商户回复；平台账号（含超管）两种都可以。
+    /// 不校验的话，商户传 <c>replyType = 2</c> 就能把自家回复伪装成平台官方回复 ——
+    /// 那是最要紧的一侧，因为用户会把「平台官方」当成可信来源。
+    /// 反过来的方向（平台以商户身份回复）刻意放行：平台是更高一级的管理方，
+    /// 代商户回复是真实运营场景，而且它冒充的是**下级**，不构成信任提升。</item>
+    /// <item><b>追评归属</b>：<c>AppendId</c> 必须是这条评价自己的追评。
+    /// 不校验的话，可以把回复挂到**别人评价的追评**下面。</item>
+    /// </list>
+    /// </remarks>
     public async Task<ApiResponse<long>> Handle(ReplyEvaluateCommand request, CancellationToken ct)
     {
         // 🔴 回复人从**令牌租户上下文**取，不从请求体取。
@@ -130,6 +142,21 @@ public sealed class ReplyEvaluateHandler : IRequestHandler<ReplyEvaluateCommand,
             return ApiResults.Fail<long>(BaseApiResponseCode.Unauthorized, "登录状态已失效，请重新登录");
         }
 
+        if (ctx.TenantType is not (1 or 2))
+        {
+            return ApiResults.Fail<long>(BaseApiResponseCode.Forbidden, "当前身份不能回复评价");
+        }
+
+        // 商户账号不许冒充平台；平台账号两种都允许（见本方法 remarks）
+        if (ctx.TenantType == 2 && request.ReplyType != EvaluateReplyTypes.Merchant)
+        {
+            _logger.LogWarning(
+                "商户账号 {UserId} 试图以平台身份回复评价 {EvaluateId}，已拒绝",
+                ctx.UserId, request.EvaluateId);
+
+            return ApiResults.Fail<long>(BaseApiResponseCode.Forbidden, "商户账号只能以商户身份回复评价");
+        }
+
         var evaluate = await _repo.GetByIdAsync(request.EvaluateId, ct).ConfigureAwait(false);
         if (evaluate is null)
         {
@@ -140,6 +167,16 @@ public sealed class ReplyEvaluateHandler : IRequestHandler<ReplyEvaluateCommand,
         if (evaluate.IsHidden)
         {
             return ApiResults.Fail<long>(BaseApiResponseCode.BusinessError, "该评价已被隐藏，无法回复");
+        }
+
+        // 追评必须属于这条评价：否则回复会挂到别人评价的追评下面
+        if (request.AppendId > 0)
+        {
+            var appends = await _repo.GetAppendsAsync(request.EvaluateId, ct).ConfigureAwait(false);
+            if (!appends.Any(a => a.Id == request.AppendId))
+            {
+                return ApiResults.Fail<long>(BaseApiResponseCode.BadRequest, "追评不存在或不属于该评价");
+            }
         }
 
         var reply = new EvaluateReply

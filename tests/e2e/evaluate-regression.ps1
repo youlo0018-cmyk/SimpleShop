@@ -466,6 +466,61 @@ Invoke-Case 'API-EVL-063' '回复内容太短被拒（少于 2 个字符）' {
     }
 }
 
+# ---- 回复的归属校验 ----
+#
+# 这两条挡的是「把评价区的归属凭据交给调用方」：
+#   ① 商户账号传 replyType=2 就能把自家回复伪装成**平台官方回复**（用户会把它当可信来源）；
+#   ② appendId 传别人评价的追评 Id，回复就会挂到别人评价下面。
+# 都必须由服务端按身份 / 数据归属判定，不能靠前端不这么传。
+
+$script:merchantReplyUserId = 0
+$script:merchantReplyToken = $null
+
+try {
+    $mrUser = "evlmr$($script:suffix)"
+    $mrPwd = 'Merchant123456'
+    # 商户账号必须至少 1 个角色，且角色的 AllowedScopes 要与 tenantType=2 匹配
+    # （9004 = 商户管理员，绑定全部权限点）。建号走网关：租户锁定要读网关的租户头。
+    $mrCreated = Invoke-RestMethod "$Gateway/gateway/users/Create" -Method Post -Headers $script:adminHeaders `
+        -Body (@{
+            userName = $mrUser; password = $mrPwd
+            phone = '138' + (Get-Random -Minimum 10000000 -Maximum 99999999)
+            tenantType = 2; nickName = '评价回复越权用例'
+            platformId = 0; merchantId = 1; roleIds = @(9004)
+        } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30
+
+    if ($mrCreated.success) {
+        $script:merchantReplyUserId = [long]$mrCreated.data
+        $script:merchantReplyToken = (Invoke-RestMethod -Uri "$Gateway/gateway/auth/token" -Method Post `
+            -Body "grant_type=password&client_id=admin-app&username=$mrUser&password=$mrPwd" `
+            -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 30).access_token
+    }
+}
+catch {
+    Write-Host ("  （准备商户回复越权用例失败：" + $_.Exception.Message + "）") -ForegroundColor DarkYellow
+}
+
+Invoke-Case 'API-EVL-064' '🔴 商户账号不能以平台身份回复（否则冒充平台官方）' {
+    if (-not $script:merchantReplyToken) { return $false }
+    $h = @{ Authorization = "Bearer $($script:merchantReplyToken)" }
+
+    $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $h `
+        -Body (@{ evaluateId = $script:evaluateId; appendId = 0; replyContent = '以平台名义回复'
+                  replyType = 2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+
+    # 断言业务码而不是 HTTP 状态码：这套接口的业务失败是 HTTP 200 + success=false
+    (-not $r.success) -and ([int]$r.code -eq 403)
+}
+
+Invoke-Case 'API-EVL-065' '🔴 回复挂到不存在的追评上被拒' {
+    $r = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Reply" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ evaluateId = $script:evaluateId; appendId = 999999999; replyContent = '挂到别人追评上'
+                  replyType = 2 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    (-not $r.success) -and ([int]$r.code -eq 400)
+}
+
 Write-Host "`n=== EVL 后台隐藏（规格 14.4）===" -ForegroundColor Cyan
 
 Invoke-Case 'API-EVL-070' '🔴 隐藏必须填原因（后台要记审计，没有原因无从追溯）' {
@@ -649,6 +704,19 @@ Invoke-Case 'API-EVL-091' '零评价商品的评价列表：空列表，展示�
 }
 
 Write-Host "`n=== EVL 清理 ===" -ForegroundColor Cyan
+
+# 停用临时商户账号。项目刻意没有删除账号的接口（审计要求留痕），所以用停用。
+if ($script:merchantReplyUserId -gt 0) {
+    try {
+        Invoke-RestMethod "$Gateway/gateway/users/UpdateStatus" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ userId = $script:merchantReplyUserId; status = 2 } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        Write-Host '  （已停用临时商户账号）' -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Host ('  （停用临时商户账号失败，不影响结论：' + $_.Exception.Message + '）') -ForegroundColor DarkYellow
+    }
+}
 
 Invoke-Case 'API-EVL-099' '删商品 → 删分类' {
     if ($script:productId -gt 0) {
