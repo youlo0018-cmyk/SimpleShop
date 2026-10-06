@@ -74,6 +74,28 @@ public sealed class HttpPointPort : IPointPort
             ct).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task RecoverByRefundAsync(
+        long customerId, string orderNo, decimal refundRatio, CancellationToken ct = default)
+    {
+        // 比例不在这里算：只有退款方知道退了多少，积分服务不认订单金额，
+        // 让它自己算就得再查一遍订单 —— 金额口径会分叉。
+        var body = await SendAsync(
+            "internal/points/Refund",
+            new RefundRequest(customerId, orderNo, refundRatio, "退款按比例回收积分"),
+            ct).ConfigureAwait(false);
+
+        // 业务失败要往上抛：静默吞掉的话，客户一边拿回钱一边留着白拿的积分，
+        // 而日志里只有一行 warn，事后对账才看得出来。
+        if (!body.Success)
+        {
+            _logger.LogError(
+                "积分服务回收失败：订单 {OrderNo} 比例 {Ratio}，原因 {Message}",
+                orderNo, refundRatio, body.Message);
+            throw new OrderDownstreamException("积分服务", "internal/points/Refund", body.Message);
+        }
+    }
+
     /// <summary>统一发 POST 并检查业务结果。</summary>
     /// <param name="path">相对路径。</param>
     /// <param name="payload">请求体。</param>
@@ -128,6 +150,13 @@ public sealed class HttpPointPort : IPointPort
     /// <param name="BizNo">订单号。</param>
     /// <param name="Remark">备注。</param>
     private sealed record BizRequest(long CustomerId, string BizNo, string Remark);
+
+    /// <summary>退款回收积分请求体。</summary>
+    /// <param name="CustomerId">客户 Id。</param>
+    /// <param name="BizNo">订单号。</param>
+    /// <param name="RefundRatio">退款比例 0~1，整单退传 1。</param>
+    /// <param name="Remark">备注。</param>
+    private sealed record RefundRequest(long CustomerId, string BizNo, decimal RefundRatio, string Remark);
 
     /// <summary>积分余额响应数据。</summary>
     /// <param name="CustomerId">客户 Id。</param>

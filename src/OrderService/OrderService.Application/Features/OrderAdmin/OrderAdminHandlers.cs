@@ -107,7 +107,31 @@ public sealed class QueryAdminOrderDetailHandler
         var refunded = await _store
             .AggregateRefundedItemsAsync(order.Id, ct).ConfigureAwait(false);
 
-        var itemDtos = items.Select(a =>
+        // 行级「可退金额」必须**受订单剩余余额约束**，不能直接用「行实付 − 行已退」。
+        // 订单用了券 / 积分时，订单实付 < 行实付之和，于是行级可退会比订单还能退的多；
+        // 后台退款表单照着行级数字填，提交必被「超过订单剩余可退」挡回来，
+        // 而界面上完全看不出该填多少。
+        // refunded 是 orderItemId → 余额 的字典，先转成按订单行分组的字典再算，
+        // 否则每行都要全表扫一遍
+        var refundedByItem = refunded.Values
+            .GroupBy(r => r.OrderItemId)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.Amount));
+
+        var lineBalances = items
+            .Select(a => Math.Max(0m, a.PayableAmount
+                - (refundedByItem.TryGetValue(a.Id, out var done) ? done : 0m)))
+            .ToArray();
+        var lineBalanceTotal = Math.Round(lineBalances.Sum(), 2, MidpointRounding.AwayFromZero);
+        var orderRemaining = Math.Max(0m, Math.Round(
+            order.PayableAmount - order.RefundedAmount, 2, MidpointRounding.AwayFromZero));
+
+        // 按行占比摊订单余额；订单余额大于行余额之和时（运费）不摊，
+        // 差额仍留在行上，由整单退时的运费分摊行体现。
+        var scale = lineBalanceTotal > orderRemaining && lineBalanceTotal > 0m
+            ? orderRemaining / lineBalanceTotal
+            : 1m;
+
+        var itemDtos = items.Select((a, idx) =>
         {
             refunded.TryGetValue(a.Id, out var r);
             return new OrderItemDto(
@@ -117,7 +141,7 @@ public sealed class QueryAdminOrderDetailHandler
                 a.SourceType,
                 r.Quantity,
                 Math.Max(0m, decimal.Round(
-                    a.PayableAmount - r.Amount, 2, MidpointRounding.AwayFromZero)));
+                    lineBalances[idx] * scale, 2, MidpointRounding.AwayFromZero)));
         }).ToList();
 
         return ApiResults.Ok(
@@ -597,17 +621,23 @@ public sealed class RefundOrderHandler
 {
     private readonly IOrderStore _store;
     private readonly IInventoryPort _inventory;
+    private readonly IPointPort _points;
     private readonly ILogger<RefundOrderHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
     /// <param name="inventory">库存端口。</param>
+    /// <param name="points">积分端口（退款按比例回收已扣积分）。</param>
     /// <param name="logger">日志器。</param>
     public RefundOrderHandler(
-        IOrderStore store, IInventoryPort inventory, ILogger<RefundOrderHandler> logger)
+        IOrderStore store,
+        IInventoryPort inventory,
+        IPointPort points,
+        ILogger<RefundOrderHandler> logger)
     {
         _store = store;
         _inventory = inventory;
+        _points = points;
         _logger = logger;
     }
 
@@ -717,11 +747,18 @@ public sealed class RefundOrderHandler
                 "订单可退余额不足或状态已变更，请刷新后重试");
         }
 
-        // 回补库存：未发货（10 / 20）的货还锁着，要 release；已发货（30 / 40）的货已经扣减，要 replenish。
-        // 分不清这两种就会把 locked 减成负数，或者 deducted 减成负数——两边都靠数据库非负约束挡住，
-        // 结果是退款「失败」，而实际上钱已经退了。
-        var lockedPhase = order.Status is Domain.Entities.OrderStatuses.PendingPayment
-            or Domain.Entities.OrderStatuses.PendingShipment;
+        // 回补库存：未支付（10）的货还占着 locked，要 release；
+        // 已支付（20 / 30 / 40）的货早就从 locked 扣成 deducted 了，要 replenish。
+        // 用错会把某一个计数减成负数 —— 而负数会被下游按「不足」拒掉，
+        // 于是钱退了、货没回库，只在日志里留一行 error，页面上一片正常。
+        // 🔴 只有**未支付**（10 待支付）的单还占着 locked。
+        // 一旦支付成功，库存就从 locked 变成 deducted 了（BUSINESS 9.2）：
+        // 10 → release（locked → available），20/30/40 → replenish（deducted → available）。
+        //
+        // 之前把 10 和 20 一起当成「还锁着」，于是**已付款未发货**的订单退款时
+        // 去 release 一笔已经 deducted 的量 —— 那个计数直接不够，调用报错被 catch 吞掉，
+        // 结果是钱退了、货没回库，页面上只留下一行 error 日志。
+        var lockedPhase = order.Status == Domain.Entities.OrderStatuses.PendingPayment;
 
         // 按**本次退的件数**回补，不是整行数量：部分退款退 1 件就只回补 1 件。
         // 按整行回补的话，买了 3 件退 1 件会把 3 件全部放回库存，直接超卖。
@@ -746,6 +783,30 @@ public sealed class RefundOrderHandler
                 _logger.LogError(ex,
                     "退款回补库存失败：订单 {OrderNo} SKU {SkuId} 数量 {Quantity}",
                     order.OrderNo, item.SkuId, line.Quantity);
+            }
+        }
+
+        // 按比例回收该单已扣的积分（BUSINESS.md 10.3：整单退全退、部分退按比例向上取整、
+        // 退回原冻结批次不重算有效期）。
+        //
+        // 🔴 比例必须用「**本次**退款额 ÷ 实付」而不是「退完没退完」：
+        // 部分退款退两次时，两次的比例要能累加回 1，否则客户会被重复回收或回收不足。
+        if (order.PointsUsed > 0 && order.PayableAmount > 0)
+        {
+            var ratio = Math.Clamp(resolution.Total / order.PayableAmount, 0m, 1m);
+            try
+            {
+                await _points.RecoverByRefundAsync(
+                    order.CustomerId, order.OrderNo, ratio, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // 回收失败**不反过来让退款失败**：钱已经退给客户了，
+                // 这时抛错会让前端以为没退、于是重试，直接变成二次退款。
+                // 正确做法是记 Error 事后对账 —— 积分与库存用的是同一套取舍。
+                _logger.LogError(ex,
+                    "退款已生效但积分回收失败：订单 {OrderNo} 比例 {Ratio}，需人工补回收",
+                    order.OrderNo, ratio);
             }
         }
 

@@ -72,6 +72,21 @@ public interface IPointPort
     /// 而且没有任何测试会发现。
     /// </remarks>
     Task EarnByOrderAsync(long customerId, string orderNo, decimal paidAmount, CancellationToken ct = default);
+
+    /// <summary>退款按比例回收该单已扣积分（向上取整，退回原冻结批次）。</summary>
+    /// <param name="customerId">客户 Id。</param>
+    /// <param name="orderNo">订单号，幂等键的一部分。</param>
+    /// <param name="refundRatio">退款比例 0~1，整单退款传 1，部分退款传本次退款额 ÷ 实付。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    /// <remarks>
+    /// 积分侧的实现在 PointService 已就绪（<c>internal/points/Refund</c>），
+    /// 这里缺的只是**调用方**：退款链路走完却没人通知积分服务，
+    /// 结果是客户一边拿回钱、一边把抵扣的积分白留着 —— 双花。
+    /// 比例由调用方算好：只有退款方知道退了多少，积分服务不认订单金额。
+    /// </remarks>
+    Task RecoverByRefundAsync(
+        long customerId, string orderNo, decimal refundRatio, CancellationToken ct = default);
 }
 
 /// <summary>③ 库存端口。</summary>

@@ -155,13 +155,17 @@ public class OrderRefundRulesTests
     }
 
     [Fact]
-    public void 行金额之和大于订单实付_按数据异常拒绝而不是照退()
+    public void 行金额之和大于订单实付_按占比摊到订单余额_而不是照退超()
     {
-        // 只在积分抵扣被分摊错时才可能出现。照退就等于退了超过订单实付的钱
+        // 行实付之和（120）> 订单实付（100）—— 任何用过券或积分的单都是这样。
+        // 这条以前断言的是「按数据异常拒绝」，而那正是缺陷本身：
+        // 结果是**用过优惠的订单一律退不了款**。现在按占比摊到订单余额。
         var result = OrderRefundRules.Resolve(TwoLines, 100m, 0m, null);
 
-        Assert.False(result.IsValid);
-        Assert.Contains("数据异常", result.Error);
+        Assert.True(result.IsValid);
+        Assert.Equal(100m, result.Total);
+        Assert.Equal(100m, OrderRefundRules.Round2(result.Lines.Sum(a => a.Amount)));
+        Assert.All(result.Lines, a => Assert.Equal(50m, a.Amount));
     }
 
     [Fact]
@@ -202,5 +206,64 @@ public class OrderRefundRulesTests
         var line = Assert.Single(result.Lines);
         Assert.Equal(0, line.OrderItemId);
         Assert.Equal(10m, line.Amount);
+    }
+
+    /// <summary>整单退：用积分抵扣过的订单**必须能退**。</summary>
+    /// <remarks>
+    /// 这是一条真实缺陷的回归：行实付之和是「商品总额」，订单实付是
+    /// 「商品总额 − 券 − 积分抵扣」，所以用了优惠的订单行和**必然大于**订单余额。
+    /// 之前的实现把这当成「数据异常」直接拒绝，结果是<b>任何用过券或积分的订单都退不了款</b>。
+    /// 而当时的测试单都没用券，这条路径一次都没被走到。
+    /// </remarks>
+    [Fact]
+    public void 整单退_订单有积分抵扣时按比例摊到行_而不是报数据异常()
+    {
+        // 行实付 60.00，积分抵扣 13.51 → 订单实付 46.49
+        var lines = new[] { new RefundableLine(11, 1, 0, 60m, 0m) };
+
+        var result = OrderRefundRules.Resolve(lines, 46.49m, 0m, null);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(46.49m, result.Total);
+        Assert.Equal(0m, result.RemainingAfter);
+        Assert.True(result.FullyRefunded);
+
+        // 行金额必须等于订单实付，而不是行实付 60
+        var line = Assert.Single(result.Lines);
+        Assert.Equal(11, line.OrderItemId);
+        Assert.Equal(46.49m, line.Amount);
+    }
+
+    [Fact]
+    public void 整单退_多行且有优惠时按占比摊分_各行之和正好等于订单实付()
+    {
+        // 两行各 50.00，合计 100.00；券减 30 → 订单实付 70.00
+        var lines = new[]
+        {
+            new RefundableLine(11, 1, 0, 50m, 0m),
+            new RefundableLine(12, 1, 0, 50m, 0m),
+        };
+
+        var result = OrderRefundRules.Resolve(lines, 70m, 0m, null);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(70m, result.Total);
+        // 逐行四舍五入 + 末行吸收余数：合计必须**精确**等于订单余额，
+        // 否则订单会永远差几分钱退不干净
+        Assert.Equal(70m, OrderRefundRules.Round2(result.Lines.Sum(a => a.Amount)));
+        Assert.True(result.Lines.All(a => a.OrderItemId != 0));
+    }
+
+    [Fact]
+    public void 整单退_部分退款后剩的余额仍能按比例摊完()
+    {
+        // 第一次退了一半（行实付 60 → 退 30），订单实付 60
+        var lines = new[] { new RefundableLine(11, 1, 0, 60m, 30m) };
+
+        var result = OrderRefundRules.Resolve(lines, 60m, 30m, null);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(30m, result.Total);
+        Assert.True(result.FullyRefunded);
     }
 }

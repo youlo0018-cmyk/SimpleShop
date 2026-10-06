@@ -99,36 +99,92 @@ public static class OrderRefundRules
     /// <param name="lines">订单所有行的可退余额。</param>
     /// <param name="remainingOrder">订单剩余可退余额。</param>
     /// <returns>解析结果。</returns>
+    /// <remarks>
+    /// <para><b>行金额要按比例摊到订单余额上，而不是直接拿行金额去比。</b>
+    /// 行实付之和是「商品总额」，订单实付是「商品总额 + 运费 − 券 − 积分抵扣」。
+    /// 用了券或积分的订单，行金额之和**必然大于**订单实付 —— 这是正常的，
+    /// 不是数据异常。之前直接判「行和 &gt; 订单余额就是数据异常」，
+    /// 结果是<b>任何用了券或积分的订单都退不了款</b>，而测试用的单子都没用券，
+    /// 于是这条路径一次都没被走到过。</para>
+    ///
+    /// <para>正确做法：按各行金额占比把订单剩余余额摊下去，逐行四舍五入，
+    /// 最后一行吸收舍入余数，保证各行之和**恰好等于**订单余额 —— 否则退款总额会差几分钱，
+    /// 订单永远退不干净。</para>
+    /// </remarks>
     private static RefundResolution ResolveWhole(
         IReadOnlyList<RefundableLine> lines, decimal remainingOrder)
     {
-        var picked = lines
+        // 只收「还剩钱」的行：钱已经退完但件数没退完的行不能再回补库存，
+        // 否则会出现「钱退完了、货也放回仓库」的双重损失。
+        var refundable = lines
             // 只收「还剩钱」的行：钱已经退完但件数没退完的行不能再回补库存，
             // 否则会出现「钱退完了、货也放回仓库」的双重损失。
             .Where(a => a.RemainingAmount > 0.005m)
-            .Select(a => new ResolvedRefundLine(
-                a.OrderItemId, a.RemainingQuantity, a.RemainingAmount))
             .ToList();
 
-        var lineSum = Round2(picked.Sum(a => a.Amount));
-
-        // 行金额之和超过订单余额说明数据不一致（行实付之和 > 订单实付，
-        // 只在积分抵扣被分摊错时才可能出现）。此时按行退会退超，直接报错让人查账。
-        if (lineSum > remainingOrder + 0.01m)
+        if (refundable.Count == 0)
         {
-            return Fail("订单行金额之和大于订单实付金额，数据异常，请联系技术支持核查");
+            // 所有行的钱都退完了，剩下的（运费 / 零头）全部记到分摊行
+            return remainderOnly(remainingOrder);
         }
 
-        // 行退完还有富余：那是运费与积分抵扣分摊出来的差额，补一条运费行，
-        // 否则订单级的退款总额会少于实付，订单永远退不干净。
-        var remainder = Round2(remainingOrder - lineSum);
-        if (remainder > 0.005m)
+        var lineTotal = Round2(refundable.Sum(a => a.RemainingAmount));
+        if (lineTotal <= 0m)
         {
-            // OrderItemId = 0 是约定的「运费与优惠分摊」伪行，不对应任何真实商品。
-            picked.Add(new ResolvedRefundLine(0, 0, remainder));
+            return remainderOnly(remainingOrder);
+        }
+
+        // 摊给商品行的部分 = min(订单余额, 行金额之和)。
+        // 两边取小的意义：订单有券 / 积分时余额 < 行和，全摊到行上；
+        // 有运费时余额 > 行和，行只摊自己那份，差额留给下面的运费行。
+        var lineShare = Round2(Math.Min(remainingOrder, lineTotal));
+
+        // 按行金额占比摊 lineShare。逐行四舍五入后可能差几分钱，
+        // 最后一**有金额**的行吸收余数，保证合计正好等于 lineShare。
+        var picked = new List<ResolvedRefundLine>();
+        var allocated = 0m;
+        var lastWithAmount = refundable.Count - 1;
+
+        for (var i = 0; i < refundable.Count; i++)
+        {
+            var line = refundable[i];
+            var amount = i == lastWithAmount
+                ? Round2(lineShare - allocated)
+                : Round2(Round2(lineShare * line.RemainingAmount / lineTotal));
+
+            allocated = Round2(allocated + amount);
+            picked.Add(new ResolvedRefundLine(
+                line.OrderItemId, line.RemainingQuantity, amount));
+        }
+
+        // 行摊完还剩下的：运费 / 零头。记到约定的分摊行，退款记录里才看得出运费退了多少
+        var diff = Round2(remainingOrder - allocated);
+        if (diff > 0.005m)
+        {
+            // OrderItemId = 0 是约定的「运费与优惠分摊」伪行，不对应任何真实商品
+            picked.Add(new ResolvedRefundLine(0, 0, diff));
+        }
+        else if (diff < -0.01m)
+        {
+            // 兜底：摊完之后**多**了（只可能是舍入组合异常），宁可报错也不能退超
+            return Fail($"退款分摊后金额不平（多 {Math.Abs(diff):0.00} 元），请联系技术支持核查");
         }
 
         return Build(picked, remainingOrder);
+    }
+
+    /// <summary>整单退但商品行都已退完：剩余金额全部记到分摊行。</summary>
+    /// <param name="remainingOrder">订单剩余可退余额。</param>
+    /// <returns>解析结果。</returns>
+    private static RefundResolution remainderOnly(decimal remainingOrder)
+    {
+        if (remainingOrder <= 0.005m)
+        {
+            return Fail("该订单已无可退余额");
+        }
+
+        // OrderItemId = 0 是约定的「运费与优惠分摊」伪行，不对应任何真实商品。
+        return Build([new ResolvedRefundLine(0, 0, Round2(remainingOrder))], remainingOrder);
     }
 
     /// <summary>部分退：逐行校验行级余额。</summary>

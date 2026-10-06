@@ -441,7 +441,11 @@ public class OrderCreatorTests
         public int LockCount;
         public int UnfreezeCount;
         public int ConsumeCount;
+        public int RecoverCount;
         public bool ReturnFalseOnLock;
+
+        /// <summary>最近一次退款回收用的比例，供用例断言「按本次退款额算比例」。</summary>
+        public decimal LastRecoverRatio;
 
         /// <summary>还冻着的积分数。实扣后必须归零，否则就是一笔悬空占用。</summary>
         public long Frozen;
@@ -464,6 +468,20 @@ public class OrderCreatorTests
         {
             ConsumeCount++;
             Frozen = 0;
+            return Task.CompletedTask;
+        }
+
+        /// <summary>退款按比例回收积分。记下比例供断言，行为本身在积分服务里。</summary>
+        /// <param name="customerId">客户 Id。</param>
+        /// <param name="orderNo">订单号。</param>
+        /// <param name="refundRatio">退款比例。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>异步任务。</returns>
+        public Task RecoverByRefundAsync(
+            long customerId, string orderNo, decimal refundRatio, CancellationToken ct = default)
+        {
+            RecoverCount++;
+            LastRecoverRatio = refundRatio;
             return Task.CompletedTask;
         }
 

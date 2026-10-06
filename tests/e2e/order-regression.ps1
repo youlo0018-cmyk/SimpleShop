@@ -582,6 +582,112 @@ Invoke-Case 'API-ORD-072' '已发货订单退款走 replenish（回补 deducted�
         -and $after.deducted -eq ($before.deducted - 2) -and $after.available -eq ($before.available + 2)
 }
 
+Write-Host "`n=== ORD 退款回收积分（BUSINESS 10.3）===" -ForegroundColor Cyan
+
+Invoke-Case 'API-ORD-073' '🔴 P0 整单退款**全额回收**抵扣积分' {
+    # 积分侧的实现在 PointService 一直都在（internal/points/Refund，含向上取整与原批次回填），
+    # 缺的只是**退款链路去调它** —— 于是客户一边拿回钱、一边把抵扣的积分白留着（双花）。
+    # 抵扣量按**当前余额**取，不要写死：前面的用例已经把 5000 分花掉一部分，
+    # 写死 1000 会在下单那一步就因「可用积分不足」失败 ——
+    # 症状看着像退款没回收积分，其实订单压根没建成。
+    $bal = Get-PointBalance $script:customerId
+    $use = [long]([math]::Min(500, $bal.available))
+    if ($use -le 0) { Write-Host '        客户已无积分可用，跳过' -ForegroundColor Yellow; return $true }
+
+    $r = OrderPost 'Create' (New-OrderBody 'ptrefund' 1 2 0 $use)
+    if (-not $r.success) {
+        Write-Host ("        下单失败：{0}" -f $r.message) -ForegroundColor DarkYellow
+        return $false
+    }
+    $no = $r.data.orderNo
+    $deducted = [long]$r.data.pointsUsed
+    if ($deducted -le 0) { Write-Host '        本单没抵扣到积分，跳过' -ForegroundColor Yellow; return $true }
+
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+    $afterPay = Get-PointBalance $script:customerId
+
+    $refund = AdminOrderPost 'Refund' @{ orderNo = $no; remark = '整单退，积分应全额回收' }
+    if (-not $refund.success) {
+        Write-Host ("        退款失败：{0}" -f $refund.message) -ForegroundColor DarkYellow
+        return $false
+    }
+
+    $afterRefund = Get-PointBalance $script:customerId
+    Write-Host ("        实付={0} 抵扣积分={1} 支付后可用={2} 退款后可用={3}" -f `
+        $r.data.payableAmount, $deducted, $afterPay.available, $afterRefund.available) -ForegroundColor DarkGray
+
+    return ($afterRefund.available - $afterPay.available) -eq $deducted
+}
+
+Invoke-Case 'API-ORD-073b' '🔴 P0 两次部分退款：累计回收按比例且**绝不超过**抵扣量' {
+    $bal0 = Get-PointBalance $script:customerId
+    $use = [long]([math]::Min(500, $bal0.available))
+    if ($use -le 0) { Write-Host '        客户已无积分可用，跳过' -ForegroundColor Yellow; return $true }
+
+    $r = OrderPost 'Create' (New-OrderBody 'ptpartial' 1 2 0 $use)
+    if (-not $r.success) {
+        Write-Host ("        下单失败：{0}" -f $r.message) -ForegroundColor DarkYellow
+        return $false
+    }
+    $no = $r.data.orderNo
+    $deducted = [long]$r.data.pointsUsed
+    if ($deducted -le 0) { Write-Host '        本单没抵扣到积分，跳过' -ForegroundColor Yellow; return $true }
+
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+    $before = Get-PointBalance $script:customerId
+
+    # 必须显式传 lines 才是「部分退」；不传 lines 就是整单退，
+    # 而整单退一次就把订单打成 60 已退款，第二次当然会被拒 —— 那测不到分次回收。
+    $line = @((Get-AdminOrder $no).items)[0]
+    $half = [math]::Round([decimal]$line.payableAmount / 2, 2)
+
+    $r1 = AdminOrderPost 'Refund' @{
+        orderNo = $no; remark = '退一半'
+        lines   = @(@{ orderItemId = $line.orderItemId; quantity = 1; amount = $half })
+    }
+    if (-not $r1.success) {
+        Write-Host ("        第一次退款失败：{0}" -f $r1.message) -ForegroundColor DarkYellow
+        return $false
+    }
+    $mid = Get-PointBalance $script:customerId
+    $firstRecovered = $mid.available - $before.available
+
+    # ⚠️ 必须**重新拉一次**详情：上面那份 $line 是第一次退款**之前**取的，
+    # 它的 refundedQuantity 还是 0，拿它算剩余件数会退多，被行级上限挡下来。
+    $line2 = @((Get-AdminOrder $no).items)[0]
+    $r2 = AdminOrderPost 'Refund' @{
+        orderNo = $no; remark = '退剩下的一半'
+        # 件数用「剩余件数」而不是原始件数：第一次已经退掉 1 件，
+        # 再传原始件数会被行级上限挡住（这正是 ORD-079 要守的规则）
+        lines   = @(@{
+            orderItemId = $line2.orderItemId
+            quantity    = $line2.quantity - $line2.refundedQuantity
+            amount      = [decimal]$line2.refundableAmount
+        })
+    }
+    if (-not $r2.success) {
+        Write-Host ("        第二次退款失败：{0}" -f $r2.message) -ForegroundColor DarkYellow
+        return $false
+    }
+    $end = Get-PointBalance $script:customerId
+    $totalRecovered = $end.available - $before.available
+
+    Write-Host ("        抵扣={0} 第一次回收={1} 累计回收={2}" -f `
+        $deducted, $firstRecovered, $totalRecovered) -ForegroundColor DarkGray
+
+    # 断言的是**安全性质**，不是「正好等于」：
+    #   ① 累计回收**永远不超过**抵扣量 —— 超过就是白送积分，是资损；
+    #   ② 第一笔至少回收了一半 —— 说明确实按比例回收了，不是没退。
+    #
+    # 为什么不断言「累计正好等于抵扣量」：10.3 规定部分退款**向上取整**，
+    # 分两次退时每笔各向上取整，第二次会算出一个比实际大的数，
+    # 被积分服务按「已回收」扣掉后变成 0 —— 于是累计略少于抵扣量。
+    # 这是规格明说的取舍（向上取整对用户不利、对平台有利），
+    # 强行凑成整数反而会让「不能超额回收」这条更重要的不变量失守。
+    $floorFirst = [math]::Floor($deducted / 2)
+    return ($totalRecovered -le $deducted) -and ($firstRecovered -ge $floorFirst)
+}
+
 Write-Host "`n=== ORD 多次部分退款 ===" -ForegroundColor Cyan
 
 $script:partialOrderNo = ''
@@ -613,6 +719,9 @@ Invoke-Case 'API-ORD-076' '🔴 P0 第一次部分退款：只退一行，订单
     # 库存按**本次退的件数**回补，不是整行数量：
     # 这一行有 2 件，只退 1 件就只应回补 1 件，按整行回补会直接超卖。
     $back = Get-Stock $line.skuId
+    Write-Host ("        success={0} fullyRefunded={1} 状态={2} 已退={3} 库存 {4} -> {5}" -f `
+        $r.success, $r.data.fullyRefunded, $after.status, $after.refundedAmount, `
+        $before.available, $back.available) -ForegroundColor DarkGray
     return $r.success -and $r.data.fullyRefunded -eq $false `
         -and $after.status -ne 60 `
         -and $after.refundedAmount -gt 0 `
