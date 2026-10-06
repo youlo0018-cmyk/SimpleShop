@@ -92,8 +92,11 @@ public interface IPromotionRepository
     /// <param name="platformId">平台 Id，0 表示不限。</param>
     /// <param name="limit">最多返回多少个活动（按参与订单数倒序）。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>逐活动的参与订单数、折扣总额与订单号（供调用方去订单服务取金额）。</returns>
-    Task<List<ActivityParticipationAggregate>> AggregateParticipationAsync(
+    /// <returns>
+    /// 逐活动的参与订单数、折扣总额与订单号（供调用方去订单服务取金额），
+    /// 以及区间内的活动**总数** —— 总数大于返回条数时说明被 <paramref name="limit"/> 截断了。
+    /// </returns>
+    Task<ActivityParticipationResult> AggregateParticipationAsync(
         DateTime from, DateTime to, long merchantId, long platformId, int limit,
         CancellationToken ct = default);
 
@@ -109,3 +112,12 @@ public interface IPromotionRepository
         long activityId, DateTime from, DateTime to, int page, int pageSize,
         CancellationToken ct = default);
 }
+
+/// <summary>参与聚合结果。</summary>
+/// <param name="Items">逐活动聚合，已按「参与订单数倒序 → 活动 Id 倒序」排好，最多 limit 条。</param>
+/// <param name="TotalActivities">
+/// 区间内有参与记录的活动总数。**必须回给调用方**：报表只展示前 N 个活动，
+/// 不告诉前端「被截断了」的话，运营看到的就是一份不完整却毫无提示的名单。
+/// </param>
+public sealed record ActivityParticipationResult(
+    IReadOnlyList<ActivityParticipationAggregate> Items, int TotalActivities);

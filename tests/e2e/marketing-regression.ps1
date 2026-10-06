@@ -778,9 +778,14 @@ Invoke-Case 'API-RPT-047' '🔴 活动报表：参与订单数 / 参与金额 / 
     Write-Host ("        参与订单 {0} / 参与金额 {1} / 折扣总额 {2}" -f `
         $row.orderCount, $row.orderAmount, $row.discountTotal) -ForegroundColor DarkGray
 
+    # 报表只展示前 100 个活动（按参与订单数倒序 → 活动 Id 倒序）：
+    # 被截断时必须**明确告诉前端**，否则运营看到的是一份不完整却毫无提示的名单。
+    $hasTruncationFlag = $null -ne $r.data.PSObject.Properties['activitiesTruncated']
+
     # 这一单是本次活动唯一的订单：参与金额必须是**实付 50**（不是原价 60），
     # 折扣总额必须是 10。金额由订单服务按「已支付、未取消、未退款」算，与工作台 GMV 同源。
-    return $row.orderCount -eq 1 `
+    return $hasTruncationFlag `
+        -and $row.orderCount -eq 1 `
         -and $row.orderAmount -eq ($script:gftPrice - $script:rptDiscount) `
         -and $row.discountTotal -eq $script:rptDiscount
 }

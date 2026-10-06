@@ -174,7 +174,7 @@ public sealed class PromotionRepository : IPromotionRepository
     }
 
     /// <inheritdoc />
-    public async Task<List<ActivityParticipationAggregate>> AggregateParticipationAsync(
+    public async Task<ActivityParticipationResult> AggregateParticipationAsync(
         DateTime from, DateTime to, long merchantId, long platformId, int limit,
         CancellationToken ct = default)
     {
@@ -187,7 +187,7 @@ public sealed class PromotionRepository : IPromotionRepository
 
         // 内存分组：一个区间的参与记录量级是「订单数」，与积分 / 券报表同一取舍
         // （数据量真的上来之后改 SQL 聚合或加汇总表，见 REVIEW P2）。
-        return rows
+        var groups = rows
             .GroupBy(a => a.ActivityId)
             .Select(g => new ActivityParticipationAggregate(
                 g.Key,
@@ -197,8 +197,17 @@ public sealed class PromotionRepository : IPromotionRepository
                 Math.Round(g.Sum(a => a.DiscountAmount), 2, MidpointRounding.AwayFromZero),
                 g.Select(a => a.OrderNo).ToList()))
             .OrderByDescending(a => a.OrderCount)
-            .Take(limit)
             .ToList();
+
+        // 排序必须是**确定**的：参与订单数相同时按活动 Id 倒序（新的在前）。
+        // 不加这个次序，同数量的活动顺序随分组顺序漂移，
+        // 分页 / 截断边界上会出现「同一条数据这次在、下次不在」。
+        var ordered = groups
+            .OrderByDescending(a => a.OrderCount)
+            .ThenByDescending(a => a.ActivityId)
+            .ToList();
+
+        return new ActivityParticipationResult(ordered.Take(limit).ToList(), ordered.Count);
     }
 
     /// <inheritdoc />

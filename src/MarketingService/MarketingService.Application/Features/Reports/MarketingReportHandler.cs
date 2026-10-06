@@ -43,7 +43,8 @@ public sealed record MarketingReport(
     IReadOnlyList<ActivityReportRow> Activities,
     long ActivityOrderCount, decimal ActivityOrderAmount, decimal ActivityDiscountTotal,
     long IssuedTotal, long ReceivedTotal, long ConsumedTotal,
-    decimal ConsumeRate, decimal DiscountTotal);
+    decimal ConsumeRate, decimal DiscountTotal,
+    bool ActivitiesTruncated);
 
 /// <summary>查营销效果报表（活动 + 券）。</summary>
 /// <param name="Range">时间范围档位。</param>
@@ -88,8 +89,9 @@ public sealed class MarketingReportHandler
         // 三个服务的「今日」必须指同一天，否则运营同时开两个报表页会看到矛盾的数。
         var (from, to) = ReportRanges.Resolve(request.Range, DateTime.UtcNow);
 
-        var aggregates = await _promotions.AggregateParticipationAsync(
+        var participation = await _promotions.AggregateParticipationAsync(
             from, to, request.MerchantId, request.PlatformId, limit: 100, ct).ConfigureAwait(false);
+        var aggregates = participation.Items;
 
         // 每个活动单独问一次订单服务，而不是把全部单号合起来问一次：
         // 合并只能拿到一个总额，拆不回各活动，而报表要的是逐活动的「参与金额」。
@@ -119,7 +121,9 @@ public sealed class MarketingReportHandler
             couponAgg.ReceivedTotal,
             couponAgg.ConsumedTotal,
             couponAgg.ConsumeRate,
-            couponAgg.DiscountTotal);
+            couponAgg.DiscountTotal,
+            // 活动数超过上限时**明确告诉前端**：否则运营看到的是一份不完整却毫无提示的名单
+            ActivitiesTruncated: participation.TotalActivities > aggregates.Count);
 
         return ApiResults.Ok(report);
     }

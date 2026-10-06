@@ -666,7 +666,7 @@ SKU 的多个规格值必须由后端拼成**可直接展示的文本**，前端
 | 字段 | 类型 | 必填 | 默认值 | 校验规则 | 说明 |
 |---|---|---|---|---|---|
 | MerchantId | long | ✔ | — | 行数据带出，只读 | 商户 Id |
-| AuditStatus | int | ✔ | — | **只能填 20 已通过 或 30 已驳回** | 审核结论。注意与 5.3 商户审核**不同码**（商户是 20 / 90）—— 商品驳回用 30，改动前先看 `AuditStatuses` |
+| AuditStatus | int | ✔ | — | **只能填 20 已通过 或 90 已驳回** | 审核结论。⚠️ 与 5.8 商品审核**不同码**：商户是 20 / 90（`MerchantAuditStatuses`），商品是 10 / 20 / 30（`AuditStatuses`）。改这里之前先看常量类，别照着商品那套写 |
 | AuditRemark | string(500) | **拒绝时必填** | 空 | ≤ 500 字符 | **通过时选填，拒绝时必填** |
 
 **副作用**：
@@ -826,7 +826,7 @@ SKU 的多个规格值必须由后端拼成**可直接展示的文本**，前端
 
 ### 5.9 商品上下架
 
-**接口**：`POST /gateway/products/{id}/Status`
+**接口**：`POST /gateway/products/ChangeListing`（入参 `ProductId` + `Status`）
 **权限点**：`product:update`
 
 | 字段 | 类型 | 必填 | 默认值 | 校验规则 | 说明 |
@@ -903,6 +903,7 @@ SKU 的多个规格值必须由后端拼成**可直接展示的文本**，前端
 | 参与金额 | **回订单服务取**（口径同工作台 GMV：排除待支付 / 已取消 / 已退款）。营销侧自己估一遍，两张报表必然对不上 |
 | 参与订单数 | **下单即计**（含未支付 / 已取消），与下钻明细逐行对得上；金额那一列才按「已支付」算。两个口径都写在字段注释里，避免运营把「参与订单 10 / 参与金额 0」当成 bug |
 | 报表接口 | `POST /gateway/reports/Marketing` 的 `activities` 段（逐活动：参与订单数 / 参与金额 / 折扣总额） |
+| 报表截断 | 活动明细最多回 **100 条**（按「参与订单数倒序 → 活动 Id 倒序」），超过时 `activitiesTruncated = true`。**必须回这个标志**：不回的话运营看到的是一份不完整却毫无提示的名单。排序必须确定 —— 参与订单数相同时按活动 Id 倒序，否则同数量的活动顺序随分组漂移，截断边界上会出现「同一条数据这次在、下次不在」 |
 | 下钻接口 | `POST /gateway/marketing/activities/Records`，入参 `activityId` + `range`；**时间口径必须与报表一致**，否则行数与报表对不上 |
 | 权限点 | 下钻绑在 `report:marketing` 上（与报表同一个权限点） |
 
@@ -1265,14 +1266,17 @@ SKU 的多个规格值必须由后端拼成**可直接展示的文本**，前端
 
 **接口**：`POST /gateway/orders/Ship`
 **权限点**：`order:ship`
-**服务**：OrderService → `simpleshoporder.shipment` + `shipment_item`
+**服务**：OrderService → 发货信息**直接落在 `simpleshoporder."order"` 上**
+（`logistics_company_id` / `logistics_company_name` / `tracking_no` / `shipped_at`），
+逐行的配送方式在 `order_item.delivery_type`。**没有独立的 shipment 表** ——
+本项目不支持部分发货（下表「部分发货」一行），拆出主表 + 明细表只会多一层永远 1:1 的联表。
 
 按订单行的 `DeliveryType` **动态渲染**表单：
 
 | DeliveryType | 表单字段 | 必填 | 校验规则 | 说明 |
 |---|---|---|---|---|
 | 1 实物快递 | LogisticsCompany | 是 | 字典下拉，可搜索；允许管理员新增 | 物流公司 |
-| 1 实物快递 | TrackingNo | 是 | 非空；trim；最多 50 字符；**不校验格式** | 运单号 |
+| 1 实物快递 | TrackingNo | 是 | 非空；trim；**2-64 字符**；**不校验格式** | 运单号。下限 2：长度为 1 的单号一定是输错 / 占位，留着会让客服拿着它去查永远查不到。上限 64 与 `order.tracking_no` 的列宽一致 |
 | 2 虚拟商品 | 无 | — | — | **前端不渲染物流字段，也不提交** |
 | 3 实物自提 | 无 | — | — | 按钮文案为「备货完成」，**前端不提交物流字段** |
 

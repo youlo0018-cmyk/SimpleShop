@@ -239,7 +239,10 @@ public static class ProductValidators
     {
         /// <summary>构造校验器。</summary>
         public ChangeProductListingValidator()
-            => RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 上架 或 2 下架");
+        {
+            RuleFor(x => x.ProductId).GreaterThan(0).WithMessage("商品 Id 必须为正数");
+            RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 上架 或 2 下架");
+        }
     }
 
     /// <summary>提交审核命令校验。</summary>
