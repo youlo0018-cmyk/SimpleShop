@@ -261,6 +261,85 @@ Invoke-Case 'API-PRP-006' '🔴 同一次提交里 SKU 编码重复被拒' {
     return -not $r.success -and $r.message -match '重复'
 }
 
+<#
+.SYNOPSIS
+    提交一个「预期被校验器拒绝」的商品保存请求。
+.DESCRIPTION
+    校验失败是 HTTP 400，Invoke-RestMethod 会把响应体丢进 ErrorDetails 而不是返回值，
+    所以要把 body 解回来才能断言「是哪条规则拦的」（CODING_STANDARD 3.4：前端用 errors 提示）。
+#>
+function Save-ExpectReject($Body) {
+    try {
+        Invoke-RestMethod -Uri "$Gateway/gateway/products/Save" -Method Post -Headers $script:headers `
+            -Body ($Body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        return $null
+    } catch {
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{ success = $false; message = $_.Exception.Message; errors = $null }
+        }
+        try { return $raw | ConvertFrom-Json }
+        catch { return [pscustomobject]@{ success = $false; message = $raw; errors = $null } }
+    }
+}
+
+function Get-SaveErrText($r) {
+    if ($null -eq $r -or $null -eq $r.errors) { return '' }
+    return (@($r.errors.PSObject.Properties | ForEach-Object { $_.Value }) -join ' ')
+}
+
+function New-ImageProductBody([string]$name, [string]$images, [string]$detailImages) {
+    return @{
+        productId = 0; spuName = $name; categoryId = $script:l3
+        deliveryType = 1; mainImage = 'https://cdn.example.com/m.png'
+        images = $images; detailImages = $detailImages
+        specs = @(@{ specName = '颜色'; specValues = @('红') })
+        skus = @(@{ skuCode = "IMG$($script:suffix)"; specValues = @('红'); price = 10; stock = 1; status = 1 })
+    }
+}
+
+Invoke-Case 'API-PRP-017' '🔴 轮播图最多 6 张（只校验总长度会让多出来的图静默不显示）' {
+    # 用 -InputObject：走管道时 ConvertTo-Json 会把数组拆成多条输出，拿到的就不是 JSON 数组了
+    $seven = ConvertTo-Json -InputObject @(1..7 | ForEach-Object { "https://cdn.example.com/$_.png" }) -Compress
+    $r = Save-ExpectReject (New-ImageProductBody "轮播超限$($script:suffix)" $seven '')
+    return $null -ne $r -and -not $r.success -and (Get-SaveErrText $r) -match '轮播图最多 6 张'
+}
+
+Invoke-Case 'API-PRP-018' '🔴 详情图最多 9 张' {
+    $ten = ConvertTo-Json -InputObject @(1..10 | ForEach-Object { "https://cdn.example.com/d$_.png" }) -Compress
+    $r = Save-ExpectReject (New-ImageProductBody "详情超限$($script:suffix)" '' $ten)
+    return $null -ne $r -and -not $r.success -and (Get-SaveErrText $r) -match '详情图最多 9 张'
+}
+
+Invoke-Case 'API-PRP-019' '🔴 图片字段不是 JSON 数组被拒（存进去前端解析会炸）' {
+    $r = Save-ExpectReject (New-ImageProductBody "图片格式$($script:suffix)" 'a.png,b.png' '')
+    return $null -ne $r -and -not $r.success -and (Get-SaveErrText $r) -match '格式不正确'
+}
+
+Invoke-Case 'API-PRP-020' '图片刚好 6 张 + 9 张可以保存（边界不误伤）' {
+    $six = ConvertTo-Json -InputObject @(1..6 | ForEach-Object { "https://cdn.example.com/ok$_.png" }) -Compress
+    $nine = ConvertTo-Json -InputObject @(1..9 | ForEach-Object { "https://cdn.example.com/dok$_.png" }) -Compress
+    $body = New-ImageProductBody "图片边界$($script:suffix)" $six $nine
+    $r = Invoke-RestMethod -Uri "$Gateway/gateway/products/Save" -Method Post -Headers $script:headers `
+        -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30
+
+    if (-not $r.success) { return $false }
+
+    $d = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($r.data)" -Headers $script:headers -TimeoutSec 30
+    $ok = ($d.data.images | ConvertFrom-Json).Count -eq 6 -and ($d.data.detailImages | ConvertFrom-Json).Count -eq 9
+
+    Invoke-RestMethod -Uri "$Gateway/gateway/products/Delete" -Method Post -Headers $script:headers `
+        -Body (@{ productId = $r.data } | ConvertTo-Json) -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    return $ok
+}
+
+Invoke-Case 'API-PRP-021' '🔴 单张图片地址超过 255 字符被拒（字段表写的是每张 ≤ 255）' {
+    $long = 'https://cdn.example.com/' + ('a' * 260) + '.png'
+    $json = ConvertTo-Json -InputObject @($long) -Compress
+    $r = Save-ExpectReject (New-ImageProductBody "图片超长$($script:suffix)" $json '')
+    return $null -ne $r -and -not $r.success -and (Get-SaveErrText $r) -match '255'
+}
+
 Invoke-Case 'API-PRP-007' '详情：4 个 SKU，SkuSpecText 按规格项顺序拼接' {
     $d = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:productId)" -Headers $script:headers -TimeoutSec 30
     if (-not $d.success -or $d.data.skus.Count -ne 4) { return $false }

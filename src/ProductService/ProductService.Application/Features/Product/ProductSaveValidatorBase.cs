@@ -31,6 +31,23 @@ public abstract class ProductSaveValidatorBase<T> : AbstractValidator<T> where T
         RuleFor(x => x.MainImage).NotEmpty().MaximumLength(512).WithMessage("请上传商品主图");
         RuleFor(x => x.Images).MaximumLength(2000).WithMessage("轮播图数据过长");
         RuleFor(x => x.DetailImages).MaximumLength(2000).WithMessage("详情图数据过长");
+
+        // 图片字段的完整规则（DATA_SPEC 5.6）：轮播图 ≤ 6 张、详情图 ≤ 9 张，每张地址 ≤ 255 字符。
+        // 只校验总长度是不够的：2000 个字符能塞下十几张短地址，而前台轮播只按 6 张渲染 ——
+        // 多出来的图运营配了、用户看不见，谁也不知道是哪几张丢了。
+        RuleFor(x => x.Images).Must(v => ParseImageList(v) is not null)
+            .WithMessage("轮播图格式不正确（应为 JSON 数组）");
+        RuleFor(x => x.Images).Must(v => (ParseImageList(v)?.Count ?? 0) <= 6)
+            .WithMessage("轮播图最多 6 张");
+        RuleFor(x => x.Images).Must(v => AllUrlsWithin(v, 255))
+            .WithMessage("轮播图每张地址不超过 255 个字符");
+
+        RuleFor(x => x.DetailImages).Must(v => ParseImageList(v) is not null)
+            .WithMessage("详情图格式不正确（应为 JSON 数组）");
+        RuleFor(x => x.DetailImages).Must(v => (ParseImageList(v)?.Count ?? 0) <= 9)
+            .WithMessage("详情图最多 9 张");
+        RuleFor(x => x.DetailImages).Must(v => AllUrlsWithin(v, 255))
+            .WithMessage("详情图每张地址不超过 255 个字符");
         RuleFor(x => x.Description).MaximumLength(4000).WithMessage("商品描述最多 4000 个字符");
         RuleFor(x => x.Remark).MaximumLength(512).WithMessage("备注最多 512 个字符");
         RuleFor(x => x.OriginalPrice).GreaterThanOrEqualTo(0).WithMessage("划线原价不能为负数");
@@ -67,6 +84,37 @@ public abstract class ProductSaveValidatorBase<T> : AbstractValidator<T> where T
             .NotNull().WithMessage("必须提供 SKU 列表")
             .Must(s => s!.Count > 0).WithMessage("至少要有一个 SKU")
             .Must(s => s!.Count <= 100).WithMessage("SKU 最多 100 个");
+    }
+
+    /// <summary>解析图片 JSON 数组。</summary>
+    /// <param name="json">JSON 数组文本，允许为空（视为空数组）。</param>
+    /// <returns>图片地址列表；<b>非法 JSON 返回 null</b>（与「空数组」区分开）。</returns>
+    /// <remarks>
+    /// 刻意吞掉解析异常返回 null：校验器里抛异常会变成 500，
+    /// 而运营填错格式应该得到一句 400 的提示。
+    /// </remarks>
+    private static List<string>? ParseImageList(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? [];
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>所有图片地址是否都在长度上限内。</summary>
+    /// <param name="json">JSON 数组文本。</param>
+    /// <param name="maxLength">单张地址的长度上限。</param>
+    /// <returns>都合规返回 true；格式非法时返回 true（交给「格式不正确」那条规则报）。</returns>
+    private static bool AllUrlsWithin(string? json, int maxLength)
+    {
+        var list = ParseImageList(json);
+        return list is null || list.All(a => a is not null && a.Length <= maxLength);
     }
 }
 
