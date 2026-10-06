@@ -554,6 +554,50 @@ Invoke-Case 'API-EVL-084' '🔴 追评不改变均分（重算后仍是 4.50 / 2
     return $rating.Score -eq 4.50 -and $rating.Count -eq 2
 }
 
+Invoke-Case 'API-EVL-085' '🔴 P0 评价被**全部**隐藏后重算，商品评分清零' {
+    # 隐藏掉这个商品剩下的所有评价，然后重算。
+    #
+    # 🔴 这条在修之前是过的：重算只遍历「还有可见评价」的 SPU，
+    # 评价全被隐藏的商品压根不进参与计算的集合，于是商品表里的
+    # evaluationScore / evaluationCount 永远停在旧值上。
+    # 症状是「评价列表里一条都没有，商品卡却还挂着 4.8 星」，
+    # 而且没有任何地方能解释这个分数从哪来 —— 因为它已经不对应任何一条评价了。
+    $list = Invoke-RestMethod "$Gateway/gateway/evaluates/admin/List" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ spuId = $script:productId; page = 1; pageSize = 50 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+    $rows = @($list.data.items | Where-Object { -not $_.isHidden })
+    if ($rows.Count -eq 0) { return $false }
+
+    $script:allHiddenEvaluateIds = @($rows | ForEach-Object { [long]$_.evaluateId })
+    foreach ($id in $script:allHiddenEvaluateIds) {
+        Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ evaluateId = $id; isHidden = $true; hiddenReason = '违规内容，整批下架' } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+
+    Recompute | Out-Null
+    $rating = Get-ProductRating $script:productId
+    Write-Host ("        全部隐藏后：score={0} count={1}" -f $rating.Score, $rating.Count) -ForegroundColor DarkGray
+
+    # 库里保持 0（= 没有评价），展示层用 DisplayScore 转成 5.0
+    return $rating.Score -eq 0 -and $rating.Count -eq 0
+}
+
+Invoke-Case 'API-EVL-086' '恢复显示后评分能重新算回来（清零不是单向的）' {
+    foreach ($id in $script:allHiddenEvaluateIds) {
+        Invoke-RestMethod "$Gateway/gateway/evaluates/admin/Hide" -Method Post -Headers $script:adminHeaders `
+            -Body (@{ evaluateId = $id; isHidden = $false; hiddenReason = '' } | ConvertTo-Json) `
+            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+    }
+    Recompute | Out-Null
+    $rating = Get-ProductRating $script:productId
+
+    # 只回写「还剩可见评价」的商品的话，被清零的商品就再也回不来了 ——
+    # 运营误操作隐藏一批评价，把评分清掉之后就再也救不回来。
+    return $rating.Score -eq 4.50 -and $rating.Count -eq 2
+}
+
+
 Write-Host "`n=== EVL 无评价商品的默认分（规格 14.4）===" -ForegroundColor Cyan
 
 Invoke-Case 'API-EVL-090' '🔴 没评价的商品：库里记 0 而不是 5.0（要能区分「没人评」和「均分 5 星」）' {

@@ -133,7 +133,11 @@ public interface IEvaluateRepository
     /// <summary>取指定 SPU 的首评聚合（用于重算均分）。</summary>
     /// <param name="spuIds">SPU Id 集合。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>SPU Id → 均分与评价数。无评价的 SPU 不在结果里。</returns>
+    /// <returns>
+    /// SPU Id → 均分与评价数。
+    /// <b>请求了但没有可见评价的 SPU 会以 0 分 0 条出现</b>，
+    /// 让调用方能把旧评分清零，而不是「查不到就跳过」。
+    /// </returns>
     Task<IReadOnlyDictionary<long, SpuRating>> AggregateBySpuAsync(
         IReadOnlyCollection<long> spuIds, CancellationToken ct = default);
 
@@ -141,6 +145,21 @@ public interface IEvaluateRepository
     /// <param name="ct">取消令牌。</param>
     /// <returns>SPU Id → 商户 Id。</returns>
     Task<IReadOnlyDictionary<long, long>> GetAllRatedSpuOwnersAsync(CancellationToken ct = default);
+
+    /// <summary>取**有过任何评价**的 SPU Id（含已被隐藏的），每日重算用。</summary>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>SPU Id 集合。</returns>
+    /// <remarks>
+    /// <para><b>刻意与 <see cref="GetAllRatedSpuOwnersAsync"/> 分开</b>：
+    /// 那一个只算「还有可见评价」的 SPU，是给<b>店铺评分</b>用的 ——
+    /// 把零评价商品的默认 5.0 算进去会让店铺评分虚高（规格 14.5）。</para>
+    ///
+    /// <para>这一个要把「评价全被隐藏」的 SPU 也算进来，因为它们的<b>商品评分必须被清零</b>。
+    /// 只用前者的话，管理员把某商品的最后一条评价藏起来之后，
+    /// 商品表里的评分就永远停在旧值上 —— 而商品列表照常显示那个分数。
+    /// 症状是「评价列表里一条都没有，商品却还挂着 4.8 星」，且没有任何地方能解释。</para>
+    /// </remarks>
+    Task<IReadOnlyCollection<long>> GetAllEvaluatedSpuIdsAsync(CancellationToken ct = default);
 
     /// <summary>按商户聚合店铺评分（只统计有评价的商品均分）。</summary>
     /// <param name="ct">取消令牌。</param>

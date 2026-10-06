@@ -53,16 +53,19 @@ public sealed class RecomputeRatingsHandler
     public async Task<ApiResponse<RecomputeRatingsResult>> Handle(
         RecomputeRatingsCommand request, CancellationToken ct)
     {
-        var owners = await _repo.GetAllRatedSpuOwnersAsync(ct).ConfigureAwait(false);
+        // 参与算分的 SPU 集合必须包含「评价已被全部隐藏」的那些。
+        // 它们要拿到 0 分 0 条，从而把商品表里的旧评分清掉；
+        // 否则「评价列表空了、商品还挂着 4.8 星」会永远持续下去。
+        var spuIds = await _repo.GetAllEvaluatedSpuIdsAsync(ct).ConfigureAwait(false);
 
-        if (owners.Count == 0)
+        if (spuIds.Count == 0)
         {
             _logger.LogInformation("没有任何有评价的商品，跳过重算");
             return ApiResults.Ok(new RecomputeRatingsResult(0, 0, 0, true,
                 new Dictionary<long, decimal>()));
         }
 
-        var ratings = await _repo.AggregateBySpuAsync(owners.Keys.ToList(), ct).ConfigureAwait(false);
+        var ratings = await _repo.AggregateBySpuAsync(spuIds, ct).ConfigureAwait(false);
         var merchantRatings = await _repo.AggregateMerchantRatingsAsync(ct).ConfigureAwait(false);
 
         var written = 0;

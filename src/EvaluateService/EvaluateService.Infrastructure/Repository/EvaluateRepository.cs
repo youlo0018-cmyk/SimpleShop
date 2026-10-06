@@ -336,7 +336,7 @@ public sealed class EvaluateRepository : CrudRepository<Evaluate>, IEvaluateRepo
             .ToListAsync(a => new { a.SpuId, a.StarScore }, ct).ConfigureAwait(false);
 
         var grouped = rows.GroupBy(a => a.SpuId);
-        var result = new Dictionary<long, SpuRating>(grouped.Count());
+        var result = new Dictionary<long, SpuRating>(spuIds.Count);
 
         foreach (var group in grouped)
         {
@@ -344,6 +344,14 @@ public sealed class EvaluateRepository : CrudRepository<Evaluate>, IEvaluateRepo
             foreach (var row in group) stars.Add(row.StarScore);
 
             result[group.Key] = new SpuRating(group.Key, EvaluateCalculator.AverageScore(stars), group.Count());
+        }
+
+        // 请求了但一条可见评价都没有的 SPU，回**0 分 0 条**，而不是不出现在结果里。
+        // 「不出现在结果里」在上层看起来和「这个商品不用更新」完全一样，
+        // 于是评价被全部隐藏之后，商品表里的旧评分永远清不掉。
+        foreach (var spuId in spuIds)
+        {
+            result.TryAdd(spuId, new SpuRating(spuId, 0m, 0));
         }
 
         return result;
@@ -364,6 +372,18 @@ public sealed class EvaluateRepository : CrudRepository<Evaluate>, IEvaluateRepo
         }
 
         return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyCollection<long>> GetAllEvaluatedSpuIdsAsync(
+        CancellationToken ct = default)
+    {
+        // 刻意**不过滤 IsHidden**：隐藏只是把评价从展示里摘掉，记录还在。
+        // 正因为记录还在，我们才知道「这个商品本来有分，现在该清零」。
+        var ids = await Db.Select<Evaluate>()
+            .ToListAsync(a => a.SpuId, ct).ConfigureAwait(false);
+
+        return ids.Distinct().ToList();
     }
 
     /// <inheritdoc />
