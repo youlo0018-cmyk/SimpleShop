@@ -47,6 +47,7 @@ public static class GrabValidators
     {
         services.AddScoped<IValidator<GrabSeckillCommand>, GrabSeckillValidator>();
         services.AddScoped<IValidator<QueryGrabResultCommand>, QueryGrabResultValidator>();
+        services.AddScoped<IValidator<ReleaseSeckillGrabCommand>, ReleaseSeckillGrabValidator>();
     }
 
     /// <summary>抢购校验。</summary>

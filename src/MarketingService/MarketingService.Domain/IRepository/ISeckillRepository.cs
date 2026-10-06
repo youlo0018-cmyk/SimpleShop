@@ -85,6 +85,17 @@ public interface ISeckillRepository
     /// <returns>商品列表。</returns>
     Task<List<SeckillItem>> ListItemsAsync(long sessionId, CancellationToken ct = default);
 
+    /// <summary>按 SKU 找出它参与过的全部秒杀商品（跨场次）。</summary>
+    /// <param name="skuId">SKU Id。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>命中的秒杀商品，按创建时间倒序（最近一个排最前）。</returns>
+    /// <remarks>
+    /// 退款要靠它把「这笔秒杀订单的货退回秒杀池」——
+    /// 订单上只记了 <c>skuId</c>，没有记秒杀商品 Id，只能由 SKU 反查。
+    /// 一个 SKU 可以参加多个场次，所以返回列表而不是单条。
+    /// </remarks>
+    Task<List<SeckillItem>> ListItemsBySkuAsync(long skuId, CancellationToken ct = default);
+
     /// <summary>按场次聚合秒杀效果，供秒杀效果报表使用。</summary>
     /// <param name="from">场次开始时间下界（含），DateTime.MinValue 表示不限。</param>
     /// <param name="to">场次开始时间上界（不含），DateTime.MaxValue 表示不限。</param>

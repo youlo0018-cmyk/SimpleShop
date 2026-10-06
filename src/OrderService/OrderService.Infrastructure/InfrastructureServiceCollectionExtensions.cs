@@ -42,6 +42,11 @@ public static class InfrastructureServiceCollectionExtensions
 
         AddDownstream<ICouponPort, HttpCouponPort>(
             services, configuration, "Services:MarketingServiceBaseUrl", "营销服务");
+
+        // 秒杀货退回：同样打营销服务，但单独一个端口，
+        // 免得改券逻辑的时候顺手把库存给改了。
+        AddDownstream<ISeckillPort, HttpSeckillPort>(
+            services, configuration, "Services:MarketingServiceBaseUrl", "营销服务");
         AddDownstream<IPointPort, HttpPointPort>(
             services, configuration, "Services:PointServiceBaseUrl", "积分服务");
         AddDownstream<IInventoryPort, HttpInventoryPort>(

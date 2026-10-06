@@ -34,4 +34,19 @@ public sealed class InternalMarketingController : ControllerBase
     public Task<ApiResponse<FinishExpiredResult>> FinishExpiredSessions(
         [FromBody] FinishExpiredSessionsCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
+
+    /// <summary>秒杀单退款：把货退回秒杀池（订单服务调用）。</summary>
+    /// <param name="command">回退命令，含客户、SKU、件数与订单号。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>实际回退件数。</returns>
+    /// <remarks>
+    /// 秒杀库存是**发布场次时从常规池划走**的，秒杀单从头到尾没锁过常规库存。
+    /// 所以退款绝不能走常规库存的 release —— 那笔锁定根本不存在，必然失败；
+    /// 正确做法是把 <c>sold_count</c> 减回去，货由场次结束时的
+    /// 「<c>seckill_stock − sold_count</c>」自然回到常规池。
+    /// </remarks>
+    [HttpPost("seckill/grabs/Release")]
+    public Task<ApiResponse<ReleaseGrabResult>> ReleaseGrab(
+        [FromBody] ReleaseSeckillGrabCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
 }

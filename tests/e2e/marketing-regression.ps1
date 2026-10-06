@@ -807,6 +807,47 @@ Invoke-Case 'API-SKL-028' '🔴 别人的 requestId 查不到（不泄露该 ID 
         -ContentType 'application/json' -TimeoutSec 20
     return $q.success -eq $false -and $q.message -match '不存在'
 }
+Invoke-Case 'API-SKL-026b' '🔴 P0 秒杀单退款：sold_count 回退，货不会永久滞留在账外' {
+    # 秒杀库存是**发布场次时从常规池划走**的，秒杀单从头到尾没锁过常规库存。
+    # 所以退款若走常规 release —— 那笔锁定根本不存在，必然失败；
+    # 而 sold_count 不减，这件货就永久卡在账外：常规池没有、秒杀池也没有。
+    # 正确做法是减 sold_count，场次结束时由「seckill_stock − sold_count」自然还回常规池。
+    $before = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $script:grabSessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $rowBefore = @($before.data | Where-Object { $_.itemId -eq "$($script:grabItemId)" })[0]
+
+    $refund = Invoke-RestMethod "$Gateway/gateway/admin/orders/Refund" -Method Post `
+        -Headers $script:adminHeaders -Body (@{ orderNo = $script:grabOrderNo; remark = '秒杀单退款回归' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30
+
+    $after = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $script:grabSessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $rowAfter = @($after.data | Where-Object { $_.itemId -eq "$($script:grabItemId)" })[0]
+
+    Write-Host ("        sold_count {0} → {1}" -f $rowBefore.soldCount, $rowAfter.soldCount) -ForegroundColor DarkGray
+    return $refund.success -and $rowAfter.soldCount -eq ($rowBefore.soldCount - 1)
+}
+
+Invoke-Case 'API-SKL-026c' '🔴 退款重试不重复回退（否则等于凭空多出库存）' {
+    $before = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $script:grabSessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $beforeSold = @($before.data | Where-Object { $_.itemId -eq "$($script:grabItemId)" })[0].soldCount
+
+    Invoke-RestMethod "$Gateway/gateway/admin/orders/Refund" -Method Post `
+        -Headers $script:adminHeaders -Body (@{ orderNo = $script:grabOrderNo; remark = '重复退' } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+
+    $after = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Items/List' -Method Post `
+        -Body (@{ sessionId = $script:grabSessionId } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 20
+    $afterSold = @($after.data | Where-Object { $_.itemId -eq "$($script:grabItemId)" })[0].soldCount
+
+    return $afterSold -eq $beforeSold
+}
+
 
 Invoke-Case 'API-SKL-029' '清理：结束抢购场次，剩余库存回补常规池' {
     $r = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/Finish' -Method Post `

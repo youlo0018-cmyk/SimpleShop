@@ -622,22 +622,26 @@ public sealed class RefundOrderHandler
     private readonly IOrderStore _store;
     private readonly IInventoryPort _inventory;
     private readonly IPointPort _points;
+    private readonly ISeckillPort _seckill;
     private readonly ILogger<RefundOrderHandler> _logger;
 
     /// <summary>构造处理器。</summary>
     /// <param name="store">落单端口。</param>
     /// <param name="inventory">库存端口。</param>
     /// <param name="points">积分端口（退款按比例回收已扣积分）。</param>
+    /// <param name="seckill">秒杀端口（秒杀单退款要把货还回秒杀池）。</param>
     /// <param name="logger">日志器。</param>
     public RefundOrderHandler(
         IOrderStore store,
         IInventoryPort inventory,
         IPointPort points,
+        ISeckillPort seckill,
         ILogger<RefundOrderHandler> logger)
     {
         _store = store;
         _inventory = inventory;
         _points = points;
+        _seckill = seckill;
         _logger = logger;
     }
 
@@ -767,7 +771,20 @@ public sealed class RefundOrderHandler
             var item = items.First(a => a.Id == line.OrderItemId);
             try
             {
-                if (lockedPhase)
+                // 🔴 秒杀单**从没锁过常规库存**（货在发布场次时就划走了），
+                // 所以未支付时走常规 release 必然失败 —— 那笔锁定根本不存在。
+                // 正确做法是把 sold_count 减回去，货由场次结束的
+                // 「seckill_stock − sold_count」自然回到常规池。
+                // 不这么处理的话，这一件会永久滞留在账外：常规池没有、秒杀池也没有。
+                var isSeckill = item.SourceType == OrderSourceTypes.Seckill;
+
+                if (isSeckill && lockedPhase)
+                {
+                    await _seckill.ReleaseGrabAsync(
+                        order.CustomerId, item.SkuId, line.Quantity, order.OrderNo, ct)
+                        .ConfigureAwait(false);
+                }
+                else if (lockedPhase)
                 {
                     await _inventory.ReleaseAsync(
                         item.SkuId, line.Quantity, $"{order.OrderNo}:{item.SkuId}", ct).ConfigureAwait(false);

@@ -87,6 +87,27 @@ public interface IPointPort
     /// </remarks>
     Task RecoverByRefundAsync(
         long customerId, string orderNo, decimal refundRatio, CancellationToken ct = default);
+
+}
+
+/// <summary>秒杀端口。秒杀单退款时把货退回秒杀池。</summary>
+public interface ISeckillPort
+{
+    /// <summary>把货退回**秒杀池**。</summary>
+    /// <param name="customerId">下单客户 Id。</param>
+    /// <param name="skuId">SKU Id。</param>
+    /// <param name="quantity">退回件数。</param>
+    /// <param name="orderNo">订单号，用于日志对账。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>异步任务。</returns>
+    /// <remarks>
+    /// 秒杀库存是**发布场次时从常规池划走**的，秒杀单从未锁过常规库存，
+    /// 所以退款绝不能走常规库存的 release —— 那笔锁定不存在，必然失败；
+    /// 正确做法是把 <c>sold_count</c> 减回去，货由场次结束时的
+    /// 「seckill_stock − sold_count」自然回到常规池。
+    /// </remarks>
+    Task ReleaseGrabAsync(
+        long customerId, long skuId, int quantity, string orderNo, CancellationToken ct = default);
 }
 
 /// <summary>③ 库存端口。</summary>

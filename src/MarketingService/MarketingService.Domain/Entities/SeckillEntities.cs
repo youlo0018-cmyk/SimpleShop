@@ -220,4 +220,12 @@ public static class SeckillGrabResults
 
     /// <summary>下单失败（库存 / 券 / 积分等）。</summary>
     public const int OrderFailed = 5;
+
+    /// <summary>已退款，货已退回秒杀池。</summary>
+    /// <remarks>
+    /// 单列一个状态而不是复用 <see cref="Success"/>：前端轮询结果时
+    /// 「成功」和「已退款」要显示不同的话术（一个说下单成功，一个说订单已退）。
+    /// 同时它也是**幂等标记** —— 退款重试时看到不是 Success 就不再重复回退库存。
+    /// </remarks>
+    public const int Refunded = 6;
 }

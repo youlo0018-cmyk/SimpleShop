@@ -116,11 +116,16 @@ public sealed class SeckillRepository : ISeckillRepository
                 .Distinct()
                 .Count();
 
-            // 订单号清单只取**成功**且订单号非空的：
-            // 下单失败的抢购记录（result_status = 5）没有订单号，
-            // 混进去会让向订单服务换 GMV 时查不到单。
+            // 订单号清单只取**真的落下订单**的：
+            // ① 成功（1）与已退款（6）都算 —— 这两种都**真的创建了订单**，
+            //    退款是订单侧的后续事件，不该把「这场抢到过几个人」抹掉。
+            //    （GMV 口径由订单服务负责排除已退款，这里不掺和。）
+            // ② 下单失败的抢购记录（result_status = 5）没有订单号，必须排除，
+            //    混进去会让向订单服务换 GMV 时查不到单。
             var orderNos = sessionGrabs
-                .Where(a => a.ResultStatus == SeckillGrabResults.Success && !string.IsNullOrWhiteSpace(a.OrderNo))
+                .Where(a =>
+                    (a.ResultStatus == SeckillGrabResults.Success || a.ResultStatus == SeckillGrabResults.Refunded)
+                    && !string.IsNullOrWhiteSpace(a.OrderNo))
                 .Select(a => a.OrderNo)
                 .Distinct()
                 .ToList();
@@ -201,6 +206,13 @@ public sealed class SeckillRepository : ISeckillRepository
         => await _db.Select<SeckillItem>()
             .Where(a => a.SessionId == sessionId)
             .OrderBy(a => a.SortOrder).OrderBy(a => a.Id)
+            .ToListAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<List<SeckillItem>> ListItemsBySkuAsync(long skuId, CancellationToken ct = default)
+        => await _db.Select<SeckillItem>()
+            .Where(a => a.SkuId == skuId)
+            .OrderByDescending(a => a.Id)
             .ToListAsync(ct);
 
     /// <inheritdoc />
