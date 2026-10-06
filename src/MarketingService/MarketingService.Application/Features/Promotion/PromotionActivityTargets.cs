@@ -35,16 +35,10 @@ internal static class PromotionActivityTargets
         IProductPort products,
         CancellationToken ct)
     {
-        // 全场活动没有目标可校验。但**商户级**活动暂时不允许全场：
-        // 优惠引擎目前不带商户维度（活动只按平台 + 目标匹配），
-        // 一条商户级的全场活动会作用到同平台所有商户的商品上 —— 那是跨商户改价。
-        // 在引擎补上商户维度之前，这里先挡住；补上之后这条限制就可以撤掉。
-        if (targetType == TargetTypes.All)
-        {
-            return merchantId > 0
-                ? "商户活动不能设为全场，请指定商品或规格（本店全场活动待优惠引擎支持商户维度后开放）"
-                : null;
-        }
+        // 全场活动没有目标可校验。
+        // 商户级的「全场」= 本店全场，由优惠引擎的商户维度保证不会作用到别的商户
+        // （见 PromotionCalculator.CoversMerchant），所以这里放行。
+        if (targetType == TargetTypes.All) return null;
 
         // ParseTargets 返回 HashSet；显式声明成接口类型，下面三元分支才能与 long[] 统一
         IReadOnlyCollection<long> ids = PromotionCalculator.ParseTargets(targets);

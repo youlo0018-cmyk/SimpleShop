@@ -170,7 +170,9 @@ public sealed class PreviewOrderHandler
         // 试算传空订单号：用户只是看了一眼结算页，不该在营销服务留下发放承诺
         var activityBySku = await _activities.QuoteAsync(
             request.CustomerId, platformId, 0, request.CouponId,
-            couponPortLines.Select(a => (a.SpuId, a.SkuId, a.Amount)).ToArray(),
+            // 带上归属商户：商户级活动只作用于本商户的行。
+            // 整单一个商户 —— 跨商户购物车在 ResolveAsync 里已经被拒。
+            couponPortLines.Select(a => (a.SpuId, a.SkuId, a.Amount, outcome.MerchantId)).ToArray(),
             string.Empty, ct).ConfigureAwait(false);
 
         var activityDiscounts = couponPortLines

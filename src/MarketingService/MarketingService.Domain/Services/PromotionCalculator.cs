@@ -7,7 +7,16 @@ namespace MarketingService.Domain.Services;
 /// <param name="SpuId">SPU Id。</param>
 /// <param name="SkuId">SKU Id。</param>
 /// <param name="Amount">该行金额（单价 × 数量），已含数量。</param>
-public readonly record struct PromotionLine(long SpuId, long SkuId, decimal Amount);
+/// <param name="MerchantId">
+/// 该行所属商户，0 表示平台自营 / 未知。
+/// </param>
+/// <remarks>
+/// <b>为什么行上必须有商户</b>：活动分平台级与商户级。不带商户维度的话，
+/// 一条商户级的活动会减到同平台**其它商户**的商品上 —— 跨商户改价。
+/// 判据是 <c>activity.MerchantId &lt;= 0 || activity.MerchantId == line.MerchantId</c>：
+/// 平台级活动（0）作用于所有行，商户级只作用于自己家的行。
+/// </remarks>
+public readonly record struct PromotionLine(long SpuId, long SkuId, decimal Amount, long MerchantId = 0);
 
 /// <summary>一个活动对一行订单的试算结果。</summary>
 /// <param name="ActivityId">命中的活动 Id，0 表示没命中。</param>
@@ -391,14 +400,23 @@ public static class PromotionCalculator
         var result = new HashSet<long>();
         var activity = activities.FirstOrDefault(a => a.Id == activityId);
 
-        if (activity is null || activity.TargetType == TargetTypes.All)
+        if (activity is null)
         {
             foreach (var l in lines) result.Add(l.SkuId);
             return result;
         }
 
+        // 商户级活动只覆盖自己家的行：不判这一条，优惠额会分摊到别的商户的商品上
+        var own = lines.Where(l => CoversMerchant(activity, l)).ToList();
+
+        if (activity.TargetType == TargetTypes.All)
+        {
+            foreach (var l in own) result.Add(l.SkuId);
+            return result;
+        }
+
         var ids = ParseTargets(activity.Targets);
-        foreach (var l in lines)
+        foreach (var l in own)
         {
             if (activity.TargetType == TargetTypes.BySpu ? ids.Contains(l.SpuId) : ids.Contains(l.SkuId))
             {
@@ -415,11 +433,14 @@ public static class PromotionCalculator
     /// <returns>适用行金额合计。</returns>
     public static decimal ResolveApplicableAmount(PromotionActivity activity, IReadOnlyList<PromotionLine> lines)
     {
-        if (activity.TargetType == TargetTypes.All) return Round2(lines.Sum(a => Round2(a.Amount)));
+        // 商户维度先过一遍：不属于本活动的行不计入门槛基数
+        var own = lines.Where(a => CoversMerchant(activity, a)).ToList();
+
+        if (activity.TargetType == TargetTypes.All) return Round2(own.Sum(a => Round2(a.Amount)));
 
         var ids = ParseTargets(activity.Targets);
 
-        return Round2(lines
+        return Round2(own
             .Where(a => activity.TargetType == TargetTypes.BySpu ? ids.Contains(a.SpuId) : ids.Contains(a.SkuId))
             .Sum(a => Round2(a.Amount)));
     }
@@ -430,11 +451,25 @@ public static class PromotionCalculator
     /// <returns>覆盖到任意一行返回 true。</returns>
     public static bool IsLineInScope(PromotionActivity activity, IReadOnlyList<PromotionLine> lines)
     {
-        if (activity.TargetType == TargetTypes.All) return lines.Count > 0;
+        var own = lines.Where(a => CoversMerchant(activity, a)).ToList();
+
+        if (activity.TargetType == TargetTypes.All) return own.Count > 0;
 
         var ids = ParseTargets(activity.Targets);
-        return lines.Any(a => activity.TargetType == TargetTypes.BySpu ? ids.Contains(a.SpuId) : ids.Contains(a.SkuId));
+        return own.Any(a => activity.TargetType == TargetTypes.BySpu ? ids.Contains(a.SpuId) : ids.Contains(a.SkuId));
     }
+
+    /// <summary>判断活动是否覆盖该订单行的商户。</summary>
+    /// <param name="activity">活动。</param>
+    /// <param name="line">订单行。</param>
+    /// <returns>覆盖返回 true。</returns>
+    /// <remarks>
+    /// 平台级活动（<c>MerchantId = 0</c>）作用于所有行；商户级只作用于本商户的行。
+    /// 行上的商户为 0（未知）时只有平台级活动能命中 —— 宁可少给优惠，
+    /// 也不能把一条商户级活动算到身份不明的行上。
+    /// </remarks>
+    public static bool CoversMerchant(PromotionActivity activity, PromotionLine line)
+        => activity.MerchantId <= 0 || activity.MerchantId == line.MerchantId;
 
     /// <summary>解析适用范围的 JSON。</summary>
     /// <param name="targets">JSON 文本，解析失败按空集合处理。</param>

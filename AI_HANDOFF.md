@@ -309,12 +309,21 @@ API-MKT-102 特意用**真实存在的邻居商户商品**：用不存在的 Id 
 顺带把 `order-regression` / `product-regression` / `marketing-regression` 里
 **直连**建活动的地方改成走网关 —— 归属解析要读网关注入的租户头，直连服务端口没有身份。
 
-**待办（下一条）**：给优惠引擎补上商户维度（`PromotionLine` 带 MerchantId、
-按 `activity.MerchantId <= 0 || activity.MerchantId == line.MerchantId` 匹配），
-然后撤掉「商户不能建全场」这条临时限制。FinalPrice 那条 C 端路径需要先拿到每行的商户
-（商品内部接口的 SKU 快照要补 platformId / merchantId 字段）。
+**同轮的第二步：给引擎补上商户维度**（上面那条「商户不能建全场」的临时闸门已撤掉）。
 
-**验证**：构建 0 警告 0 错误；E2E **666/666**（18 个脚本）。
+| 改动 | 说明 |
+|---|---|
+| `PromotionLine` 带 `MerchantId` | 判据 `activity.MerchantId <= 0 \|\| activity.MerchantId == line.MerchantId`，用在门槛基数、适用范围与优惠分摊三处（少一处就会把优惠摊到别人的行上） |
+| 下单链路 | `QuoteOrderLine` 带 `merchantId`，订单服务传整单商户（跨商户购物车在 `OrderPricingResolver` 里已经被拒，所以整单一个商户） |
+| C 端试算 | `FinalPrice` 只收 SPU / SKU，商户归属由 `LineMerchantResolver` 回商品服务解析；**没有商户级活动时直接跳过**这次跨服务调用（这是全系统调用频次最高的接口） |
+| 解析失败 | 行商户按 0（未知）处理 → 只有平台级活动能命中。宁可少给优惠，也不能算到身份不明的行上 |
+
+顺带修掉一条**测试自身**的脆弱：API-SKLX-004 用 `sessions/List?pageSize=100` 找刚结束的场次，
+而列表按 **StartTime 倒序**，本用例的场次开始时间是「2 小时前」——
+库里累积到 877 个场次之后它被挤出第 1 页，失败表现为「找不到行」而不是「状态不对」。
+改成带 `status = 30` 过滤后再找。
+
+**验证**：构建 0 警告 0 错误；单测 384/384；E2E **667/667**（18 个脚本）。
 
 ### 2026-10-07：商户装修对「商户本人」完全不可用（租户根表被按错误的列过滤）
 

@@ -1087,7 +1087,7 @@ public class OrderCreatorTests
         /// <inheritdoc />
         public Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
             long customerId, long platformId, long sessionId, long couponId,
-            IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
+            IReadOnlyList<(long SpuId, long SkuId, decimal Amount, long MerchantId)> lines,
             string orderNo = "", CancellationToken ct = default)
         {
             CallCount++;

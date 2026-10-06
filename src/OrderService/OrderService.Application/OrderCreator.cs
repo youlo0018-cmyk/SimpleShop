@@ -221,7 +221,11 @@ public sealed class OrderCreator
         var activityBySku = await _activities.QuoteAsync(
             request.CustomerId, platformId, 0,
             request.CouponId,
-            couponLines.Select(a => (a.SpuId, a.SkuId, a.Amount)).ToArray(),
+            // 带上归属商户：商户级活动只作用于本商户的行。
+            // 用整单的 merchantId 而不是逐行取 —— 购物车跨商户在下单前就已经被
+            // OrderPricingResolver 拒掉了（「购物车里有不同店铺的商品，请分开结算」），
+            // 所以一张单里所有行的商户必然相同。
+            couponLines.Select(a => (a.SpuId, a.SkuId, a.Amount, merchantId)).ToArray(),
             orderNo, ct).ConfigureAwait(false);
 
         var activityDiscounts = couponLines

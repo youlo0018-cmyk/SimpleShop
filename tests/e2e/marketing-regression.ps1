@@ -1147,8 +1147,11 @@ Invoke-Case 'API-SKLX-003' '🔴 P0 到点自动结束：状态转「已结束�
 }
 
 Invoke-Case 'API-SKLX-004' '🔴 到点结束后的场次状态是 30「已结束」（不是取消 40）' {
+    # 用 status = 30 过滤后再找：列表按 **StartTime 倒序**，而本用例的场次
+    # 开始时间是「2 小时前」—— 库里累积的场次一多（多次跑脚本），
+    # 它就会被挤出第 1 页，查询变成「找不到行」而不是「状态不对」。
     $list = Invoke-RestMethod 'http://127.0.0.1:5072/marketing/seckill/sessions/List' -Method Post `
-        -Body (@{ status = 0; page = 1; pageSize = 100 } | ConvertTo-Json) `
+        -Body (@{ status = 30; page = 1; pageSize = 100 } | ConvertTo-Json) `
         -ContentType 'application/json' -TimeoutSec 20
     $row = @($list.data.items | Where-Object { $_.sessionId -eq "$($script:expiredSessionId)" })[0]
     return $row -and $row.status -eq 30 -and $row.statusName -eq '已结束' -and $row.stockTransferred -eq $false
@@ -1487,6 +1490,8 @@ $script:mktOtherMerchantId = 0
 $script:mktOtherProductId = 0
 $script:mktMerchantToken = $null
 $script:mktOwnProductId = 0
+$script:mktOwnSkuId = 0
+$script:mktOtherSkuId = 0
 $script:mktOwnCategoryIds = @()
 $script:mktNewActivityIds = @()
 
@@ -1530,6 +1535,10 @@ try {
             skus = @(@{ skuCode = "OWN$($script:suffix)"; specValues = @('红'); price = 88; stock = 5; status = 1 })
         } | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
 
+    # 详情里的 SKU 主键字段叫 id（字符串下发，避免雪花 Id 丢精度），不是 skuId
+    $script:mktOwnSkuId = [long](@((Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:mktOwnProductId)" `
+        -Headers $script:adminHeaders -TimeoutSec 30).data.skus)[0].id)
+
     # 同平台的**另一个**商户 + 它的商品：用来验「目标不能是别人家的商品」。
     # 必须真实存在且归属不同 —— 用一个不存在的 Id 只能测到「商品不存在」，
     # 测不到归属那一关。
@@ -1554,6 +1563,9 @@ try {
             specs = @(@{ specName = '颜色'; specValues = @('蓝') })
             skus = @(@{ skuCode = "OTHER$($script:suffix)"; specValues = @('蓝'); price = 99; stock = 5; status = 1 })
         } | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
+
+    $script:mktOtherSkuId = [long](@((Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:mktOtherProductId)" `
+        -Headers $script:adminHeaders -TimeoutSec 30).data.skus)[0].id)
 
     # 商户账号：角色 9004 = 商户管理员（AllowedScopes=2，与 tenantType=2 匹配）
     $mktUser = "mktmr$($script:suffix)"
@@ -1605,7 +1617,7 @@ Invoke-Case 'API-MKT-100' '🔴 商户账号传别人的平台 Id 建活动被�
     (-not $r.success) -and ([int]$r.code -eq 403)
 }
 
-Invoke-Case 'API-MKT-101' '🔴 商户账号不能建「全场」活动（会作用到同平台其他商户）' {
+Invoke-Case 'API-MKT-101' '商户账号可以建「本店全场」活动（引擎带商户维度后放行）' {
     if (-not $script:mktMerchantToken) { return $false }
     $r = GwPost-AsMerchant '/gateway/marketing/activities/Create' @{
         activityName = "全场越界$($script:suffix)"; activityType = 1
@@ -1615,7 +1627,9 @@ Invoke-Case 'API-MKT-101' '🔴 商户账号不能建「全场」活动（会作
         endTime = $script:now.AddDays(1).ToString('o')
         platformId = $script:mktPlatformId; merchantId = 0; status = 1
     }
-    (-not $r.success) -and ([int]$r.code -eq 400) -and $r.message -match '全场'
+    if (-not $r.success) { return $false }
+    $script:mktNewActivityIds += [long]$r.data
+    return $true
 }
 
 Invoke-Case 'API-MKT-102' '🔴 商户活动的目标不能是别人家的商品（400）' {
@@ -1684,6 +1698,32 @@ Invoke-Case 'API-MKT-104' '🔴 券活动的模板归属必须一致（跨租户
     #   ② 归属一致校验（超管上下文不过滤时才会走到）→ 400「不属于当前平台」
     # 断言只要求「明确指出模板不可用」，不把两条防线的先后写死成测试的一部分。
     (-not $r.success) -and ([int]$r.code -in @(400, 404)) -and $r.message -match '模板'
+}
+
+Invoke-Case 'API-MKT-105' '🔴 P0 商户级的「本店全场」活动不会减到别的商户商品上' {
+    if (-not $script:mktMerchantToken -or $script:mktOwnSkuId -le 0 -or $script:mktOtherSkuId -le 0) { return $false }
+
+    # 商户级的全场活动（上面 API-MKT-101 建的那条：满 10 减 1）
+    # 用 C 端 FinalPrice 验：它只收 SPU / SKU，商户归属由服务端回商品服务解析 ——
+    # 正好覆盖「解析 + 按商户匹配」整条链路。
+    $mine = Post '/marketing/activities/FinalPrice' @{
+        customerId = 0; platformId = $script:mktPlatformId
+        lines = @(@{ spuId = $script:mktOwnProductId; skuId = $script:mktOwnSkuId; amount = 100 })
+    }
+    $others = Post '/marketing/activities/FinalPrice' @{
+        customerId = 0; platformId = $script:mktPlatformId
+        lines = @(@{ spuId = $script:mktOtherProductId; skuId = $script:mktOtherSkuId; amount = 100 })
+    }
+
+    if (-not $mine.success -or -not $others.success) { return $false }
+
+    $myDiscount = [decimal](@($mine.data.lines)[0].activityDiscount)
+    $otherDiscount = [decimal](@($others.data.lines)[0].activityDiscount)
+
+    Write-Host ("        自己的商品优惠 {0} / 邻居的商品优惠 {1}" -f $myDiscount, $otherDiscount) -ForegroundColor DarkGray
+
+    # 自己的商品吃到 1 元优惠；邻居的商品必须是 0 —— 这一条就是「跨商户改价」的防线
+    $myDiscount -eq 1.00 -and $otherDiscount -eq 0.00
 }
 
 # 收尾：删掉本节建的活动 / 商品 / 分类，并停用临时商户账号

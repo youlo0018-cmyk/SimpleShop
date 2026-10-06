@@ -167,6 +167,17 @@ public interface IProductPort
         long platformId,
         long merchantId,
         CancellationToken ct = default);
+
+    /// <summary>按 SKU Id 集合取「该行属于哪个商户」，用于按商户维度匹配活动。</summary>
+    /// <param name="skuIds">SKU Id 集合，最多 50 个。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>SKU Id → 商户 Id（0 表示平台自营）；查不到或商品服务不可用时缺项。</returns>
+    /// <remarks>
+    /// 缺项会被当成「商户未知」（0）：只有平台级活动能命中那一行。
+    /// 宁可少给优惠，也不能把一条商户级活动算到身份不明的行上。
+    /// </remarks>
+    Task<IReadOnlyDictionary<long, long>> GetSkuMerchantsAsync(
+        IReadOnlyCollection<long> skuIds, CancellationToken ct = default);
 }
 
 /// <summary>不可用的活动目标，字段与 ProductService 内部接口一致。</summary>
@@ -297,4 +308,56 @@ public sealed class HttpProductPort : IProductPort
     /// <summary>目标校验响应体。</summary>
     private sealed record CheckTargetsResponse(
         [property: JsonPropertyName("rejected")] IReadOnlyList<RejectedActivityTarget> Rejected);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 复用下单前那条「权威定价」接口（<c>internal/products/skus/pricing</c>）：
+    /// 它本来就要带出 SPU 的 <c>merchantId</c>，这里只取其中一个字段，
+    /// 不为营销再开一个几乎一样的接口。
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<long, long>> GetSkuMerchantsAsync(
+        IReadOnlyCollection<long> skuIds, CancellationToken ct = default)
+    {
+        var result = new Dictionary<long, long>();
+        if (skuIds.Count == 0) return result;
+
+        // 接口单次最多 50 个，超出的分批取
+        foreach (var batch in skuIds.Where(a => a > 0).Distinct().Chunk(50))
+        {
+            var query = string.Join(',', batch);
+
+            try
+            {
+                var response = await _http
+                    .GetAsync($"internal/products/skus/pricing?skuIds={query}", ct).ConfigureAwait(false);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("取 SKU 归属失败：HTTP {Code}", (int)response.StatusCode);
+                    continue;
+                }
+
+                var body = await response.Content
+                    .ReadFromJsonAsync<ApiResponse<List<SkuPricingBrief>>>(ct).ConfigureAwait(false);
+
+                if (body is null || !body.Success || body.Data is null) continue;
+
+                foreach (var sku in body.Data)
+                {
+                    result[sku.SkuId] = sku.MerchantId;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "取 SKU 归属调用异常");
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>商品服务定价接口里营销只关心的两个字段。</summary>
+    private sealed record SkuPricingBrief(
+        [property: JsonPropertyName("skuId")] long SkuId,
+        [property: JsonPropertyName("merchantId")] long MerchantId);
 }

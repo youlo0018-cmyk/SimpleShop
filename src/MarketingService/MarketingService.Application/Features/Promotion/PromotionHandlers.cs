@@ -312,14 +312,18 @@ public sealed class CalculateFinalPriceHandler
 {
     private readonly IPromotionRepository _promotions;
     private readonly ICouponRepository _coupons;
+    private readonly IProductPort _products;
 
     /// <summary>构造处理器。</summary>
     /// <param name="promotions">活动仓储。</param>
     /// <param name="coupons">券仓储。</param>
-    public CalculateFinalPriceHandler(IPromotionRepository promotions, ICouponRepository coupons)
+    /// <param name="products">商品端口：商户级活动要按行上的商户匹配。</param>
+    public CalculateFinalPriceHandler(
+        IPromotionRepository promotions, ICouponRepository coupons, IProductPort products)
     {
         _promotions = promotions;
         _coupons = coupons;
+        _products = products;
     }
 
     /// <summary>执行试算。</summary>
@@ -330,12 +334,21 @@ public sealed class CalculateFinalPriceHandler
         CalculateFinalPriceCommand request, CancellationToken ct)
     {
         var nowUtc = DateTime.UtcNow;
-        var lines = request.Lines
-            .Select(a => new PromotionLine(a.SpuId, a.SkuId, PromotionCalculator.Round2(a.Amount)))
-            .ToArray();
 
         var activities = await _promotions.ListActiveAsync(
             request.PlatformId, request.SessionId, nowUtc, ct);
+
+        // 商户级活动要按「这一行属于哪个商户」匹配，而 C 端只传 SPU / SKU：
+        // 归属只能回商品服务取（没有商户级活动时直接跳过，不给高频接口加负担）
+        var merchants = await LineMerchantResolver
+            .ResolveAsync(activities, request.Lines.Select(a => a.SkuId), _products, ct)
+            .ConfigureAwait(false);
+
+        var lines = request.Lines
+            .Select(a => new PromotionLine(
+                a.SpuId, a.SkuId, PromotionCalculator.Round2(a.Amount),
+                merchants.GetValueOrDefault(a.SkuId)))
+            .ToArray();
 
         // 游客只算活动价不计券：没有券包可查，直接传空集合。
         // 查一个 customer_id = 0 的券包既是无效查询，也让「游客」这个语义变得含糊。
@@ -370,14 +383,18 @@ public sealed class CalculateFinalPriceBatchHandler
 {
     private readonly IPromotionRepository _promotions;
     private readonly ICouponRepository _coupons;
+    private readonly IProductPort _products;
 
     /// <summary>构造处理器。</summary>
     /// <param name="promotions">活动仓储。</param>
     /// <param name="coupons">券仓储。</param>
-    public CalculateFinalPriceBatchHandler(IPromotionRepository promotions, ICouponRepository coupons)
+    /// <param name="products">商品端口：商户级活动要按行上的商户匹配。</param>
+    public CalculateFinalPriceBatchHandler(
+        IPromotionRepository promotions, ICouponRepository coupons, IProductPort products)
     {
         _promotions = promotions;
         _coupons = coupons;
+        _products = products;
     }
 
     /// <summary>执行批量试算。</summary>
@@ -397,6 +414,14 @@ public sealed class CalculateFinalPriceBatchHandler
         var activities = await _promotions.ListActiveAsync(
             request.PlatformId, request.SessionId, nowUtc, ct);
 
+        // 整批只查一次归属（所有组共用同一张 SKU → 商户 表）
+        var merchants = await LineMerchantResolver
+            .ResolveAsync(
+                activities,
+                request.Groups.SelectMany(g => g).Select(a => a.SkuId),
+                _products, ct)
+            .ConfigureAwait(false);
+
         var coupons = request.CustomerId > 0
             ? await _coupons.ListAvailableAsync(request.CustomerId, nowUtc, ct)
             : new List<UserCoupon>();
@@ -408,7 +433,9 @@ public sealed class CalculateFinalPriceBatchHandler
         foreach (var group in request.Groups)
         {
             var lines = group
-                .Select(a => new PromotionLine(a.SpuId, a.SkuId, PromotionCalculator.Round2(a.Amount)))
+                .Select(a => new PromotionLine(
+                    a.SpuId, a.SkuId, PromotionCalculator.Round2(a.Amount),
+                    merchants.GetValueOrDefault(a.SkuId)))
                 .ToArray();
 
             var r = PromotionCalculator.Calculate(lines, activities, coupons, priority, nowUtc);

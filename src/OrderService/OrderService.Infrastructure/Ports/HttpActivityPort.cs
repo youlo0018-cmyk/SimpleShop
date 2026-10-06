@@ -23,7 +23,7 @@ public sealed class HttpActivityPort : IActivityPort
     /// <inheritdoc />
     public async Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
         long customerId, long platformId, long sessionId, long couponId,
-        IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
+        IReadOnlyList<(long SpuId, long SkuId, decimal Amount, long MerchantId)> lines,
         string orderNo = "", CancellationToken ct = default)
     {
         if (lines.Count == 0) return [];
@@ -32,7 +32,7 @@ public sealed class HttpActivityPort : IActivityPort
         {
             var body = new QuoteRequest(
                 customerId,
-                lines.Select(a => new QuoteLine(a.SpuId, a.SkuId, a.Amount)).ToArray(),
+                lines.Select(a => new QuoteLine(a.SpuId, a.SkuId, a.Amount, a.MerchantId)).ToArray(),
                 platformId, sessionId, couponId, orderNo);
 
             var response = await _http.PostAsJsonAsync(
@@ -83,7 +83,8 @@ public sealed class HttpActivityPort : IActivityPort
     /// <param name="SpuId">SPU Id。</param>
     /// <param name="SkuId">SKU Id。</param>
     /// <param name="Amount">行金额。</param>
-    private sealed record QuoteLine(long SpuId, long SkuId, decimal Amount);
+    /// <param name="MerchantId">归属商户 Id，0 表示平台自营。商户级活动按它匹配。</param>
+    private sealed record QuoteLine(long SpuId, long SkuId, decimal Amount, long MerchantId);
 
     /// <summary>响应信封。</summary>
     /// <param name="Success">是否成功。</param>

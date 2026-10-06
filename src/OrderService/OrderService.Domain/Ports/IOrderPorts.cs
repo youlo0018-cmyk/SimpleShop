@@ -15,7 +15,10 @@ public interface IActivityPort
     /// <param name="platformId">平台 Id，0 表示不限。</param>
     /// <param name="sessionId">秒杀场次 Id，0 表示非秒杀单。</param>
     /// <param name="couponId">客户已选的券 Id，0 表示不用券。</param>
-    /// <param name="lines">订单行（SPU / SKU / 金额）。</param>
+    /// <param name="lines">
+    /// 订单行（SPU / SKU / 金额 / 归属商户）。
+    /// 商户不能省：商户级活动只作用于本商户的行，不带它会把优惠算到别的商户商品上。
+    /// </param>
     /// <param name="orderNo">
     /// 订单号。<b>真实下单必须传</b>：满赠的发放承诺按订单落在营销服务，
     /// 支付成功时才能按当时的结论发券；结算试算传空串，不产生任何承诺。
@@ -32,7 +35,7 @@ public interface IActivityPort
     /// </remarks>
     Task<IReadOnlyList<(long SkuId, decimal ActivityDiscount)>> QuoteAsync(
         long customerId, long platformId, long sessionId, long couponId,
-        IReadOnlyList<(long SpuId, long SkuId, decimal Amount)> lines,
+        IReadOnlyList<(long SpuId, long SkuId, decimal Amount, long MerchantId)> lines,
         string orderNo = "", CancellationToken ct = default);
 }
 

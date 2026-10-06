@@ -11,7 +11,11 @@ namespace MarketingService.Application.Features.Promotion;
 /// <param name="SpuId">SPU Id。</param>
 /// <param name="SkuId">SKU Id。</param>
 /// <param name="Amount">该行金额（原价 × 数量），两位小数。</param>
-public sealed record QuoteOrderLine(long SpuId, long SkuId, decimal Amount);
+/// <param name="MerchantId">
+/// 该行所属商户，0 表示平台自营。
+/// 商户级活动只作用于本商户的行（不带这个字段的话，一条商户级活动会减到别的商户的商品上）。
+/// </param>
+public sealed record QuoteOrderLine(long SpuId, long SkuId, decimal Amount, long MerchantId = 0);
 
 /// <summary>下单时按行试算**活动优惠**（订单服务调用）。</summary>
 /// <param name="CustomerId">客户 Id，0 表示游客。</param>
@@ -75,7 +79,8 @@ public sealed class QuoteOrderDiscountHandler
     {
         var nowUtc = DateTime.UtcNow;
         var lines = request.Lines
-            .Select(a => new PromotionLine(a.SpuId, a.SkuId, PromotionCalculator.Round2(a.Amount)))
+            .Select(a => new PromotionLine(
+                a.SpuId, a.SkuId, PromotionCalculator.Round2(a.Amount), a.MerchantId))
             .ToArray();
 
         var activities = await _promotions.ListActiveAsync(
