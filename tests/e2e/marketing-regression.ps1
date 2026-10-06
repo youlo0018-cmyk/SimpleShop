@@ -537,6 +537,15 @@ Invoke-Case 'API-SKL-000' '准备：一个有 50 件库存、单价 200 的 SKU'
     $script:sklProductId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
         -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
 
+    # 🔴 商品必须「审核通过 + 已上架」才可下单（BUSINESS.md 14.4「商品需审核后上架」）。
+    # 秒杀单同样走下单链路，回查时一样校验审核与上架状态，所以这里必须先把商品推到可售状态。
+    (Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:sklProductId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+    (Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:sklProductId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+
     $det = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:sklProductId)" -Headers $script:adminHeaders -TimeoutSec 30
     $script:sklSkuId = [long]$det.data.skus[0].id
 

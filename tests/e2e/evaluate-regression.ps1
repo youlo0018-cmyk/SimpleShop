@@ -172,6 +172,15 @@ Invoke-Case 'API-EVL-000' '建三级分类 + 双规格 SPU，每个规格 20 件
     $script:productId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
         -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60).data
 
+    # 🔴 商品必须「审核通过 + 已上架」才可下单（BUSINESS.md 14.4「商品需审核后上架」）。
+    # 评价链路要先把订单走到已完成，所以下单这一步就会回查审核与上架状态。
+    (Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+    (Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+
     $det = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:productId)" `
         -Headers $script:adminHeaders -TimeoutSec 30
     $script:skuIds = @($det.data.skus | Sort-Object { [long]$_.id } | ForEach-Object { [long]$_.id })

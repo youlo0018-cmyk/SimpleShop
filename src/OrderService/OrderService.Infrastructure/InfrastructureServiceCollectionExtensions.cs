@@ -52,6 +52,11 @@ public static class InfrastructureServiceCollectionExtensions
         // 少了它，结算页看到的满减不会落到订单上（报价 41、实收 51）。
         AddDownstream<IActivityPort, HttpActivityPort>(
             services, configuration, "Services:MarketingServiceBaseUrl", "营销服务");
+
+        // 下单前回查 SKU 权威售价与可售状态。
+        // 没有它，订单金额完全由客户端报的单价决定 —— 把 25.50 的商品按 0.01 元下单也能成交。
+        AddDownstream<IProductPort, HttpProductPort>(
+            services, configuration, "Services:ProductServiceBaseUrl", "商品服务");
         AddDownstream<IPointPort, HttpPointPort>(
             services, configuration, "Services:PointServiceBaseUrl", "积分服务");
         AddDownstream<IInventoryPort, HttpInventoryPort>(

@@ -33,6 +33,36 @@ public interface IActivityPort
 }
 
 /// <summary>券端口。定义在 Domain，编排逻辑才能在不依赖网络的情况下被单元测试。</summary>
+/// <summary>商品端口。下单时回查 SKU 的**权威售价与可售状态**。</summary>
+public interface IProductPort
+{
+    /// <summary>按 SKU Id 集合取回权威售价与状态。</summary>
+    /// <param name="skuIds">SKU Id 集合。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>skuId → 权威信息；查不到的 SKU 不在结果里。</returns>
+    /// <remarks>
+    /// <b>这是下单链路最关键的一道校验</b>。下单请求里的 <c>unitPrice</c> 来自客户端，
+    /// 而订单服务此前直接拿它算金额、全程不回查商品服务 ——
+    /// 于是任何人把 25.50 的商品按 0.01 元下单都能成交，整条金额链路完全由客户端决定。
+    ///
+    /// <para>取不到 SKU 时<b>不能</b>按「价格沿用客户端」兜底：那等于把后门重新打开。
+    /// 正确做法是这一单直接失败。</para>
+    /// </remarks>
+    Task<IReadOnlyDictionary<long, SkuPriceInfo>> GetSkuPricesAsync(
+        IReadOnlyCollection<long> skuIds, CancellationToken ct = default);
+}
+
+/// <summary>SKU 权威信息（由商品服务给出，不采信客户端）。</summary>
+/// <param name="SkuId">SKU Id。</param>
+/// <param name="Price">售价，两位小数。</param>
+/// <param name="Enabled">SKU 是否启用。</param>
+/// <param name="SpuApproved">所属 SPU 是否审核通过。</param>
+/// <param name="SpuOnShelf">所属 SPU 是否已上架。</param>
+/// <param name="MerchantId">归属商户 Id。</param>
+public readonly record struct SkuPriceInfo(
+    long SkuId, decimal Price, bool Enabled, bool SpuApproved, bool SpuOnShelf, long MerchantId);
+
+/// <summary>券端口。占券 / 核销 / 回退，与活动优惠（<see cref="IActivityPort"/>）分开。</summary>
 public interface ICouponPort
 {
     /// <summary>① 占券。</summary>

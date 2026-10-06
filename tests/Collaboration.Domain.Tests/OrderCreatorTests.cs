@@ -40,15 +40,61 @@ public class OrderCreatorTests
     // 换成假实现就等于把「0 元单有没有结清占用」这件事从测试里抹掉了。
     private static OrderCreator Build(
         FakeCouponPort coupons, FakePointPort points, FakeInventoryPort inventory, FakeOrderStore store,
-        FakeOrderCreateLock? createLock = null)
+        FakeOrderCreateLock? createLock = null, FakeProductPort? products = null)
     {
         var completer = new OrderPaymentCompleter(
             store, inventory, points, coupons, NullLogger<OrderPaymentCompleter>.Instance);
 
         return new OrderCreator(
             coupons, points, inventory, new FakeActivityPort(),
+            products ?? new FakeProductPort(),
             store, createLock ?? new FakeOrderCreateLock(),
             completer, NullLogger<OrderCreator>.Instance);
+    }
+
+    [Fact]
+    public async Task 客户端伪造的单价被纠正为权威售价()
+    {
+        var coupons = new FakeCouponPort { Discount = 0m, CouponId = 0 };
+        var points = new FakePointPort();
+        var inventory = new FakeInventoryPort();
+        var store = new FakeOrderStore();
+
+        // 请求报 0.01，商品真实售价 25.50。
+        var req = Request(couponId: 0, lineCount: 1);
+        req = req with
+        {
+            Lines = [new OrderLineRequest(
+                SpuId: 100, SkuId: 1000, Quantity: 2, UnitPrice: 0.01m,
+                ProductName: "伪造价格", SkuSpecText: "红色 / M", DeliveryType: 1)]
+        };
+
+        var result = await Build(coupons, points, inventory, store,
+            products: new FakeProductPort { AuthoritativePrice = 25.50m }).CreateAsync(req);
+
+        Assert.True(result.Succeeded);
+
+        // 关键断言：金额按 25.50 算（2 件 = 51.00），而不是按客户端报的 0.01（= 0.02）。
+        // 只要这里出现 0.02，就说明金额链路仍然由客户端说了算 —— 那是个能被直接利用的漏洞。
+        var order = store.Saved!;
+        Assert.Equal(51.00m, order.GoodsTotal);
+        Assert.Equal(51.00m, order.PayableAmount);
+        var item = Assert.Single(store.SavedItems);
+        Assert.Equal(25.50m, item.Price);
+    }
+
+    [Fact]
+    public async Task 商品服务回查不到SKU时拒单且不落库()
+    {
+        var store = new FakeOrderStore();
+        var result = await Build(
+            new FakeCouponPort(), new FakePointPort(), new FakeInventoryPort(), store,
+            products: new FakeProductPort { ReturnEmpty = true }).CreateAsync(Request(couponId: 0));
+
+        Assert.False(result.Succeeded);
+        Assert.Null(store.Saved);
+        Assert.Empty(store.SavedItems);
+        Assert.Empty(store.SavedOrders);
     }
 
     [Fact]
@@ -434,6 +480,47 @@ public class OrderCreatorTests
         {
             ConsumeCount++;
             return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>商品定价端口的替身。</summary>
+    /// <remarks>
+    /// 默认「原样回显请求里的价格」：既有用例传的就是正确售价，
+    /// 回显能让它们照常通过；而要验证「客户端报的价格会不会被纠正」时，
+    /// 把 <see cref="AuthoritativePrice"/> 设成别的值即可。
+    /// </remarks>
+    private sealed class FakeProductPort : IProductPort
+    {
+        /// <summary>
+        /// 权威售价。默认 25.50 —— 与本文件里下单用例用的价格一致，
+        /// 所以「客户端报 25.50、商品也是 25.50」的正常路径仍然算出同样的金额。
+        /// </summary>
+        public decimal? AuthoritativePrice { get; set; }
+
+        /// <summary>让回查返回「查不到」，用来验证服务不可用时是否拒单。</summary>
+        public bool ReturnEmpty { get; set; }
+
+        /// <summary>被回查过的 SKU 集合。</summary>
+        public List<long> Queried { get; } = [];
+
+        /// <inheritdoc />
+        public Task<IReadOnlyDictionary<long, SkuPriceInfo>> GetSkuPricesAsync(
+            IReadOnlyCollection<long> skuIds, CancellationToken ct = default)
+        {
+            Queried.AddRange(skuIds);
+
+            if (ReturnEmpty) return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(
+                new Dictionary<long, SkuPriceInfo>());
+
+            var result = new Dictionary<long, SkuPriceInfo>();
+            foreach (var id in skuIds)
+            {
+                result[id] = new SkuPriceInfo(
+                    id, AuthoritativePrice ?? 25.50m,
+                    Enabled: true, SpuApproved: true, SpuOnShelf: true, MerchantId: 0);
+            }
+
+            return Task.FromResult<IReadOnlyDictionary<long, SkuPriceInfo>>(result);
         }
     }
 

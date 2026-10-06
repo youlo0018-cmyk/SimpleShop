@@ -88,6 +88,7 @@ public sealed class OrderCreator
     private readonly IPointPort _points;
     private readonly IInventoryPort _inventory;
     private readonly IActivityPort _activities;
+    private readonly IProductPort _products;
     private readonly IOrderStore _store;
     private readonly IOrderCreateLock _createLock;
     private readonly OrderPaymentCompleter _completer;
@@ -98,13 +99,14 @@ public sealed class OrderCreator
     /// <param name="points">积分端口。</param>
     /// <param name="inventory">库存端口。</param>
     /// <param name="activities">活动优惠试算端口，用于把结算页看到的满减落到订单上。</param>
+    /// <param name="products">商品端口，用于回查 SKU 的权威售价与可售状态。</param>
     /// <param name="store">落单端口。</param>
     /// <param name="createLock">客户级下单锁。</param>
     /// <param name="completer">支付收尾服务，用于实付 0 元的单在下单当场结清占用。</param>
     /// <param name="logger">日志器。</param>
     public OrderCreator(
         ICouponPort coupons, IPointPort points, IInventoryPort inventory,
-        IActivityPort activities,
+        IActivityPort activities, IProductPort products,
         IOrderStore store, IOrderCreateLock createLock,
         OrderPaymentCompleter completer, ILogger<OrderCreator> logger)
     {
@@ -112,6 +114,7 @@ public sealed class OrderCreator
         _points = points;
         _inventory = inventory;
         _activities = activities;
+        _products = products;
         _store = store;
         _createLock = createLock;
         _completer = completer;
@@ -162,11 +165,63 @@ public sealed class OrderCreator
         }
 
         var orderNo = NewOrderNo();
+
+        // ---------- ⓪⓪ 回查权威售价与可售状态 ----------
+        // 这是下单链路**最关键**的一步：unitPrice 来自客户端，此前全程直接采信，
+        // 于是把 25.50 的商品按 0.01 元下单也能成交，整条金额链路由客户端说了算。
+        // 这里一律改用商品服务给的售价，并顺带拦住「未审核 / 已下架 / 已停用」的商品。
+        var skuIds = request.Lines.Select(a => a.SkuId).Distinct().ToArray();
+        var pricing = await _products.GetSkuPricesAsync(skuIds, ct).ConfigureAwait(false);
+
+        var resolved = new List<OrderLineRequest>(request.Lines.Count);
+        foreach (var line in request.Lines)
+        {
+            if (!pricing.TryGetValue(line.SkuId, out var sku))
+            {
+                _logger.LogError("下单被拒：SKU {SkuId} 查不到或商品服务不可用", line.SkuId);
+                return OrderCreateOutcome.Fail(
+                    4, $"商品 {line.SkuId} 不存在或暂不可售，请刷新后重试");
+            }
+
+            if (!sku.Enabled)
+            {
+                return OrderCreateOutcome.Fail(4, $"商品规格「{line.SkuId}」已停用");
+            }
+
+            if (!sku.SpuApproved)
+            {
+                return OrderCreateOutcome.Fail(4, $"商品「{line.SkuId}」尚未通过审核");
+            }
+
+            if (!sku.SpuOnShelf)
+            {
+                return OrderCreateOutcome.Fail(4, $"商品「{line.SkuId}」已下架");
+            }
+
+            if (line.Quantity <= 0)
+            {
+                return OrderCreateOutcome.Fail(4, "购买数量必须大于 0");
+            }
+
+            // 用权威售价覆盖客户端报的价格。
+            // 不因为「报得不一样」就报错 —— 客户端可能拿着旧缓存，
+            // 直接纠正即可；只有 SKU 不存在 / 不可售才拒单。
+            //
+            // ⚠️ 秒杀行例外：它的单价来自场次，不是商品售价，
+            // 拿售价覆盖会把秒杀单变成原价单（TEST_CASES API-SEC-002）。
+            // 秒杀价的权威性由营销服务保证，这里只校验可售状态。
+            var isSeckill = line.SourceType == OrderSourceTypes.Seckill;
+            resolved.Add(line with { UnitPrice = isSeckill ? line.UnitPrice : sku.Price });
+        }
+
         var amountLines = request.Lines
-            .Select(a => new OrderLineInput(a.SkuId, a.Quantity, a.UnitPrice))
+            .Select((a, i) => new OrderLineInput(
+                a.SkuId, a.Quantity, resolved[i].UnitPrice))
             .ToArray();
         var couponLines = request.Lines
-            .Select(a => new CouponPortLine(a.SpuId, a.SkuId, OrderAmountCalculator.Round2(a.UnitPrice * a.Quantity)))
+            .Select((a, i) => new CouponPortLine(
+                a.SpuId, a.SkuId,
+                OrderAmountCalculator.Round2(resolved[i].UnitPrice * a.Quantity)))
             .ToArray();
 
         // ---------- ⓪ 活动优惠试算 ----------
@@ -326,7 +381,9 @@ public sealed class OrderCreator
                     SkuId = line.SkuId,
                     ProductName = line.ProductName,
                     SkuSpecText = line.SkuSpecText,
-                    Price = line.UnitPrice,
+                    // 用权威售价，不是客户端报的那个 ——
+                    // 订单行是最长久的对账凭据，这里存错价，后面每一张退款单都会跟着错
+                    Price = resolved[i].UnitPrice,
                     Quantity = line.Quantity,
                     OriginalAmount = amount.Lines[i].OriginalAmount,
                     ActivityDiscount = amount.Lines[i].ActivityDiscount,

@@ -125,6 +125,17 @@ Invoke-Case 'CONC-000' "建一个 400 件库存、单价 200 的 SKU（供两个
     $script:productId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
         -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60).data
 
+    # 🔴 商品必须「审核通过 + 已上架」才可下单（BUSINESS.md 14.4「商品需审核后上架」）。
+    # 秒杀单同样走下单链路，回查时一样校验审核与上架状态。
+    # 这个脚本不在 run-all.ps1 里（200 线程太重），所以很容易在补这条时漏掉它，
+    # 表现是「200 个并发全部落到『其它』」，看着像超卖防护失效，其实是全部被拒。
+    (Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+    (Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+
     $det = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:productId)" `
         -Headers $script:adminHeaders -TimeoutSec 30
     $script:skuId = [long]$det.data.skus[0].id
@@ -155,7 +166,14 @@ Invoke-Case 'CONC-001' "$Concurrency 个不同客户并发抢 10 件：成功恰
                     } | ConvertTo-Json) `
                     -ContentType 'application/json' -TimeoutSec 60
                 [string]$r.data.resultStatus
-            } catch { 'ERR' }
+            } catch {
+                # 把真实原因带回来：只回 'ERR' 的话，200 个并发全部失败时
+                # 只能看到「异常 0 / 其它 200」，既不像超卖也不像限流，无从下手。
+                # 曾经就是这样把「商品没过审被全部拒单」误判成「超卖防护失效」。
+                $raw = $_.ErrorDetails.Message
+                if ([string]::IsNullOrWhiteSpace($raw)) { return 'ERR' }
+                try { return "ERR:$(($raw | ConvertFrom-Json).message)" } catch { return 'ERR' }
+            }
         } -ArgumentList "$Marketing/marketing/seckill/grab", $script:i1, $cid
     }
 
@@ -166,14 +184,21 @@ Invoke-Case 'CONC-001' "$Concurrency 个不同客户并发抢 10 件：成功恰
     $ok = @($done | Where-Object { $_ -eq '1' }).Count
     $soldOut = @($done | Where-Object { $_ -eq '2' }).Count
     $limited = @($done | Where-Object { $_ -eq '4' }).Count
-    $err = @($done | Where-Object { $_ -eq 'ERR' }).Count
-    $other = @($done | Where-Object { $_ -notin @('1', '2', '4', 'ERR') }).Count
+    $err = @($done | Where-Object { $_ -like 'ERR*' }).Count
+    $other = @($done | Where-Object { $_ -notin @('1', '2', '4') -and $_ -notlike 'ERR*' }).Count
 
     $row = Get-ItemRow $script:s1 $script:i1
     Write-Host ("        成功 {0} / 抢完 {1} / 超限购 {2} / 异常 {3} / 其它 {4}" -f `
         $ok, $soldOut, $limited, $err, $other) -ForegroundColor DarkGray
     Write-Host ("        soldCount={0} remaining={1} seckillStock={2}" -f `
         $row.soldCount, $row.remaining, $row.seckillStock) -ForegroundColor DarkGray
+
+    # 失败时把出现过的错误原文打出来，否则「异常 200」是个没有线索的数字。
+    if ($err -gt 0) {
+        Write-Host ("        错误样本: " + (($done | Where-Object { $_ -like 'ERR*' } |
+            Group-Object | Select-Object -First 3 | ForEach-Object { "$($_.Count)x $($_.Name)" }) -join ' | ')) `
+            -ForegroundColor DarkYellow
+    }
 
     $ok -eq 10 -and $soldOut -eq ($Concurrency - 10) -and $err -eq 0 -and $other -eq 0 `
         -and $row.soldCount -eq 10 -and $row.remaining -eq 0
@@ -203,7 +228,11 @@ Invoke-Case 'CONC-002' "同一客户 $Concurrency 并发：只允许 1 单成功
                     } | ConvertTo-Json) `
                     -ContentType 'application/json' -TimeoutSec 60
                 "$($r.data.resultStatus)|$($r.data.orderNo)"
-            } catch { 'ERR' }
+            } catch {
+                $raw = $_.ErrorDetails.Message
+                if ([string]::IsNullOrWhiteSpace($raw)) { return 'ERR' }
+                try { return "ERR:$(($raw | ConvertFrom-Json).message)" } catch { return 'ERR' }
+            }
         } -ArgumentList "$Marketing/marketing/seckill/grab", $script:i2, $cid
     }
 
@@ -213,7 +242,7 @@ Invoke-Case 'CONC-002' "同一客户 $Concurrency 并发：只允许 1 单成功
     # 超限购的返回形如 "4|"（没下单，订单号为空）——用 -eq '4' 匹配不到
     $ok = @($done | Where-Object { $_ -like '1|*' }).Count
     $limited = @($done | Where-Object { $_ -like '4|*' }).Count
-    $err = @($done | Where-Object { $_ -eq 'ERR' }).Count
+    $err = @($done | Where-Object { $_ -like 'ERR*' }).Count
     # 不能写 -notin @('1|*','4|*')：-notin 做的是**字面量**比较，不认通配符，
     # 会把全部结果都算成 other。这里用减法算「没落进任何已知分类的」。
     $classified = $ok + $limited + $err

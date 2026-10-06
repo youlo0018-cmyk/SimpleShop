@@ -255,6 +255,18 @@ Invoke-Case 'API-ORD-000' '建两个 SKU 的商品并各自初始化库存' {
     $script:productId = (Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
         -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 30).data
 
+    # 🔴 商品必须「审核通过 + 已上架」才可下单（BUSINESS.md 14.4「商品需审核后上架」，
+    # 下单链路会回查这两项，未过审/未上架一律拒单）。
+    # 之前这里漏了这一步，用例照样全绿 —— 因为下单链路当时**根本不查**审核与上架状态，
+    # 未过审的商品也能成交。补上审核与上架后，反而暴露出下面几条断言一直建立在
+    # 「买到了不该买得到的商品」这个前提上。
+    (Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+    (Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+
     $d = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:productId)" -Headers $script:adminHeaders -TimeoutSec 30
 
     # 按 skuCode 取，不按顺序取：接口返回顺序不保证，靠位置拿 SKU 会时对时错
@@ -347,49 +359,94 @@ Invoke-Case 'API-ORD-009b' '🔴🔴 P0 带满减活动的单：实付必须等�
     # 后面那些「实付 = 25.50 × 2」的断言会被它莫名其妙减掉 5 块。
     $script:promoActivityId = [long]$act.data
 
-    # 结算试算：本单两件共 51.00 → 满 40 减 5 → 应报 46.00
-    $quote = Invoke-RestMethod "$Marketing/marketing/activities/FinalPrice" -Method Post `
-        -Body (@{
-            customerId = $script:customerId
-            lines = @(@{ spuId = [long]$script:productId; skuId = [long]$script:skuIds[0]; amount = 51.00 })
-            sessionId = 0; platformId = $script:platformId
-        } | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
-
-    # 必须用结算页**推荐的那张券**去下单，否则两边根本不是同一笔：
-    # FinalPrice 会自动挑最优券，而下单不传券就等于「没用券」，
-    # 报价与实付当然对不上 —— 那是用例没对齐，不是产品算错。
-    $chosen = [long]$quote.data.couponId
-    $ord = OrderPost 'Create' (New-OrderBody 'promo' 1 2 $chosen 0)
-    $det = Get-Order $ord.data.orderNo
-
-    Write-Host ("        结算报价={0}  订单实付={1}  订单行优惠={2}" -f `
-        $quote.data.finalPrice, $det.payableAmount, $det.activityDiscount) -ForegroundColor DarkGray
-
-    # 把这单取消掉把库存还回去：不还的话后面几条按「下单后库存」的断言
-    # 会被多锁出来的 2 件打偏，而那几条跟本用例毫无关系。
-    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $det.orderNo } | Out-Null
-
-    # 同样要把活动删掉：它在整个用例集里持续生效，
-    # 后面那些「实付 = 25.50 × 2」的断言会被它莫名其妙减掉 5 块，
-    # 报错指向完全无关的用例，排查起来极其费劲。
-    # 包 try/catch：清理失败**不该让用例判红**。
-    # 本用例要证明的是「报价 == 实付」，清理只是善后；
-    # 清理报错而断言失败，会让人以为是优惠没对齐，其实是删活动没删掉。
+    # 🔴 清理必须放在 finally 里。
+    # 之前它排在最后一句、断言之前，中途任何一次 throw（比如某个下游接口
+    # 恰好返回 400）都会跳过清理，把一个「满 40 减 5」的活动永久留在库里。
+    # 它对后面所有用例持续生效，于是「实付 = 25.50 × 2」变成 46，
+    # 报错指向 ORD-010/ORD-012，而真正的病因在几十行之外、且只在下一次运行里现形。
+    # 排查这类「跨运行的幽灵污染」极费时间，代价是几分钟。
     try {
-        Invoke-RestMethod "$Marketing/marketing/activities/Delete" -Method Post `
-            -Body (@{ activityId = $script:promoActivityId } | ConvertTo-Json) `
-            -ContentType 'application/json' -TimeoutSec 30 | Out-Null
-    } catch {
-        Write-Host ("        活动清理失败（不影响本用例结论）: {0} | body={1}" -f `
-            $_.Exception.Message, $_.ErrorDetails.Message) -ForegroundColor DarkYellow
+        # 结算试算：本单两件共 51.00 → 满 40 减 5 → 应报 46.00
+        $quote = Invoke-RestMethod "$Marketing/marketing/activities/FinalPrice" -Method Post `
+            -Body (@{
+                customerId = $script:customerId
+                lines = @(@{ spuId = [long]$script:productId; skuId = [long]$script:skuIds[0]; amount = 51.00 })
+                sessionId = 0; platformId = $script:platformId
+            } | ConvertTo-Json -Depth 6) -ContentType 'application/json' -TimeoutSec 30
+
+        # 必须用结算页**推荐的那张券**去下单，否则两边根本不是同一笔：
+        # FinalPrice 会自动挑最优券，而下单不传券就等于「没用券」，
+        # 报价与实付当然对不上 —— 那是用例没对齐，不是产品算错。
+        $chosen = [long]$quote.data.couponId
+        $ord = OrderPost 'Create' (New-OrderBody 'promo' 1 2 $chosen 0)
+        $det = Get-Order $ord.data.orderNo
+
+        Write-Host ("        结算报价={0}  订单实付={1}  订单行优惠={2}" -f `
+            $quote.data.finalPrice, $det.payableAmount, $det.activityDiscount) -ForegroundColor DarkGray
+
+        # 把这单取消掉把库存还回去：不还的话后面几条按「下单后库存」的断言
+        # 会被多锁出来的 2 件打偏，而那几条跟本用例毫无关系。
+        OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $det.orderNo } | Out-Null
+
+        return $quote.data.finalPrice -eq $det.payableAmount
+    } finally {
+        # 清理失败**不该让用例判红**：本用例要证明的是「报价 == 实付」，
+        # 清理只是善后。清理报错而断言失败，会让人以为是优惠没对齐，
+        # 其实是删活动没删掉。
+        # 这里再包一层 catch：finally 里抛出的异常会**顶掉**try 块真正的失败原因，
+        # 于是「断言失败」被替换成「删除活动 404」，比不清理还难查。
+        try {
+            Invoke-RestMethod "$Marketing/marketing/activities/Delete" -Method Post `
+                -Body (@{ activityId = $script:promoActivityId } | ConvertTo-Json) `
+                -ContentType 'application/json' -TimeoutSec 30 | Out-Null
+        } catch {
+            Write-Host ("        活动清理失败（不影响本用例结论）: {0} | body={1}" -f `
+                $_.Exception.Message, $_.ErrorDetails.Message) -ForegroundColor DarkYellow
+        }
+    }
+}
+
+Invoke-Case 'API-ORD-009c' '🔴🔴🔴 P0 伪造单价下单被拒（不能信客户端传来的价格）' {
+    # 订单接口的 lines[].unitPrice 是**客户端传的**，订单服务直接拿来算金额，
+    # 全链路没有回查商品服务的售价。于是任何人都能把 25.50 的商品按 0.01 元下单。
+    $forged = @{
+        customerId = $script:customerId; platformId = $script:platformId; merchantId = 0
+        idempotencyKey = New-IdempotencyKey 'forged'
+        receiverName = '张三'; receiverPhone = '13800000000'; receiverAddress = '测试地址 1 号'
+        lines = @(@{
+            spuId = [long]$script:productId; skuId = [long]$script:skuIds[0]
+            quantity = 1; unitPrice = 0.01
+            productName = '伪造价格'; skuSpecText = '红'; deliveryType = 1
+        })
+        freight = 0
+    }
+    $r = OrderPost 'Create' $forged
+
+    # 两种可能的正确行为：① 拒单；② 按真实售价重算后落单（实付 ≠ 0.02）。
+    # 绝不能出现「按 0.01 元成交」。
+    if (-not $r.success) {
+        Write-Host ("        被拒: " + $r.message) -ForegroundColor DarkGray
+        return $true
     }
 
-    return $quote.data.finalPrice -eq $det.payableAmount
+    $det = Get-Order $r.data.orderNo
+    Write-Host ("        下单成功，实付={0}（真实售价应为 {1}）" -f `
+        $det.payableAmount, $script:price) -ForegroundColor DarkYellow
+
+    # 落单了也必须按真实售价，不接受 0.02 的实付
+    OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $det.orderNo } | Out-Null
+    # PowerShell 没有 C# 的 0.02m 字面量后缀，要显式转 decimal
+    return [decimal]$det.payableAmount -gt [decimal]0.02
 }
 
 Invoke-Case 'API-ORD-010' '下单成功：实付 = 25.50 × 2，状态待支付' {
     $r = OrderPost 'Create' (New-OrderBody 'basic')
     $script:basicOrderNo = $r.data.orderNo
+    # 把真实回显打出来：断言失败时只看到「FAIL API-ORD-010」根本无从下手，
+    # 而下单失败的原因（哪一步、什么错）就明明白白写在这行里。
+    Write-Host ("        success={0} code={1} msg={2} orderNo={3} status={4} payable={5}" -f `
+        $r.success, $r.code, $r.message, $r.data.orderNo, $r.data.status, $r.data.payableAmount) `
+        -ForegroundColor DarkGray
     return $r.success -and $r.data.status -eq 10 -and $r.data.payableAmount -eq 51.00
 }
 

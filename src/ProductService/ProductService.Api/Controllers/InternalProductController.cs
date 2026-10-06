@@ -128,6 +128,60 @@ public sealed class InternalProductController : ControllerBase
         return Ok(ApiResults.Ok(list));
     }
 
+    /// <summary>下单前的**权威定价与可售性**校验（订单服务调用）。</summary>
+    /// <param name="skuIds">SKU Id 集合，逗号分隔，最多 50 个。</param>
+    /// <returns>逐 SKU 的售价与可售状态；查不到的 SKU 不在结果里。</returns>
+    /// <remarks>
+    /// 与上面的 <c>skus</c> 有两处刻意不同：
+    /// <list type="number">
+    /// <item><b>不过滤停用 SKU</b>：要能区分「SKU 不存在」与「SKU 被停用」，
+    /// 否则调用方只拿到一个空结果，报不出真实原因。</item>
+    /// <item><b>带上 SPU 的审核与上下架状态</b>：下单必须拦下未审核 / 已下架的商品，
+    /// 而这两项都挂在 SPU 上，不在 SKU 上。</item>
+    /// </list>
+    ///
+    /// <para>这个接口存在的理由：下单请求里的 <c>unitPrice</c> 来自客户端。
+    /// 没有它，订单服务只能相信客户端报的价格，于是把 25.50 的商品按 0.01 元下单也能成交。</para>
+    /// </remarks>
+    [HttpGet("skus/pricing")]
+    public ActionResult<ApiResponse<List<SkuPricing>>> SkuPricing([FromQuery] string skuIds)
+    {
+        var ids = (skuIds ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(a => long.TryParse(a, out var v) ? v : 0)
+            .Where(a => a > 0)
+            .Distinct()
+            .Take(50)
+            .ToArray();
+
+        if (ids.Length == 0)
+        {
+            return BadRequest(new { error = "invalid_request", error_description = "请提供至少一个 SKU Id" });
+        }
+
+        var skus = _db.Select<Sku>().Where(a => ids.Contains(a.Id)).ToList();
+        var spuIds = skus.Select(a => a.ProductId).Distinct().ToArray();
+
+        var spus = _db.Select<Product>()
+            .Where(a => spuIds.Contains(a.Id))
+            .ToList(a => new { a.Id, a.AuditStatus, a.Status, a.MerchantId, a.PlatformId, a.DeliveryType })
+            .ToDictionary(a => a.Id);
+
+        var list = skus.Select(a =>
+        {
+            spus.TryGetValue(a.ProductId, out var spu);
+            return new SkuPricing(
+                a.Id, a.ProductId, a.Price, a.Status,
+                spu?.AuditStatus == AuditStatuses.Approved,
+                spu?.Status == ListingStatuses.OnShelf,
+                spu?.MerchantId ?? 0,
+                spu?.PlatformId ?? 0,
+                spu?.DeliveryType ?? DeliveryTypes.PhysicalExpress);
+        }).ToList();
+
+        return Ok(ApiResults.Ok(list));
+    }
+
     /// <summary>按 Id 取物流公司（订单服务发货时用）。</summary>
     /// <param name="logisticsId">物流公司 Id。</param>
     /// <returns>物流公司 Id 与名称；查不到返回 404。</returns>
@@ -176,3 +230,17 @@ public sealed record InternalLogisticsCompany(long LogisticsId, string CompanyNa
 public sealed record SkuSnapshot(
     long SkuId, long ProductId, string SkuCode, string SkuName, string SkuSpecText,
     decimal Price, decimal OriginalPrice, string Image, int Status, int DeliveryType);
+
+/// <summary>SKU 权威定价与可售状态（订单服务下单前校验用）。</summary>
+/// <param name="SkuId">SKU Id。</param>
+/// <param name="ProductId">所属 SPU Id。</param>
+/// <param name="Price">权威售价，两位小数。<b>订单金额一律以它为准</b>，不采信客户端。</param>
+/// <param name="SkuEnabled">SKU 是否启用（1 启用 / 2 停用）。</param>
+/// <param name="SpuApproved">SPU 是否审核通过。</param>
+/// <param name="SpuOnShelf">SPU 是否已上架。</param>
+/// <param name="MerchantId">归属商户 Id，0 表示平台自营。</param>
+/// <param name="PlatformId">归属平台 Id。</param>
+/// <param name="DeliveryType">配送方式，挂在 SPU 上。</param>
+public sealed record SkuPricing(
+    long SkuId, long ProductId, decimal Price, int SkuEnabled,
+    bool SpuApproved, bool SpuOnShelf, long MerchantId, long PlatformId, int DeliveryType);

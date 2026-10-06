@@ -181,6 +181,15 @@ Invoke-Case 'API-PAY-000' '建三级分类 + 200 件库存的商品（单价 25.
     $script:productId = [long](Invoke-RestMethod "$Gateway/gateway/products/Save" -Method Post -Headers $script:adminHeaders `
         -Body ($body | ConvertTo-Json -Depth 8) -ContentType 'application/json' -TimeoutSec 60).data
 
+    # 🔴 商品必须「审核通过 + 已上架」才可下单（BUSINESS.md 14.4「商品需审核后上架」）。
+    # 下单链路会回查这两项，未过审 / 未上架一律拒单，所以这里必须先把商品推到可售状态。
+    (Invoke-RestMethod "$Gateway/gateway/products/Audit" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; auditStatus = 20 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+    (Invoke-RestMethod "$Gateway/gateway/products/ChangeListing" -Method Post -Headers $script:adminHeaders `
+        -Body (@{ productId = $script:productId; status = 1 } | ConvertTo-Json) `
+        -ContentType 'application/json' -TimeoutSec 30) | Out-Null
+
     $det = Invoke-RestMethod "$Gateway/gateway/products/Detail?productId=$($script:productId)" `
         -Headers $script:adminHeaders -TimeoutSec 30
     $script:skuIds = @($det.data.skus | ForEach-Object { [long]$_.id })
