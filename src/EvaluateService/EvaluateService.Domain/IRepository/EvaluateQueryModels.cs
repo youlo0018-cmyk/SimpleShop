@@ -32,5 +32,7 @@ public sealed record EvaluateAdminFilter(
     long MerchantId = 0,
     int StarScore = 0,
     bool OnlyHidden = false,
+    /// <summary>后台搜索框关键词：商品名 / 评价内容模糊匹配，空表示不限。</summary>
+    string Keyword = "",
     int Page = 1,
     int PageSize = 20);

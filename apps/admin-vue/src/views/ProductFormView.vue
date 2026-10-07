@@ -149,11 +149,23 @@
           </p>
 
           <el-table :data="skus" class="table">
-          <el-table-column type="index" label="#" width="50" />
-          <el-table-column v-for="(sp, si) in specs" :key="si" :label="sp.specName || '规格'" min-width="120">
+          <!--
+            🔴 每一列都必须有**稳定 key**，而且规格列不能只用下标当 key。
+            `v-for` 出来的规格列与静态列混在同一层子节点里时，Vue 的
+            无 key 列表 diff 是按位置比的：规格项从 1 个变成 2 个之后，
+            各列的插槽整体错位一格 —— 表现是「SKU 编码」那一格变成了售价输入框，
+            编码输入框直接消失，商品永远保存不了（提示「每个 SKU 都必须填写 SKU 编码」）。
+          -->
+          <el-table-column key="col-index" type="index" label="#" width="50" />
+          <el-table-column
+            v-for="(sp, si) in specs"
+            :key="`col-spec-${si}`"
+            :label="sp.specName || '规格'"
+            min-width="120"
+          >
             <template #default="{ row }">{{ row.specValues[si] }}</template>
           </el-table-column>
-          <el-table-column label="SKU 编码" width="190">
+          <el-table-column key="col-code" label="SKU 编码" width="190">
             <template #header>
               <span>SKU 编码 <em class="req">必填</em></span>
             </template>
@@ -161,7 +173,7 @@
               <el-input v-model="row.skuCode" size="small" placeholder="唯一，如 K001" />
             </template>
           </el-table-column>
-          <el-table-column label="售价" width="140">
+          <el-table-column key="col-price" label="售价" width="140">
             <template #header>
               <span>售价 <em class="req">必填</em></span>
             </template>
@@ -169,18 +181,18 @@
               <el-input v-model.number="row.price" type="number" size="small" placeholder="0.00" />
             </template>
           </el-table-column>
-          <el-table-column label="库存" width="110">
+          <el-table-column key="col-stock" label="库存" width="110">
             <template #default="{ row }">
               <el-input v-model.number="row.stock" type="number" size="small" />
             </template>
           </el-table-column>
-          <el-table-column label="SKU 图片" width="150">
+          <el-table-column key="col-image" label="SKU 图片" width="150">
             <template #default="{ row }">
               <!-- compact：SKU 表格每行都有一张图，用默认尺寸会把价格挤到要横向滚动 -->
               <ImageUploader v-model="row.image" size="compact" hint="" />
             </template>
           </el-table-column>
-          <el-table-column label="启用" width="90">
+          <el-table-column key="col-enabled" label="启用" width="90">
             <template #default="{ row }">
               <el-switch v-model="row.enabled" />
             </template>
@@ -239,15 +251,16 @@ const loading = ref(true);
 const saving = ref(false);
 const errors = reactive<Record<string, string>>({});
 
-const entityId = computed(() => Number(route.params.id || 0));
-const isEdit = computed(() => entityId.value > 0);
+// 商品 Id 是雪花 Id，必须按字符串传递。
+const entityId = computed(() => String(route.params.id || ''));
+const isEdit = computed(() => entityId.value !== '' && entityId.value !== '0');
 const title = computed(() => (isEdit.value ? '编辑商品' : '新建商品'));
 
 const m = reactive<any>({
   spuName: '',
   subTitle: '',
-  categoryId: 0,
-  brandId: 0,
+  categoryId: '0',
+  brandId: '0',
   deliveryType: 1,
   originalPrice: 0,
   mainImage: '',
@@ -407,7 +420,10 @@ async function load() {
     }));
     categoryTree.value = mapTree(Array.isArray(tree) ? tree : (tree?.items || []));
     brands.value = (Array.isArray(brandRows) ? brandRows : (brandRows?.items || []))
-      .map((b: any) => ({ value: Number(b.id ?? b.Id), label: b.brandName ?? b.BrandName ?? '' }));
+      .map((b: any) => ({
+        value: String(b.id ?? b.Id ?? ''),
+        label: b.brandName ?? b.BrandName ?? '',
+      }));
 
     if (!isEdit.value) {
       regenerate();
@@ -421,8 +437,8 @@ async function load() {
     Object.assign(m, {
       spuName: d.spuName ?? '',
       subTitle: d.subTitle ?? '',
-      categoryId: Number(d.categoryId ?? 0),
-      brandId: Number(d.brandId ?? 0),
+      categoryId: String(d.categoryId ?? '0'),
+      brandId: String(d.brandId ?? '0'),
       deliveryType: Number(d.deliveryType ?? 1),
       originalPrice: Number(d.originalPrice ?? 0),
       mainImage: d.mainImage ?? '',
@@ -537,7 +553,7 @@ function cancel() {
 watch(categoryPath, (p) => {
   // 只认选到叶子（第 3 级）的分类：后端会拒绝挂到非叶子分类下，
   // 与其让用户提交后才报错，不如在选择时就拦。
-  m.categoryId = p && p.length ? Number(p[p.length - 1]) : 0;
+  m.categoryId = p && p.length ? String(p[p.length - 1]) : '0';
 });
 
 onMounted(load);

@@ -97,6 +97,14 @@ public class Order : EntityBase
     [Column(Name = "remark", StringLength = 512)]
     public string Remark { get; set; } = string.Empty;
 
+    /// <summary>发货内容 / 发货备注。虚拟商品存卡号 / 激活码（会展示给客户），快递存发货备注。</summary>
+    /// <remarks>
+    /// 与 <see cref="Remark"/>（客户下单备注）分开：发货时若覆盖客户备注，
+    /// 客户写的「放前台代收」会在发货瞬间消失；两者是不同的人写的信息。
+    /// </remarks>
+    [Column(Name = "ship_remark", StringLength = 512)]
+    public string ShipRemark { get; set; } = string.Empty;
+
     /// <summary>支付时间 UTC，未支付为 null。</summary>
     /// <remarks>
     /// **报表不能拿 <c>created_at</c> 代替它**：GMV 要的是「这段时间收了多少钱」，

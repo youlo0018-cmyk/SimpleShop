@@ -73,7 +73,7 @@ public sealed class QueryRefundsHandler : IRequestHandler<QueryRefundsCommand, A
     public async Task<ApiResponse<PagedRefundDtos>> Handle(QueryRefundsCommand request, CancellationToken ct)
     {
         var page = await _refunds.PageAsync(
-            request.Status, request.OrderNo, request.Page, request.PageSize, ct);
+            request.Status, request.OrderNo, request.Keyword, request.Page, request.PageSize, ct);
 
         // 平台名 / 店铺名只存在于商户平台服务：按当前页批量取一次（DATA_SPEC 4.3）
         var names = await _names.GetNamesAsync(

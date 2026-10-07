@@ -1298,13 +1298,26 @@ public class OrderCreatorTests
         /// <param name="logisticsCompanyId">物流公司 Id。</param>
         /// <param name="logisticsCompanyName">物流公司名称。</param>
         /// <param name="trackingNo">运单号。</param>
+        /// <param name="shipRemark">发货备注。</param>
         /// <param name="shippedAt">发货时间。</param>
         /// <param name="ct">取消令牌。</param>
         /// <returns>1。</returns>
         public Task<int> TryShipAsync(
             long orderId, int fromStatus, int toStatus,
             long logisticsCompanyId, string logisticsCompanyName, string trackingNo,
-            DateTime shippedAt, CancellationToken ct = default)
+            string shipRemark, DateTime shippedAt, CancellationToken ct = default)
+            => Task.FromResult(1);
+
+        /// <summary>无物流发货 / 备货：下单链路的用例不依赖它，返回 1 表示状态改成功即可。</summary>
+        /// <param name="orderId">订单 Id。</param>
+        /// <param name="fromStatus">期望的原状态。</param>
+        /// <param name="toStatus">目标状态。</param>
+        /// <param name="shipRemark">发货内容 / 备货备注。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>1。</returns>
+        public Task<int> TryDeliverAsync(
+            long orderId, int fromStatus, int toStatus,
+            string shipRemark, CancellationToken ct = default)
             => Task.FromResult(1);
 
         /// <summary>行级已退余额聚合：下单链路的用例不依赖它，返回空即可。</summary>

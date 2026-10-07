@@ -511,6 +511,7 @@ public sealed class QueryMerchantsHandler
             a.ContactPhone,
             a.Logo,
             a.Description,
+            a.Remark,
             a.Status,
             PlatformStatuses.NameOf(a.Status),
             a.AuditStatus,

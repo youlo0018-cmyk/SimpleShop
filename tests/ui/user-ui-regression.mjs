@@ -11,7 +11,9 @@ import { chromium } from 'playwright';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
-const BASE = process.env.USER_URL || 'http://127.0.0.1:5175';
+// 默认端口必须与 `scripts/start-web.ps1` 一致：后台 5173、小程序 5174。
+// 这里曾写成 5175（那个端口上什么都没有），不带 USER_URL 跑必然连接被拒。
+const BASE = process.env.USER_URL || 'http://127.0.0.1:5174';
 const GATEWAY = process.env.GATEWAY_URL || 'http://127.0.0.1:5008';
 const SHOT_DIR = path.join(ROOT, 'tests', 'visual', 'user');
 const IGNORED_CONSOLE = [

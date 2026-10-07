@@ -124,15 +124,25 @@ public sealed class DeleteRoleHandler : IRequestHandler<DeleteRoleCommand, ApiRe
 public sealed class BindRolePermissionsHandler : IRequestHandler<BindRolePermissionsCommand, ApiResponse>
 {
     private readonly IRoleRepository _roles;
+    private readonly IPermissionRepository _permissions;
 
     /// <summary>构造处理器。</summary>
     /// <param name="roles">角色仓储。</param>
-    public BindRolePermissionsHandler(IRoleRepository roles) => _roles = roles;
+    /// <param name="permissions">权限点仓储（校验只绑叶子用）。</param>
+    public BindRolePermissionsHandler(IRoleRepository roles, IPermissionRepository permissions)
+        => (_roles, _permissions) = (roles, permissions);
 
     /// <summary>执行重绑。</summary>
     /// <param name="request">重绑命令。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>成功返回空响应；内置角色返回 400。</returns>
+    /// <returns>成功返回空响应；内置角色或非法权限点 Id 返回 400。</returns>
+    /// <remarks>
+    /// 🔴 <b>只接受叶子权限点</b>（有 <c>Code</c> 的节点）。业务大类 / 功能模块 / 虚拟根
+    /// 「全部权限」都是勾选用的容器，不是权限点本身 —— BUSINESS.md 5.4「半选节点不保存，
+    /// 只保存叶子权限点」。不拦的话，前端一旦把容器 Id（含虚拟根 0 和没有权限点的空模块）
+    /// 一并提交，role_permission 里就会多出一批查不到 code 的绑定：权限不会多出来，
+    /// 但角色详情的「已绑定 N 项」与回显的勾选状态全部失真，而且界面上看不出来。
+    /// </remarks>
     public async Task<ApiResponse> Handle(BindRolePermissionsCommand request, CancellationToken ct)
     {
         var role = await _roles.GetByIdAsync(request.RoleId, ct);
@@ -141,6 +151,23 @@ public sealed class BindRolePermissionsHandler : IRequestHandler<BindRolePermiss
         if (role.IsBuiltin)
         {
             return ApiResponseFactory.Fail(BaseApiResponseCode.BusinessError, "内置管理员角色的权限已锁定，不可修改");
+        }
+
+        if (request.PermissionIds.Count > 0)
+        {
+            var all = await _permissions.QueryAllAsync(onlyEnabled: false, ct).ConfigureAwait(false);
+            var leafIds = all
+                .Where(p => !string.IsNullOrEmpty(p.Code))
+                .Select(p => p.Id)
+                .ToHashSet();
+
+            var invalid = request.PermissionIds.Where(id => !leafIds.Contains(id)).Distinct().ToArray();
+            if (invalid.Length > 0)
+            {
+                return ApiResponseFactory.Fail(
+                    BaseApiResponseCode.BadRequest,
+                    $"只能绑定叶子权限点，收到 {invalid.Length} 个容器或不存在的 Id（{string.Join(",", invalid.Take(5))}）");
+            }
         }
 
         await _roles.ReplaceRolePermissionsAsync(request.RoleId, request.PermissionIds, ct);

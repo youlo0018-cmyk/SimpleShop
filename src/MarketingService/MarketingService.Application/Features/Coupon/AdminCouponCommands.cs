@@ -248,6 +248,15 @@ public record UpdateCouponActivityCommand(
     int SortOrder = 0,
     int Status = 1) : IRequest<ApiResponse>, ICouponActivitySpec;
 
+/// <summary>启停券活动（只改状态，不重跑完整编辑校验）。</summary>
+/// <param name="ActivityId">券活动 Id。</param>
+/// <param name="Status">目标状态：1 启用 / 2 停用。</param>
+/// <remarks>
+/// 停用后再启用不应重新扣一次模板剩余量：活动创建时已经占过池子，
+/// 重新走完整 Update 会把合法活动挡在门外（实测 400）。
+/// </remarks>
+public record SetCouponActivityStatusCommand(long ActivityId, int Status) : IRequest<ApiResponse>;
+
 /// <summary>分页查询券核销记录（已发出的券 + 核销状态）。</summary>
 /// <param name="Page">页码，从 1 起。</param>
 /// <param name="PageSize">每页条数。</param>
@@ -316,11 +325,18 @@ public sealed record CouponTemplateItem(
 /// <param name="Status">状态值。</param>
 /// <param name="StatusName">状态中文名。</param>
 /// <param name="PlatformId">归属平台 Id。</param>
+/// <param name="TemplateExists">关联模板是否仍然存在。</param>
+/// <remarks>
+/// <c>TemplateExists</c> 单独回给前端，是为了让「模板已被删除」的活动
+/// <b>不再显示「启用」按钮</b>：模板没了就永远启用不了（服务端会拒），
+/// 留着按钮等于给运营一个点了必报错的入口。列表上也因此不必再用
+/// 字符串「（模板已删除）」去反推状态。
+/// </remarks>
 public sealed record CouponActivityItem(
     long ActivityId, string ActivityName, long TemplateId, string TemplateName,
     string ClaimStartTime, string ClaimEndTime, int ClaimQuantity, int ClaimedQuantity,
     int PerUserLimit, int TargetType, string TargetTypeName, int SortOrder,
-    int Status, string StatusName, long PlatformId);
+    int Status, string StatusName, long PlatformId, bool TemplateExists);
 
 /// <summary>券核销记录行。</summary>
 /// <param name="CouponId">用户券 Id。</param>
@@ -363,6 +379,7 @@ public static class AdminCouponValidators
         services.AddScoped<IValidator<QueryCouponActivitiesCommand>, QueryCouponActivitiesValidator>();
         services.AddScoped<IValidator<CreateCouponActivityCommand>, CreateCouponActivityValidator>();
         services.AddScoped<IValidator<UpdateCouponActivityCommand>, UpdateCouponActivityValidator>();
+        services.AddScoped<IValidator<SetCouponActivityStatusCommand>, SetCouponActivityStatusValidator>();
         services.AddScoped<IValidator<QueryCouponRecordsCommand>, QueryCouponRecordsValidator>();
         services.AddScoped<IValidator<QueryMyCouponsCommand>, QueryMyCouponsValidator>();
     }
@@ -519,6 +536,18 @@ public static class AdminCouponValidators
         {
             RuleFor(x => x.ActivityId).GreaterThan(0).WithMessage("券活动信息不正确");
             Include(new CouponActivityRules<UpdateCouponActivityCommand>());
+        }
+    }
+
+    /// <summary>启停券活动校验。</summary>
+    private sealed class SetCouponActivityStatusValidator
+        : AbstractValidator<SetCouponActivityStatusCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public SetCouponActivityStatusValidator()
+        {
+            RuleFor(x => x.ActivityId).GreaterThan(0).WithMessage("券活动信息不正确");
+            RuleFor(x => x.Status).Must(s => s is 1 or 2).WithMessage("状态只能是 1 启用 或 2 停用");
         }
     }
 

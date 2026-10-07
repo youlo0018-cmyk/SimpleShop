@@ -1,0 +1,52 @@
+# SimpleShop Linux（低内存设备，16G 档）覆盖层。
+#
+# 用法（只叠加，不改基础拓扑）：
+#   docker compose -f docker-compose.yml -f docker-compose.linux.yml up -d <service...>
+#
+# 设计依据：
+#   * 本机实测（Windows/Docker Desktop）：ES 1.9G、Kibana 675M、其余容器合计 ~780M。
+#     ES 与 Kibana 是内存大头，Linux 上默认值会把 13.5G 可用内存吃掉一大半。
+#   * 覆盖层只调「资源参数」：堆大小、水位线、容器内存上限；镜像、端口、卷都不动。
+#   * mem_limit 是**上限**不是预留：容器用多少给多少，只是防止单个组件吃爆整机。
+#   * Redis 用 noeviction 而不是 LRU：里面存会话 / 分布式锁 / 雪花 workerId 租约，
+#     静默淘汰锁会导致并发问题，宁可写满报错（开发环境数据量远小于 384M）。
+name: simpleshop
+
+services:
+  postgres:
+    # 默认 shared_buffers=128MB 对开发环境够用；显式写出来避免大内存机器上自动调大。
+    command: ["postgres", "-c", "shared_buffers=192MB", "-c", "work_mem=4MB", "-c", "maintenance_work_mem=48MB"]
+    mem_limit: 640m
+
+  redis:
+    # command 是整体替换：基础文件里的 --appendonly yes 必须在这里再写一遍。
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "384mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 512m
+
+  consul:
+    mem_limit: 320m
+
+  rabbitmq:
+    environment:
+      # Erlang 默认吃内存较凶，把「内存高水位」压到 25%，超过就先堵住生产者而不是 OOM。
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: "0.25"
+    mem_limit: 640m
+
+  agileconfig:
+    mem_limit: 640m
+
+  elasticsearch:
+    environment:
+      # 默认 1g 堆实测 1.9G 常驻；512m 堆对单机开发足够（索引量级：几万文档）。
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    # 上限 = 堆 512m + 段文件/线程栈等 off-heap 余量，留到 1.6G 防 OOM kill。
+    mem_limit: 1600m
+
+  kibana:
+    environment:
+      # Node 默认堆按物理内存推算，13.5G 机器上会给到 1G+；显式压到 384M。
+      NODE_OPTIONS: --max-old-space-size=384
+    mem_limit: 900m
+
+  fluentd:
+    mem_limit: 320m

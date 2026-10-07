@@ -83,8 +83,14 @@
               >
                 修改
               </el-button>
+              <!--
+                有 statusEndpoint 的（权限点）走专用启停接口；没有的（分类）走 Update
+                整行提交。以前这里只认 statusEndpoint，于是分类页永远不显示这个按钮，
+                `toggleStatus` 里那段 else 分支成了**不可达代码** ——
+                分类想停用只能进「修改」弹窗改状态，看起来像是漏做了这个按钮。
+              -->
               <el-button
-                v-if="config.statusEndpoint && hasPermission(config.updatePermission)"
+                v-if="config.updateEndpoint && hasPermission(config.updatePermission)"
                 @click="toggleStatus(selected)"
               >
                 {{ Number(selected[config.statusField]) === 1 ? '停用' : '启用' }}
@@ -296,7 +302,10 @@ async function submitEditor() {
       body[config.value.parentField] = editor.parent ? String(editor.parent.id) : '0';
       if (config.value.title === '分类管理') body.platformId = '0';
     } else {
-      body[config.value.idField] = String(editor.current.id);
+      // 用 idBodyField（请求体字段名），不是 idField（节点字段名）。
+      // 两者混用会让编辑请求发成 `{ id }`，后端命令收不到 CategoryId / PermissionId，
+      // 校验器直接判「Id 必须为正数」—— 这条路径此前从未被点通过。
+      body[config.value.idBodyField || config.value.idField] = String(editor.current.id);
     }
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === 'string') body[key] = value.trim();
@@ -320,11 +329,11 @@ async function toggleStatus(data: any) {
   try {
     if (config.value.statusEndpoint) {
       await request(config.value.statusEndpoint, {
-        body: { permissionId: String(data.id), status: next },
+        body: { [config.value.idBodyField || config.value.idField]: String(data.id), status: next },
       });
     } else {
       const body: Record<string, any> = {
-        [config.value.idField]: String(data.id),
+        [config.value.idBodyField || config.value.idField]: String(data.id),
         status: next,
       };
       for (const field of config.value.fields || []) {
@@ -349,9 +358,9 @@ async function submitDelete() {
   confirm.saving = true;
   try {
     await request(config.value.deleteEndpoint, {
-      body: config.value.title === '权限点管理'
-        ? { permissionId: String(confirm.current.id) }
-        : { categoryId: String(confirm.current.id) },
+      // 删除也走同一个字段名。以前这里硬编码了一个三元表达式（按标题判断），
+      // 正是「同一个 Id 在四个地方各写一遍」的根源 —— 改对了删除、漏了编辑。
+      body: { [config.value.idBodyField || config.value.idField]: String(confirm.current.id) },
     });
     ElMessage.success('已删除');
     confirm.open = false;

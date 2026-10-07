@@ -16,7 +16,8 @@ public record QueryAdminPointRecordsCommand(
     int PageSize = 20,
     long CustomerId = 0,
     string Action = "",
-    string BizNo = "") : IRequest<ApiResponse<PagedResult<AdminPointRecordItem>>>;
+    string BizNo = "",
+    string Keyword = "") : IRequest<ApiResponse<PagedResult<AdminPointRecordItem>>>;
 
 /// <summary>后台积分流水行。</summary>
 /// <param name="RecordId">流水 Id。</param>
@@ -58,6 +59,7 @@ public static class AdminPointValidators
             RuleFor(x => x.CustomerId).GreaterThanOrEqualTo(0).WithMessage("客户信息不正确");
             RuleFor(x => x.Action).MaximumLength(16).WithMessage("动作参数过长");
             RuleFor(x => x.BizNo).MaximumLength(64).WithMessage("业务单号过长");
+            RuleFor(x => x.Keyword).MaximumLength(64).WithMessage("搜索关键词过长");
         }
     }
 }

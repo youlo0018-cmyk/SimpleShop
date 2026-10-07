@@ -27,8 +27,13 @@
             v-for="(c, i) in components"
             :key="c.id || i"
             class="slot"
-            :class="{ 'slot--dragging': dragIndex === i, 'slot--over': dropIndex === i && dragIndex !== i }"
+            :class="{
+              'slot--dragging': dragIndex === i,
+              'slot--over': dropIndex === i && dragIndex !== i,
+              'slot--selected': selectedIndex === i,
+            }"
             :draggable="true"
+            @click.stop="emit('select', i)"
             @dragstart.stop="dragIndex = i"
             @dragover.prevent.stop="dropIndex = i"
             @dragleave="dropIndex = -1"
@@ -263,12 +268,15 @@ const props = defineProps<{
   page: string;
   components: any[];
   library?: any[];
+  /** 当前选中的组件下标；-1 表示没有选中。属性面板靠它决定编辑谁。 */
+  selectedIndex?: number;
 }>();
 
 const emit = defineEmits<{
   reorder: [index: number];
   move: [index: number, delta: number];
   remove: [index: number];
+  select: [index: number];
 }>();
 
 const dragIndex = ref(-1);
@@ -452,6 +460,14 @@ defineExpose({ dropActive });
   border-color: var(--brand);
 }
 
+/* 选中态要跟 hover 区分开：hover 是「鼠标路过」，选中是「右侧属性面板正在编辑它」。
+   两者长得一样的话，鼠标一移开就不知道面板在改哪个组件了。 */
+.slot--selected,
+.slot--selected:hover {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+
 .slot--dragging {
   opacity: 0.4;
 }
@@ -473,7 +489,8 @@ defineExpose({ dropActive });
   font-size: 10px;
 }
 
-.slot:hover .slot__chrome {
+.slot:hover .slot__chrome,
+.slot--selected .slot__chrome {
   display: flex;
 }
 

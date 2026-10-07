@@ -120,7 +120,7 @@ $leaves = [ordered]@{
     '2115' = @(@('coupon-template:read', '券模板列表', '/gateway/marketing/coupon-templates/List,/gateway/marketing/coupon-templates/Get,/gateway/marketing/coupon-templates/Options'), @('coupon-template:create', '新建券模板', '/gateway/marketing/coupon-templates/Create'),
              @('coupon-template:update', '编辑券模板', '/gateway/marketing/coupon-templates/Update'), @('coupon-template:delete', '删除券模板', '/gateway/marketing/coupon-templates/Delete'),
              @('coupon-activity:read', '券活动列表', '/gateway/marketing/coupon-activities/List,/gateway/marketing/coupon-activities/Get'), @('coupon-activity:create', '新建券活动', '/gateway/marketing/coupon-activities/Create'),
-             @('coupon-activity:update', '编辑券活动', '/gateway/marketing/coupon-activities/Update'), @('coupon-record:read', '券核销记录', '/gateway/marketing/coupon-records/List'))
+             @('coupon-activity:update', '编辑券活动', '/gateway/marketing/coupon-activities/Update,/gateway/marketing/coupon-activities/SetStatus'), @('coupon-record:read', '券核销记录', '/gateway/marketing/coupon-records/List'))
     # 营销配置在 marketing 命名空间下：/gateway/marketing/marketing-config/{Get,Save}。
     '2116' = @(@('marketing-config:read', '营销配置查看', '/gateway/marketing/marketing-config/Get'), @('marketing-config:update', '营销配置维护', '/gateway/marketing/marketing-config/Save'))
     # 秒杀场次是 **seckill/sessions/**（两段），不是 seckill-sessions（一段）。

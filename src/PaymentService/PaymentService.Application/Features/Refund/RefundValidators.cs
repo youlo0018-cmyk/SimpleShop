@@ -66,6 +66,7 @@ public static class RefundValidators
         {
             RuleFor(x => x.Status).InclusiveBetween(0, 90).WithMessage("退款单状态不正确");
             RuleFor(x => x.OrderNo).MaximumLength(64).WithMessage("订单号不正确");
+            RuleFor(x => x.Keyword).MaximumLength(64).WithMessage("搜索关键词过长");
             RuleFor(x => x.Page).GreaterThanOrEqualTo(1).WithMessage("页码不正确");
             RuleFor(x => x.PageSize).InclusiveBetween(1, 100).WithMessage("每页条数不正确");
         }

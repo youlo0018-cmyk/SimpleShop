@@ -275,14 +275,10 @@ Invoke-Case 'API-ADM-009' '🔴 启用中的券活动还引用着模板时不许
     $blocked = Post-Ep '/gateway/marketing/coupon-templates/Delete' @{ templateId = $template.data }
     $blockedOk = -not $blocked.Success -and $blocked.Code -eq 400
 
-    # 停用活动之后就能删了：停用的活动不会出现在领券中心，拿它挡着删除没有意义
-    Post-Ep '/gateway/marketing/coupon-activities/Update' @{
-        activityId = $activity.data; activityName = "引用活动$($script:suffix)"
-        templateId = $template.data
-        claimStartTime = [DateTime]::UtcNow.AddMinutes(-5).ToString('o')
-        claimEndTime = [DateTime]::UtcNow.AddDays(1).ToString('o')
-        claimQuantity = 10; perUserLimit = 1; targetType = 1; targets = '[]'
-        sortOrder = 0; status = 2
+    # 停用活动之后就能删了：停用的活动不会出现在领券中心，拿它挡着删除没有意义。
+    # 走 SetStatus：启停是「只改状态」，不该重跑整行编辑校验。
+    Post-Ep '/gateway/marketing/coupon-activities/SetStatus' @{
+        activityId = $activity.data; status = 2
     } | Out-Null
     $deleted = Post-Ep '/gateway/marketing/coupon-templates/Delete' @{ templateId = $template.data }
 
@@ -855,6 +851,43 @@ Invoke-Case 'API-ADM-083b' '🔴 P0 roles/BindPermissions：绑上 → 读回一
     }
 }
 
+Invoke-Case 'API-ADM-083d' '🔴 roles/BindPermissions：容器 Id 不能当权限点落库（虚拟根 0 / 业务大类 / 功能模块）' {
+    # 前端权限树是 4 层：虚拟根「全部权限」→ 业务大类 → 功能模块 → 权限点。
+    # 只有最底层叶子才是权限点本身（BUSINESS.md 5.4「半选节点不保存，只保存叶子权限点」）。
+    # 之前前端把整棵树的 Id 一起 setCheckedKeys 再整体提交，后端又照单全收，
+    # 于是 role_permission 里会写进 0 / 2101 / 2108 这类查不到 code 的绑定：
+    # 权限不会多出来，但角色详情的「已绑定 N 项」和回显勾选状态全部失真，界面上看不出来。
+    $code = 'regbindc' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
+    $created = Post-Ep '/gateway/roles/Create' @{
+        roleName = "容器绑定角色$code"; code = $code; allowedScopes = 1; dataScope = 1; remark = '临时'
+    }
+    if (-not $created.Success) { Write-Host ("        建角色失败: " + $created.Message) -ForegroundColor DarkYellow; return $false }
+    $roleId = [long]$created.data
+
+    try {
+        # 0 = 虚拟根「全部权限」；2101 = 业务大类下的「账号」模块；2108 = 没有叶子的「品牌」模块。
+        $zero = Post-Ep '/gateway/roles/BindPermissions' @{ roleId = $roleId; permissionIds = @(0) }
+        $module = Post-Ep '/gateway/roles/BindPermissions' @{ roleId = $roleId; permissionIds = @(2101) }
+        $empty = Post-Ep '/gateway/roles/BindPermissions' @{ roleId = $roleId; permissionIds = @(2108) }
+
+        # 反证：真叶子必须放行（防线不误伤）
+        $leaf = (Invoke-RestMethod -Uri "$Gateway/gateway/roles/Detail?roleId=9001" -Headers $auth -TimeoutSec 20).data
+        $leafId = [long](@($leaf.permissionIds)[0])
+        $ok = Post-Ep '/gateway/roles/BindPermissions' @{ roleId = $roleId; permissionIds = @($leafId) }
+        $back = Invoke-RestMethod -Uri "$Gateway/gateway/roles/Detail?roleId=$roleId" -Headers $auth -TimeoutSec 20
+
+        Write-Host ("        0/2101/2108 → 被拒：{0} / {1} / {2}；叶子 {3} → {4}" -f `
+            $zero.Success, $module.Success, $empty.Success, $leafId, $ok.Success) -ForegroundColor DarkGray
+
+        (-not $zero.Success) -and $zero.Code -eq 400 `
+            -and (-not $module.Success) -and $module.Code -eq 400 `
+            -and (-not $empty.Success) -and $empty.Code -eq 400 `
+            -and $ok.Success -and @($back.data.permissionIds).Count -eq 1
+    } finally {
+        Post-Ep '/gateway/roles/Delete' @{ roleId = $roleId } | Out-Null
+    }
+}
+
 Invoke-Case 'API-ADM-083c' '🔴 内置管理员角色的权限锁定，重绑被拒' {
     # 用户明确要求「禁止编辑内置管理员角色」。
     # 权限重绑是最容易被忽略的一条路径：改名字被拒了，但把超管的权限清空一样是破坏。
@@ -999,6 +1032,47 @@ Invoke-Case 'API-ADM-099' '🔴 SKU 下拉随 SPU 联动，且只给启用 SKU' 
     return $skus.Count -gt 0 `
         -and @($skus | Where-Object { [string]::IsNullOrWhiteSpace($_.id) -or [string]::IsNullOrWhiteSpace($_.name) }).Count -eq 0 `
         -and @($skus | Where-Object { $_.price -le 0 }).Count -eq 0
+}
+
+Invoke-Case 'API-ADM-101' '🔴 每个可搜索列表的 keyword 都要真的过滤（不能只是界面装饰）' {
+    # 后台有 17 个列表带搜索框。前端统一发 `keyword`，但后端命令里
+    # **必须真的有这个字段** —— 少一个，那个搜索框就是装饰品：
+    # 输入任何东西都返回全部，运营会以为「查不到就是没有」。
+    # 实测踩过：退款列表（只有 OrderNo）、积分流水、评价管理 三处都被静默忽略。
+    $targets = @(
+        @{ Path = '/gateway/admin/customers/List'; Name = '客户' },
+        @{ Path = '/gateway/platforms/List'; Name = '平台' },
+        @{ Path = '/gateway/merchants/List'; Name = '商户' },
+        @{ Path = '/gateway/admin/orders/List'; Name = '订单' },
+        @{ Path = '/gateway/refunds/List'; Name = '退款' },
+        @{ Path = '/gateway/marketing/coupon-templates/List'; Name = '券模板' },
+        @{ Path = '/gateway/marketing/coupon-activities/List'; Name = '券活动' },
+        @{ Path = '/gateway/points/RecordsAll'; Name = '积分流水' },
+        @{ Path = '/gateway/evaluates/admin/List'; Name = '评价' },
+        @{ Path = '/gateway/files/List'; Name = '文件' },
+        @{ Path = '/gateway/logs/Operation/List'; Name = '操作日志' },
+        @{ Path = '/gateway/logs/Exception/List'; Name = '异常日志' }
+    )
+
+    $bad = @()
+    foreach ($t in $targets) {
+        $all = Post-Ep $t.Path @{ page = 1; pageSize = 5 }
+        $filtered = Post-Ep $t.Path @{ page = 1; pageSize = 5; keyword = 'zzz-no-such-keyword-zzz' }
+
+        $allTotal = if ($null -ne $all.data.total) { [int]$all.data.total } else { @($all.data).Count }
+        $filteredTotal = if ($null -ne $filtered.data.total) { [int]$filtered.data.total } else { @($filtered.data).Count }
+
+        # 数据为空时比较没有意义（0 = 0），跳过
+        if ($allTotal -le 0) { continue }
+        if ($allTotal -eq $filteredTotal) {
+            Write-Host ("        " + $t.Name + " 的 keyword 被忽略：" + $allTotal + " → " + $filteredTotal) -ForegroundColor DarkYellow
+            $bad += $t.Name
+        }
+    }
+
+    if ($bad.Count -gt 0) { return $false }
+    Write-Host ("        " + $targets.Count + " 个列表的 keyword 都生效") -ForegroundColor DarkGray
+    return $true
 }
 
 Invoke-Case 'API-ADM-100' '不存在的商品查 SKU 返回 404（不是空列表）' {

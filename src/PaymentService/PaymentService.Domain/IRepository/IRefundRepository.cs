@@ -45,11 +45,17 @@ public interface IRefundRepository
     /// <summary>分页查退款单。</summary>
     /// <param name="status">状态过滤，0 表示不限。</param>
     /// <param name="orderNo">订单号过滤，空表示不限。</param>
+    /// <param name="keyword">退款单号 / 订单号模糊搜索，空表示不限。</param>
     /// <param name="page">页码，从 1 起。</param>
     /// <param name="pageSize">每页条数。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>分页结果。</returns>
-    Task<PagedRefunds> PageAsync(int status, string orderNo, int page, int pageSize,
+    /// <remarks>
+    /// <c>Keyword</c> 是后台搜索框用的：占位符写的是「退款单号 / 订单号」，
+    /// 但查询命令里原来**只有 OrderNo** —— 前端发过来的 keyword 被静默忽略，
+    /// 搜索框看起来能用、其实一条都筛不掉（输退款单号也返回全部）。
+    /// </remarks>
+    Task<PagedRefunds> PageAsync(int status, string orderNo, string keyword, int page, int pageSize,
         CancellationToken ct = default);
 
     /// <summary>条件更新退款单审批结果。</summary>

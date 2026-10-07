@@ -50,14 +50,48 @@ public static class DesignComponentCategories
     public const string Function = "功能";
 }
 
+/// <summary>组件可编辑属性的类型。</summary>
+public static class DesignPropKinds
+{
+    /// <summary>单行文本。</summary>
+    public const string Text = "text";
+
+    /// <summary>多行文本。</summary>
+    public const string Textarea = "textarea";
+
+    /// <summary>单张图片（存 URL）。</summary>
+    public const string Image = "image";
+
+    /// <summary>多张图片（存 URL 数组）。</summary>
+    public const string Images = "images";
+
+    /// <summary>数字。</summary>
+    public const string Number = "number";
+}
+
+/// <summary>一个可编辑的组件属性。</summary>
+/// <param name="Key">写入 <c>props</c> 的键名，必须与 C 端渲染器读的键一致。</param>
+/// <param name="Label">后台属性面板显示的中文名。</param>
+/// <param name="Kind">控件类型，见 <see cref="DesignPropKinds"/>。</param>
+/// <param name="Placeholder">输入提示。</param>
+/// <param name="Max">多图时的张数上限，其余类型为 0。</param>
+/// <remarks>
+/// 属性面板由这份 schema 驱动，不在前端按 <c>type</c> 写死分支：
+/// 写死的话，后台加了组件却忘了在属性面板补一段，运营就只能拖出一个改不了的组件。
+/// </remarks>
+public sealed record DesignPropDef(
+    string Key, string Label, string Kind, string Placeholder = "", int Max = 0);
+
 /// <summary>一个已注册的装修组件。</summary>
 /// <param name="Type">组件类型，画布里用它标识。</param>
 /// <param name="Name">中文名，后台组件库显示。</param>
 /// <param name="Category">所属分类。</param>
 /// <param name="PlatformPages">平台装修里可用的页面。</param>
 /// <param name="MerchantUsable">商户装修是否可用。</param>
+/// <param name="Props">可编辑属性 schema；空表示这个组件没有可改内容。</param>
 public sealed record DesignComponentDef(
-    string Type, string Name, string Category, string[] PlatformPages, bool MerchantUsable);
+    string Type, string Name, string Category, string[] PlatformPages, bool MerchantUsable,
+    IReadOnlyList<DesignPropDef> Props);
 
 /// <summary>装修组件注册表。</summary>
 /// <remarks>
@@ -71,47 +105,89 @@ public sealed record DesignComponentDef(
 /// </remarks>
 public static class DesignComponentRegistry
 {
+    /// <summary>只有标题的组件（专区 / 宫格一类）。</summary>
+    private static readonly DesignPropDef[] TitleOnly =
+        [new("title", "标题", DesignPropKinds.Text, "如 精选推荐")];
+
+    /// <summary>标题 + 副标题。</summary>
+    private static readonly DesignPropDef[] TitleAndSubtitle =
+    [
+        new("title", "标题", DesignPropKinds.Text, "如 精选推荐"),
+        new("subtitle", "副标题", DesignPropKinds.Text, "选填")
+    ];
+
     /// <summary>全部组件定义。</summary>
     public static readonly IReadOnlyList<DesignComponentDef> All =
     [
         // 通用组件：三个页面都能用。
         // 「通用」这一层最容易漏——一开始就只按首页注册，结果我的页与店铺页
         // 少了轮播图 / 标题栏 / 分割线这些基础组件，搭建器上根本拖不出来
-        new("banner", "轮播图", DesignComponentCategories.Layout, DesignPages.AllPages, true),
-        new("kingKong", "金刚区宫格", DesignComponentCategories.Layout, [DesignPages.Index], false),
-        new("categoryNav", "分类导航", DesignComponentCategories.Layout, [DesignPages.Index], false),
-        new("productGrid", "商品双列网格", DesignComponentCategories.Layout, DesignPages.AllPages, true),
-        new("productScroll", "商品横向滑动", DesignComponentCategories.Layout, [DesignPages.Index], false),
-        new("couponZone", "优惠券专区", DesignComponentCategories.Layout, [DesignPages.Index], false),
-        new("activityZone", "活动专区", DesignComponentCategories.Layout, [DesignPages.Index], false),
-        new("seckillZone", "秒杀专区", DesignComponentCategories.Layout, [DesignPages.Index], false),
-        new("shopList", "店铺列表", DesignComponentCategories.Layout, [DesignPages.Index], false),
+        new("banner", "轮播图", DesignComponentCategories.Layout, DesignPages.AllPages, true,
+        [
+            new("images", "轮播图", DesignPropKinds.Images, "最多 8 张，可拖动排序", 8),
+            new("title", "图片说明", DesignPropKinds.Text, "选填")
+        ]),
+        new("kingKong", "金刚区宫格", DesignComponentCategories.Layout, [DesignPages.Index], false,
+            TitleOnly),
+        new("categoryNav", "分类导航", DesignComponentCategories.Layout, [DesignPages.Index], false,
+            TitleOnly),
+        new("productGrid", "商品双列网格", DesignComponentCategories.Layout, DesignPages.AllPages, true,
+            TitleAndSubtitle),
+        new("productScroll", "商品横向滑动", DesignComponentCategories.Layout, [DesignPages.Index], false,
+            TitleAndSubtitle),
+        new("couponZone", "优惠券专区", DesignComponentCategories.Layout, [DesignPages.Index], false,
+            TitleOnly),
+        new("activityZone", "活动专区", DesignComponentCategories.Layout, [DesignPages.Index], false,
+            TitleOnly),
+        new("seckillZone", "秒杀专区", DesignComponentCategories.Layout, [DesignPages.Index], false,
+            TitleOnly),
+        new("shopList", "店铺列表", DesignComponentCategories.Layout, [DesignPages.Index], false,
+            TitleOnly),
 
         // 内容（通用）
-        new("imageText", "图文广告", DesignComponentCategories.Content, DesignPages.AllPages, true),
-        new("notice", "公告栏", DesignComponentCategories.Content, DesignPages.AllPages, true),
-        new("title", "标题栏", DesignComponentCategories.Content, DesignPages.AllPages, true),
-        new("divider", "分割线", DesignComponentCategories.Content, DesignPages.AllPages, true),
-        new("spacer", "留白", DesignComponentCategories.Content, DesignPages.AllPages, true),
+        new("imageText", "图文广告", DesignComponentCategories.Content, DesignPages.AllPages, true,
+        [
+            new("title", "标题", DesignPropKinds.Text, "如 新品上市"),
+            new("description", "描述", DesignPropKinds.Textarea, "选填"),
+            new("image", "图片", DesignPropKinds.Image, "建议 16:9")
+        ]),
+        new("notice", "公告栏", DesignComponentCategories.Content, DesignPages.AllPages, true,
+            [new("text", "公告内容", DesignPropKinds.Textarea, "如 今日下单次日达")]),
+        new("title", "标题栏", DesignComponentCategories.Content, DesignPages.AllPages, true,
+            TitleAndSubtitle),
+        new("divider", "分割线", DesignComponentCategories.Content, DesignPages.AllPages, true, []),
+        new("spacer", "留白", DesignComponentCategories.Content, DesignPages.AllPages, true, []),
 
         // 会员。规格 16.3：「首页可用全部**通用**组件，我的页**额外**可用会员与服务宫格」
         // —— 「额外」意味着会员组件**不在**首页，只在我的页
-        new("memberCard", "会员问候卡", DesignComponentCategories.Member, [DesignPages.Profile], false),
-        new("benefits", "权益行", DesignComponentCategories.Member, [DesignPages.Profile], false),
+        new("memberCard", "会员问候卡", DesignComponentCategories.Member, [DesignPages.Profile], false,
+            TitleAndSubtitle),
+        new("benefits", "权益行", DesignComponentCategories.Member, [DesignPages.Profile], false,
+            TitleOnly),
 
         // 店铺类。规格 16.3：「**店铺页仅可用**店铺类与通用组件」——
         // 店铺类不属于「通用」，所以只能出现在店铺页，放到首页是越权
-        new("shopHeader", "店铺头", DesignComponentCategories.Shop, [DesignPages.Store], true),
-        new("shopActivity", "店铺活动", DesignComponentCategories.Shop, [DesignPages.Store], true),
-        new("shopCategory", "店铺分类", DesignComponentCategories.Shop, [DesignPages.Store], true),
-        new("shopEvaluate", "店铺评价", DesignComponentCategories.Shop, [DesignPages.Store], true),
+        new("shopHeader", "店铺头", DesignComponentCategories.Shop, [DesignPages.Store], true,
+        [
+            new("logo", "店铺 Logo", DesignPropKinds.Image, "建议 1:1"),
+            new("shopName", "店铺名", DesignPropKinds.Text, "如 城市生活馆"),
+            new("description", "店铺简介", DesignPropKinds.Textarea, "选填")
+        ]),
+        new("shopActivity", "店铺活动", DesignComponentCategories.Shop, [DesignPages.Store], true,
+            TitleOnly),
+        new("shopCategory", "店铺分类", DesignComponentCategories.Shop, [DesignPages.Store], true,
+            TitleOnly),
+        new("shopEvaluate", "店铺评价", DesignComponentCategories.Shop, [DesignPages.Store], true,
+            TitleOnly),
 
         // 我的：服务宫格与会员组件同属「我的页额外可用」那一批
-        new("serviceGrid", "服务宫格", DesignComponentCategories.Mine, [DesignPages.Profile], false),
+        new("serviceGrid", "服务宫格", DesignComponentCategories.Mine, [DesignPages.Profile], false,
+            TitleOnly),
 
         // 功能
-        new("searchBar", "搜索框", DesignComponentCategories.Function, [DesignPages.Index], false),
-        new("cartFloat", "购物车浮标", DesignComponentCategories.Function, [DesignPages.Index], false)
+        new("searchBar", "搜索框", DesignComponentCategories.Function, [DesignPages.Index], false,
+            [new("placeholder", "提示文字", DesignPropKinds.Text, "如 搜索商品")]),
+        new("cartFloat", "购物车浮标", DesignComponentCategories.Function, [DesignPages.Index], false, [])
     ];
 
     /// <summary>允许的栅格列数（12 列栅格）。</summary>

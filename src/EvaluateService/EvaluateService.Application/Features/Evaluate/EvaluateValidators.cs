@@ -113,6 +113,7 @@ public static class EvaluateValidators
             RuleFor(x => x.SpuId).GreaterThanOrEqualTo(0).WithMessage("商品 Id 不正确");
             RuleFor(x => x.MerchantId).GreaterThanOrEqualTo(0).WithMessage("商户 Id 不正确");
             RuleFor(x => x.StarScore).InclusiveBetween(0, 5).WithMessage("星级不正确");
+            RuleFor(x => x.Keyword).MaximumLength(64).WithMessage("搜索关键词过长");
             RuleFor(x => x.Page).GreaterThanOrEqualTo(1).WithMessage("页码不正确");
             RuleFor(x => x.PageSize).InclusiveBetween(1, 100).WithMessage("每页条数不正确");
         }

@@ -546,7 +546,8 @@ Invoke-Case 'API-PAY-043' '🔴 P0 虚拟订单发货后（50 已完成）**不�
     # 虚拟单也走「发货 → 待收货 → 确认收货」（规格 7.1：30 待收货适用于快递 / 虚拟），
     # 所以这里要先发货再确认收货，才能拿到一张 50 已完成的虚拟单。
     # 签收后不可退是规格 10.2 的明确要求（虚拟仅 {20,30} 可退）。
-    $ship = OrderPost '/admin/orders/DeliverVirtual' @{ orderNo = $script:orderV }
+    # 发货内容必填（后端校验）：虚拟商品的卡号要落库并展示给顾客
+    $ship = OrderPost '/admin/orders/DeliverVirtual' @{ orderNo = $script:orderV; remark = '卡号 PAY-043' }
     if (-not $ship.success) { return $false }
     if ((Get-OrderStatus $script:orderV) -ne 30) { return $false }
 

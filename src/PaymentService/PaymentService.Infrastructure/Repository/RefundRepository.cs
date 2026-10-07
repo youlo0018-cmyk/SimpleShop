@@ -82,7 +82,7 @@ public sealed class RefundRepository : CrudRepository<RefundOrder>, IRefundRepos
     }
 
     /// <inheritdoc />
-    public async Task<PagedRefunds> PageAsync(int status, string orderNo, int page, int pageSize,
+    public async Task<PagedRefunds> PageAsync(int status, string orderNo, string keyword, int page, int pageSize,
         CancellationToken ct = default)
     {
         var query = Db.Select<RefundOrder>();
@@ -91,6 +91,14 @@ public sealed class RefundRepository : CrudRepository<RefundOrder>, IRefundRepos
         {
             var no = orderNo.Trim();
             query = query.Where(a => a.OrderNo == no);
+        }
+        // 后台搜索框的占位符是「退款单号 / 订单号」，两个字段都要能搜到。
+        // 只按订单号精确匹配的话，运营拿退款单号去搜会得到「一条都没有」，
+        // 而单号明明就在眼前那一行。
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            query = query.Where(a => a.RefundNo.Contains(kw) || a.OrderNo.Contains(kw));
         }
 
         var total = await query.CountAsync(ct);

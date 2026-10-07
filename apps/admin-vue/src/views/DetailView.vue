@@ -67,7 +67,8 @@ const loading = ref(true);
 const data = ref<any>(null);
 const rows = ref<any[]>([]);
 
-const entityId = computed(() => Number(route.params.id || 0));
+// 详情 Id 是雪花 Id，必须按字符串传给后端。
+const entityId = computed(() => String(route.params.id || ''));
 
 const FORMATTERS: Record<string, (v: unknown) => string> = {
   amount: (v) => formatAmount(v),

@@ -90,7 +90,8 @@ const loading = ref(true);
 const saving = ref(false);
 const platformsLoading = ref(false);
 const platforms = ref<any[]>([]);
-const platformId = ref<number>(0);
+// 雪花 Id 必须按字符串保存：Number() 会丢末位精度，保存到错误平台。
+const platformId = ref<string>('');
 
 const model = reactive<Record<string, any>>({});
 // 地区数据的字节数由后端算好（regionsResult.byteSize），跟着响应走而不是配置里写死。
@@ -121,7 +122,7 @@ async function loadPlatforms() {
     // 第一个平台：地区地址 / 优惠优先级都必须先有平台才能改。
     // 不预选的话页面会停在一个空表单上，用户会以为坏了。
     if (platforms.value.length && !platformId.value) {
-      platformId.value = Number(platforms.value[0].id);
+      platformId.value = String(platforms.value[0].id ?? '');
     }
   } catch {
     platforms.value = [];

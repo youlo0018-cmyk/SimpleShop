@@ -157,7 +157,7 @@ public sealed class QueryComponentLibraryHandler
             ? DesignComponentRegistry.ForMerchant()
             : DesignComponentRegistry.ForPlatformPage(request.Page);
 
-        var items = defs.Select(a => new ComponentDefDto(a.Type, a.Name, a.Category)).ToList();
+        var items = defs.Select(a => new ComponentDefDto(a.Type, a.Name, a.Category, a.Props)).ToList();
         return Task.FromResult(ApiResults.Ok(items));
     }
 }

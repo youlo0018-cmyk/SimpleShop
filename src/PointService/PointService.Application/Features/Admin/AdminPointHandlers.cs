@@ -29,7 +29,7 @@ public sealed class QueryAdminPointRecordsHandler
     {
         var page = await _points.QueryRecordsAdminAsync(
             request.Page, request.PageSize, request.CustomerId,
-            request.Action, request.BizNo, ct).ConfigureAwait(false);
+            request.Action, request.BizNo, request.Keyword, ct).ConfigureAwait(false);
 
         var items = page.Items.Select(a => new AdminPointRecordItem(
             a.Id, a.CustomerId, a.BizNo, a.Action, PointActions.NameOf(a.Action),

@@ -234,7 +234,6 @@ export const adminRoutes: RouteRecordRaw[] = [
       },
     ],
   },
-
   // ---- 交易 ----
   {
     path: 'orders',

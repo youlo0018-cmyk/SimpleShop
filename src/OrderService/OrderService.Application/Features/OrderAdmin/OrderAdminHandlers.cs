@@ -344,6 +344,7 @@ public sealed class ShipOrderHandler : MediatR.IRequestHandler<ShipOrderCommand,
             request.LogisticsCompanyId,
             companyName,
             trackingNo,
+            request.Remark.Trim(),
             DateTime.UtcNow,
             ct).ConfigureAwait(false);
 
@@ -380,7 +381,7 @@ public sealed class DeliverVirtualHandler : MediatR.IRequestHandler<DeliverVirtu
     public DeliverVirtualHandler(IOrderStore store) => _store = store;
 
     /// <summary>执行虚拟发货。</summary>
-    /// <param name="request">发货命令，Remark 一般放卡号 / 激活码。</param>
+    /// <param name="request">发货命令，Remark 是发货内容（卡号 / 激活码），落库后展示给客户。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>成功返回空响应。</returns>
     public async Task<ApiResponse> Handle(DeliverVirtualCommand request, CancellationToken ct)
@@ -409,10 +410,11 @@ public sealed class DeliverVirtualHandler : MediatR.IRequestHandler<DeliverVirtu
             return ApiResponseFactory.Ok("该订单已发货");
         }
 
-        var affected = await _store.TryTransitStatusAsync(
+        var affected = await _store.TryDeliverAsync(
             order.Id,
             Domain.Entities.OrderStatuses.PendingShipment,
-            Domain.Entities.OrderStatuses.PendingReceipt, ct: ct).ConfigureAwait(false);
+            Domain.Entities.OrderStatuses.PendingReceipt,
+            request.Remark.Trim(), ct).ConfigureAwait(false);
 
         if (affected == 0)
         {
@@ -475,10 +477,11 @@ public sealed class SelfPickupReadyHandler
                 $"当前订单状态是「{OrderStatusMachine.NameOf(order.Status)}」，只有待发货的订单可以备货");
         }
 
-        var affected = await _store.TryTransitStatusAsync(
+        var affected = await _store.TryDeliverAsync(
             order.Id,
             Domain.Entities.OrderStatuses.PendingShipment,
-            Domain.Entities.OrderStatuses.PendingPickup, ct).ConfigureAwait(false);
+            Domain.Entities.OrderStatuses.PendingPickup,
+            request.Remark.Trim(), ct).ConfigureAwait(false);
 
         if (affected == 0)
         {

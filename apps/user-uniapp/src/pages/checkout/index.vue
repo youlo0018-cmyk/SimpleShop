@@ -244,9 +244,10 @@ async function prepare() {
       // 第一次试算不带券，拿到服务端推荐的最优券（K9：默认选最优惠），
       // 再用这张券重算一次 —— 用户看到的「应付」从一开始就是最终价。
       await refreshPreview();
-      const best = Number(preview.value?.bestCouponId || 0);
-      if (best > 0) {
-        selectedCouponId.value = String(best);
+      // 券 Id 是雪花 Id，必须按字符串使用；Number() 会丢末位精度。
+      const best = String(preview.value?.bestCouponId || '');
+      if (best && best !== '0') {
+        selectedCouponId.value = best;
         await refreshPreview();
       }
     }

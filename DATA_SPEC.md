@@ -147,7 +147,7 @@
 |---|---|---|---|
 | `Id` | `long` | `bigint` | 雪花 Id |
 | `UserName` | `string` | `varchar(64)` | 登录名，**全局唯一** |
-| `PasswordHash` | `string` | `varchar(256)` | **只存哈希**，禁止存明文 |
+| `PasswordHash` | `string` | `varchar(256)` | **只存哈希**，禁止存明文。随机盐**编码在哈希串内**（`pbkdf2$迭代次数$盐Base64$哈希Base64`），**不另设 salt 列**；校验时从串内解析盐与迭代次数 |
 | `Phone` | `string` | `varchar(20)` | 手机号，**全局唯一** |
 | `Email` | `string?` | `varchar(128)` | 邮箱，可空 |
 | `NickName` | `string` | `varchar(64)` | 昵称 |
@@ -166,7 +166,7 @@
 | 字段 | 类型 | 列 | 说明 |
 |---|---|---|---|
 | `CustomerName` | `string` | `varchar(64)` | 登录名，唯一 |
-| `PasswordHash` | `string` | `varchar(256)` | 哈希 |
+| `PasswordHash` | `string` | `varchar(256)` | 哈希（与后台账号同一套 PBKDF2 格式，盐在哈希串内，无独立 salt 列） |
 | `Phone` | `string` | `varchar(20)` | 手机号，唯一 |
 | `NickName` | `string` | `varchar(64)` | 昵称（C 端展示） |
 | `Avatar` | `string?` | `varchar(512)` | 头像 |
@@ -466,6 +466,11 @@ workerId 空间只有 64 个，开发机一天重启十几次服务，跑满 64 
 | `GET /gateway/roles/Options` | `role` 表 | `permission:read` | 启用状态，供建号多选；带 `allowedScopes`，建号页按账号类型过滤 |
 
 **通用约定**：所有 `Options` 接口按当前 `TenantContext` 自动过滤（AOP），**商家与商户账号不需要自己传 tenant 参数**。
+
+> **`platformId = 0` 的语义必须是「全部平台」**：`merchants/Options` 这类允许显式传平台的接口，
+> 超管默认传 0，表示不按平台过滤。实现里写成 `a.PlatformId == platformId` 会把 0 当成
+> 「平台 Id 等于 0」的特殊平台，超管打开商品列表时商户筛选永远为空。
+> 平台账号由 AOP 自动锁定本平台，前端不需要也不应该传平台 Id 来「伪装」。
 
 **统一返回形状**：每项至少 `{ id, name }`，`id` 一律是**字符串**（4.6：雪花 Id 前端必须保持字符串；4.7 的下拉项约定）。
 各接口按需追加：商品带 `deliveryType`、SKU 带 `price`、券模板带 `couponType`/`couponTypeName`、
@@ -1449,7 +1454,19 @@ SKU 的多个规格值必须由后端拼成**可直接展示的文本**，前端
 |---|---|
 | 左侧组件库 | 按分类分组（布局 / 内容 / 会员 / 店铺 / 我的 / 功能），**按当前页面过滤可用组件** |
 | 中间画布 | 模拟手机屏幕，**按小程序真实样式渲染**；组件可拖入、上下移动、调整宽度与高度 |
-| 右侧属性面板 | 选中组件后编辑其私有配置 |
+| 右侧属性面板 | 选中组件后编辑其私有配置。字段由 `GET /gateway/design/Components` 随组件一起下发的 **props schema** 驱动（`key` / `label` / `kind` / `placeholder` / `max`），前端不按组件类型写死分支 |
+
+**保存契约（按页增量提交）**：
+
+| 项 | 规则 |
+|---|---|
+| 提交粒度 | 搭建器**一次只提交当前编辑的那一页**（`{ pages: { <page>: { components } } }`）。整份提交会让「切到我的页存草稿」把首页排版一起覆盖 |
+| 服务端合并 | 保存前先与**已存草稿**合并（无草稿则退回已发布版本）：`pages` **逐页覆盖**（请求里出现的页整页替换，没出现的页保留）；`theme` / `tabBar` / `regions` / `platformCode` **请求里显式带了才覆盖**。合并后再整体校验 |
+| 为什么必须合并 | 校验器按完整配置校验（平台装修必须同时有 index / profile）。不合并的话「只发一页」会被判成「缺少页面画布」，平台装修存草稿 100% 失败；而整份覆盖又会把另一页、主题与 TabBar 洗掉 |
+| 全空配置 | 既没有已存草稿、请求里也没有任何页 → 仍然按「缺少页面画布」拒绝（不能凭空建出一份空配置） |
+
+**props schema 的 `kind` 取值**：`text` 单行文本 / `textarea` 多行文本 / `image` 单图（存 URL）/ `images` 多图（存 URL 数组，`max` 为张数上限）/ `number` 数字。
+`key` 必须与 C 端渲染器读的键一致（`title` / `subtitle` / `description` / `text` / `image` / `images` / `logo` / `shopName` / `placeholder` 等）。
 
 **可搭建页面**：**首页（index）**、**我的页（profile）**。商城页与其他页面是固定模板，不进画布。
 

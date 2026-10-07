@@ -164,6 +164,14 @@ public sealed class EvaluateRepository : CrudRepository<Evaluate>, IEvaluateRepo
         if (filter.MerchantId > 0) query = query.Where(a => a.MerchantId == filter.MerchantId);
         if (filter.StarScore > 0) query = query.Where(a => a.StarScore == filter.StarScore);
         if (filter.OnlyHidden) query = query.Where(a => a.IsHidden);
+        // 后台搜索框的占位符是「商品名 / 客户 / 内容」。库里没有客户昵称（评价只存 CustomerId），
+        // 所以这里按**商品名与评价内容**模糊匹配；占位符已同步改成这两项，
+        // 免得运营拿昵称搜半天一条都搜不到。
+        if (!string.IsNullOrWhiteSpace(filter.Keyword))
+        {
+            var kw = filter.Keyword.Trim();
+            query = query.Where(a => a.SpuName.Contains(kw) || a.Content.Contains(kw));
+        }
 
         var total = await query.CountAsync(ct).ConfigureAwait(false);
         var items = await query

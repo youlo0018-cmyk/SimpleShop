@@ -32,6 +32,9 @@ public sealed record MerchantListDto(
     string ContactPhone,
     string Logo,
     string Description,
+    // 备注必须回给前端：编辑页的数据源就是这份列表 DTO，
+    // 少了它「备注」输入框永远显示为空，保存时又把空值写回去 —— 一次编辑就把备注清掉了。
+    string Remark,
     int Status,
     string StatusName,
     int AuditStatus,

@@ -105,7 +105,7 @@
               v-if="config.editRoute && (!config.editWhen || config.editWhen(row)) && hasPermission(config.editPermission || '')"
               type="primary"
               link
-              @click.stop="router.push(config.editRoute(row))"
+              @click.stop="goEdit(row)"
             >
               编辑
             </el-button>
@@ -231,6 +231,7 @@ import request from '@/api/request';
 import { optionSources } from '@/router/form-configs';
 import { statusColor, statusText } from '@/utils/dict';
 import { hasPermission } from '@/utils/session';
+import { toOptions } from '@/utils/options';
 import {
   formatAmount,
   formatCount,
@@ -343,17 +344,32 @@ async function loadFilters() {
         silent: true,
       });
       const list = Array.isArray(rows) ? rows : (rows?.items || []);
-      filterOptions[filter.options] = list.map((row: any) => ({
-        value: String(row.id ?? row.Id ?? row.value ?? row.Value ?? ''),
-        label: String(
-          row.name ?? row.Name ?? row.platformName ?? row.merchantName ??
-          row.templateName ?? row.roleName ?? row.code ?? row.Code ?? '',
-        ),
-      }));
+      // 与表单页共用同一套归一（见 utils/options.js）
+      filterOptions[filter.options] = toOptions(list);
     } catch {
       filterOptions[filter.options] = [];
     }
   }
+}
+
+/**
+ * 进编辑页，并把**当前这一行**顺带带过去。
+ *
+ * 编辑页的原值要么走详情端点，要么按 Id 从列表里捞一行 —— 而后者只取第一页。
+ * 券模板有 400+ 条、跨好几页，从第 2 页点「编辑」就会捞不到那一行，
+ * 页面提示「未找到该记录，可能已被删除」且表单全空，保存再把空值写回去。
+ * 用 router state 传一份行数据，编辑页优先用它，列表兜底逻辑保持不动。
+ */
+function goEdit(row: any) {
+  const path = config.value.editRoute(row);
+  let state: any = undefined;
+  try {
+    // 必须是**纯数据**：路由 state 会被结构化克隆，响应式对象带 Proxy 会抛异常
+    state = { row: JSON.parse(JSON.stringify(row)) };
+  } catch {
+    state = undefined;
+  }
+  router.push(state ? { path, state } : path);
 }
 
 function showAction(action: any, row: any) {
@@ -525,14 +541,21 @@ async function submitConfirm() {
 
   c.saving = true;
   try {
-    const payload = c.fields.length
+    // 两种确认框的 build 签名不一样，必须分开传：
+    //   ① 显式 fields（商品审核的「结论 + 驳回原因」）→ build(row, payload) 收**对象**；
+    //   ② withReason（商户拒绝 / 退款拒绝 / 评价回复 / 评价隐藏）→ build(row, reason) 收**字符串**。
+    // ② 也被塞进 values.__reason 之后，这里如果统一按对象传，
+    // auditRemark / reply / reason 就会变成 `{ __reason: "..." }` ——
+    // 后端按 string 收，整个命令绑定失败（400「不能为空」），界面上却看不出哪里不对。
+    const explicitFields = (c.action.confirm?.fields?.length || 0) > 0;
+    const payload = explicitFields
       // 只提交**可见**字段：隐藏的驳回原因在「通过」时是空串，
       // 把它一起发过去会让后端按「填了驳回原因」处理
       ? Object.fromEntries(visibleFields.value.map((field: any) => {
           const raw = c.values[field.name];
           return [field.name, field.type === 'number' ? Number(raw) : raw];
         }))
-      : c.reason.trim();
+      : String(c.values.__reason ?? '').trim();
     const response = await request(c.action.endpoint, {
       body: { ...c.action.build(c.row, payload) },
       raw: true,

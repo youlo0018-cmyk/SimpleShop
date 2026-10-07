@@ -805,7 +805,11 @@ Invoke-Case 'API-RPT-047b' '🔴 孤儿参与记录：订单不存在时对账�
     if (-not $quote.success) { return $false }
 
     # 2. 列候选：OlderThanMinutes=0 只用于测试，正式定时任务用 30 分钟。
-    $candidates = Post '/internal/marketing/activities/orphan-candidates' @{ olderThanMinutes = 0; limit = 200 }
+    # limit 取 1000（仓储允许的上限）：候选查询是**按时间升序**取前 N 条
+    # （先清最老的），开发库里攒下的参与记录早就超过 200 条，
+    # 用 200 会让刚写进去的那条排在 200 名之外 —— 用例报「找不到候选」，
+    # 看起来像孤儿对账坏了，其实只是分页没覆盖到。
+    $candidates = Post '/internal/marketing/activities/orphan-candidates' @{ olderThanMinutes = 0; limit = 1000 }
     $hit = @($candidates.data | Where-Object { $_.orderNo -eq $fakeOrderNo })
     if ($hit.Count -ne 1) { return $false }
 
@@ -840,6 +844,10 @@ Invoke-Case 'API-RPT-003' '🔴 营销效果下钻：按活动查到订单明细
 
     $hit = @($r.data.items | Where-Object { $_.orderNo -eq $script:rptOrderNo })
 
+    Write-Host ("        下钻 total={0} 命中本单={1} 期望订单号={2} 实际订单号={3}" -f `
+        $r.data.total, $hit.Count, $script:rptOrderNo,
+        ((@($r.data.items | ForEach-Object { $_.orderNo }) -join ','))) -ForegroundColor DarkGray
+
     # 行数必须与报表上的「参与订单数」对得上（同一个区间口径），否则运营会以为数据丢了
     return $r.data.total -eq 1 `
         -and $hit.Count -eq 1 `
@@ -853,14 +861,10 @@ Invoke-Case 'API-GFT-009' '清理：删活动 / 券活动 / 模板 / 商品 / �
     }
     Post '/marketing/activities/Delete' @{ activityId = $script:gftActivityId } | Out-Null
     if ($script:gftCouponActivityId -gt 0) {
-        # 券活动没有删除接口（领过的券要能查到来源），只能停用
-        GwPost '/gateway/marketing/coupon-activities/Update' @{
-            activityId = $script:gftCouponActivityId; activityName = "满赠券活动$($script:suffix)"
-            templateId = $script:gftCouponTemplateId
-            claimStartTime = $script:now.AddMinutes(-5).ToString('o')
-            claimEndTime = $script:now.AddDays(1).ToString('o')
-            claimQuantity = 50; perUserLimit = 5
-            targetType = 1; targets = '[]'; platformId = 0; status = 2
+        # 券活动没有删除接口（领过的券要能查到来源），只能停用。
+        # 走 SetStatus 而不是 Update：Update 是整行覆盖，收尾时传 '[]' 会把适用范围洗掉。
+        GwPost '/gateway/marketing/coupon-activities/SetStatus' @{
+            activityId = $script:gftCouponActivityId; status = 2
         } | Out-Null
     }
     foreach ($t in @($script:gftCouponTemplateId, $script:gftSecondGiftTemplateId, $script:gftGiftTemplateId)) {
@@ -1825,18 +1829,15 @@ Invoke-Case 'API-MKT-107' '🔴 券活动的发放量不能超过模板剩余可
         targetType = 1; targets = '[]'; platformId = 0; status = 1
     }
 
-    # 收尾：停用后删掉活动，再删模板
+    # 收尾：停用活动 → 删模板。
+    # 券活动**没有删除接口**（设计如此：领过的券要能查到来源），所以只停用；
+    # 之前这里写着 Post '/marketing/coupon-activities/Delete' 并被 try/catch 吞掉，
+    # 看起来「清理干净了」，其实每次都留一条停用的活动在库里。
     if ($exact.success) {
         try {
-            GwPost '/gateway/marketing/coupon-activities/Update' @{
-                activityId = [long]$exact.data; activityName = "刚好发完$($script:suffix)"
-                templateId = $smallTemplate
-                claimStartTime = $script:now.AddMinutes(-5).ToString('o')
-                claimEndTime = $script:now.AddDays(1).ToString('o')
-                claimQuantity = 5; perUserLimit = 1
-                targetType = 1; targets = '[]'; sortOrder = 0; status = 2
+            GwPost '/gateway/marketing/coupon-activities/SetStatus' @{
+                activityId = [long]$exact.data; status = 2
             } | Out-Null
-            Post '/marketing/coupon-activities/Delete' @{ activityId = [long]$exact.data } | Out-Null
         }
         catch { }
     }
@@ -1847,6 +1848,59 @@ Invoke-Case 'API-MKT-107' '🔴 券活动的发放量不能超过模板剩余可
     }
 
     (-not $tooMany.success) -and $tooMany.message -match '剩余可发量' -and $exact.success
+}
+
+Invoke-Case 'API-MKT-108' '🔴 券活动启停走专用接口：只改状态，不碰适用范围（曾经启停会把定向活动洗成全场）' {
+    # 后台列表行里**没有 Targets**，而旧的启停按钮复用 Update，请求体把 targets 写死成 '[]'，
+    # Update 又会整行覆盖 —— 于是运营点一下「停用」，一个「指定商品」的活动就悄悄变成「全场」，
+    # 再启用时优惠范围已经扩大，且界面上不会有任何提示。
+    # 启停必须走 SetStatus：只改 Status，其余字段一律不动。
+    $tpl = [long](GwPost '/gateway/marketing/coupon-templates/Create' @{
+        templateName = "启停券$($script:suffix)"; couponType = 1
+        thresholdAmount = 10; discountAmount = 1; validDays = 30
+        totalQuantity = 5; perUserLimit = 1; perOrderLimit = 1
+        platformId = 0; status = 1
+    }).data
+
+    $targetProductId = 100
+    $created = GwPost '/gateway/marketing/coupon-activities/Create' @{
+        activityName = "启停活动$($script:suffix)"; templateId = $tpl
+        claimStartTime = $script:now.AddMinutes(-5).ToString('o')
+        claimEndTime = $script:now.AddDays(1).ToString('o')
+        claimQuantity = 5; perUserLimit = 1
+        targetType = 2; targets = "[$targetProductId]"; platformId = 0; status = 1
+    }
+    if (-not $created.success) {
+        Write-Host ("        建活动失败：" + $created.message) -ForegroundColor DarkYellow
+        return $false
+    }
+    $aid = [long]$created.data
+
+    # 1) 停用：必须成功
+    $off = GwPost-Api '/gateway/marketing/coupon-activities/SetStatus' @{ activityId = $aid; status = 2 }
+
+    # 2) 读回：状态变了，适用范围**必须原样保留**
+    $afterOff = (Invoke-RestMethod "$Gateway/gateway/marketing/coupon-activities/Get?activityId=$aid" `
+        -Headers $script:adminHeaders -TimeoutSec 30).data
+
+    # 3) 再启用：同样必须成功
+    $on = GwPost-Api '/gateway/marketing/coupon-activities/SetStatus' @{ activityId = $aid; status = 1 }
+
+    # 4) 非法状态值由校验器挡住（3 既不是启用也不是停用）
+    $bad = GwPost-Api '/gateway/marketing/coupon-activities/SetStatus' @{ activityId = $aid; status = 3 }
+
+    # 收尾：先停用，再删模板（模板被启用中的活动引用时会被拦住）
+    try { GwPost '/gateway/marketing/coupon-activities/SetStatus' @{ activityId = $aid; status = 2 } | Out-Null } catch { }
+    try { Post '/marketing/coupon-templates/Delete' @{ templateId = $tpl } | Out-Null } catch { }
+
+    if (-not $off.success) { Write-Host ("        停用失败：" + $off.message) -ForegroundColor DarkYellow }
+    if ($afterOff.targets -ne "[$targetProductId]") {
+        Write-Host ("        适用范围被改写：" + $afterOff.targets) -ForegroundColor DarkYellow
+    }
+
+    $off.success -and $afterOff.status -eq 2 `
+        -and $afterOff.targetType -eq 2 -and $afterOff.targets -eq "[$targetProductId]" `
+        -and $on.success -and (-not $bad.success)
 }
 
 foreach ($id in $script:mktNewActivityIds) {

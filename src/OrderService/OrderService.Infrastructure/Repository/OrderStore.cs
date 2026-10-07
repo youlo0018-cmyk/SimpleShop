@@ -167,7 +167,7 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
     public async Task<int> TryShipAsync(
         long orderId, int fromStatus, int toStatus,
         long logisticsCompanyId, string logisticsCompanyName, string trackingNo,
-        DateTime shippedAt, CancellationToken ct = default)
+        string shipRemark, DateTime shippedAt, CancellationToken ct = default)
         => await _db.Update<Order>()
             // 条件带上原状态，并发发货时只有一个能生效（与 TryTransitStatusAsync 同理）
             .Where(a => a.Id == orderId && a.Status == fromStatus)
@@ -175,7 +175,21 @@ public sealed class OrderStore : CrudRepository<Order>, IOrderStore
             .Set(a => a.LogisticsCompanyId == logisticsCompanyId)
             .Set(a => a.LogisticsCompanyName == logisticsCompanyName)
             .Set(a => a.TrackingNo == trackingNo)
+            .Set(a => a.ShipRemark == shipRemark)
             .Set(a => a.ShippedAt == shippedAt)
+            .Set(a => a.UpdatedAt == DateTime.UtcNow)
+            .ExecuteAffrowsAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<int> TryDeliverAsync(
+        long orderId, int fromStatus, int toStatus,
+        string shipRemark, CancellationToken ct = default)
+        => await _db.Update<Order>()
+            // 与发货同理：条件带上原状态，并发时只有一个请求能生效
+            .Where(a => a.Id == orderId && a.Status == fromStatus)
+            .Set(a => a.Status == toStatus)
+            .Set(a => a.ShipRemark == shipRemark)
+            .Set(a => a.ShippedAt == DateTime.UtcNow)
             .Set(a => a.UpdatedAt == DateTime.UtcNow)
             .ExecuteAffrowsAsync(ct);
 

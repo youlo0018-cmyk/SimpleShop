@@ -48,7 +48,11 @@ public record CreatePlatformCommand(
 /// <summary>编辑平台。<c>PlatformCode</c> 传什么都无效，一律保留原值。</summary>
 /// <param name="PlatformId">平台 Id。</param>
 /// <param name="PlatformName">平台名称。</param>
-/// <param name="PlatformCode">平台编码（<b>会被忽略</b>）。</param>
+/// <param name="PlatformCode">
+/// 平台编码（<b>会被忽略</b>）。<b>可空</b>：后台编辑页把「创建后不可修改」的字段
+/// 直接排除在请求体之外，而 ASP.NET Core 对非空引用类型会做隐式必填校验 ——
+/// 这里声明成非空时，**编辑平台保存必然 400「PlatformCode 不能为空」**。
+/// </param>
 /// <param name="ContactName">联系人。</param>
 /// <param name="ContactPhone">联系电话。</param>
 /// <param name="Logo">平台 Logo。</param>
@@ -64,7 +68,7 @@ public record CreatePlatformCommand(
 public record UpdatePlatformCommand(
     long PlatformId,
     string PlatformName,
-    string PlatformCode,
+    string? PlatformCode,
     string ContactName,
     string ContactPhone,
     string Logo = "",
@@ -135,6 +139,11 @@ public sealed record PlatformListDto(
     string MallName,
     string ContactName,
     string ContactPhone,
+    // Logo / 公告 / 备注必须回给前端：编辑页的数据源是这份列表 DTO，
+    // 少一个字段，那个输入框在编辑页就永远是空的，保存时又把空值写回去 —— 一次编辑丢三项。
+    string Logo,
+    string Notice,
+    string Remark,
     string PrimaryColor,
     string TabColor,
     string BackgroundColor,

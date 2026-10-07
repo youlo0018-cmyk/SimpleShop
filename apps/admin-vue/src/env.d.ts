@@ -52,3 +52,13 @@ declare module '@/utils/dict' {
   export function statusText(kind: string, value: unknown): string;
   export function statusPill(kind: string, value: unknown, backendText?: string): { text: string; color: string };
 }
+
+declare module '@/utils/options' {
+  export interface SelectOption {
+    value: string;
+    label: string;
+  }
+  /** 把各服务形态不一的下拉 DTO 归一成 { value, label } */
+  export function toOptions(rows: unknown): SelectOption[];
+  export default toOptions;
+}

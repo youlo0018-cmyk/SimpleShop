@@ -258,6 +258,17 @@ public interface ICouponRepository
     /// </remarks>
     Task<int> UpdateActivityAsync(CouponActivity activity, CancellationToken ct = default);
 
+    /// <summary>只改券活动的启停状态。</summary>
+    /// <param name="activityId">券活动 Id。</param>
+    /// <param name="status">目标状态：1 启用 / 2 停用。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数。</returns>
+    /// <remarks>
+    /// 启停不重跑「发放量 ≤ 模板剩余量」的完整编辑校验：活动创建时已经占过池子，
+    /// 停用后再启用如果重新扣一次剩余量，会把本来合法的活动挡在门外。
+    /// </remarks>
+    Task<int> SetActivityStatusAsync(long activityId, int status, CancellationToken ct = default);
+
     /// <summary>分页查用户券（后台「券核销记录」）。</summary>
     /// <param name="page">页码，从 1 起。</param>
     /// <param name="pageSize">每页条数。</param>

@@ -794,6 +794,25 @@ public sealed class CouponRepository : CrudRepository<UserCoupon>, ICouponReposi
     }
 
     /// <inheritdoc />
+    public Task<int> SetActivityStatusAsync(long activityId, int status, CancellationToken ct = default)
+    {
+        // 启停同样是「业务操作」，最后操作人 / 操作时间必须落库（B3）。
+        // 只写 Status + UpdatedAt 会让审计栏停留在上一次编辑，排查「谁停的活动」时查无此人。
+        var ctx = TenantContextHolder.Current;
+
+        return _db.Update<CouponActivity>()
+            .Where(a => a.Id == activityId)
+            .Set(a => new CouponActivity
+            {
+                Status = status,
+                OperationId = ctx.UserId,
+                OperationName = ctx.UserName,
+                UpdatedAt = DateTime.UtcNow
+            })
+            .ExecuteAffrowsAsync(ct);
+    }
+
+    /// <inheritdoc />
     public async Task<(List<UserCoupon> Items, long Total)> PageUserCouponsAsync(
         int page, int pageSize, int status, long templateId, string orderNo, string keyword,
         long customerId = 0,

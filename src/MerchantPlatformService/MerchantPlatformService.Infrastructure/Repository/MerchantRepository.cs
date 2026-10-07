@@ -78,10 +78,20 @@ public sealed class MerchantRepository : CrudRepository<Merchant>, IMerchantRepo
 
     /// <inheritdoc />
     public IReadOnlyList<Merchant> ListEnabledByPlatform(long platformId, CancellationToken ct = default)
-        => Db.Select<Merchant>()
-            .Where(a => a.PlatformId == platformId && a.Status == PlatformStatuses.Enabled)
-            .OrderBy(a => a.Id)
-            .ToList();
+    {
+        var query = Db.Select<Merchant>()
+            .Where(a => a.Status == PlatformStatuses.Enabled);
+
+        // platformId = 0 表示「全部平台」，不是「平台 Id 等于 0」。
+        // 之前写成无条件 a.PlatformId == platformId，超管查商户下拉永远为空，
+        // 商品列表的商户筛选因此没有任何选项。
+        if (platformId > 0)
+        {
+            query = query.Where(a => a.PlatformId == platformId);
+        }
+
+        return query.OrderBy(a => a.Id).ToList();
+    }
 
     /// <inheritdoc />
     public async Task<PagedMerchants> PageAsync(MerchantFilter filter, CancellationToken ct = default)

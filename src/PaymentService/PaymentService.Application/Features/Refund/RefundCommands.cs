@@ -36,7 +36,14 @@ public record RejectRefundCommand(long RefundId, string RejectReason) : IRequest
 /// <param name="OrderNo">订单号过滤，空表示不限。</param>
 /// <param name="Page">页码，从 1 起。</param>
 /// <param name="PageSize">每页条数。</param>
-public record QueryRefundsCommand(int Status = 0, string OrderNo = "", int Page = 1, int PageSize = 20) : IRequest<ApiResponse<PagedRefundDtos>>;
+/// <param name="Status">退款单状态过滤，0 表示不限。</param>
+/// <param name="OrderNo">订单号精确过滤，空表示不限。</param>
+/// <param name="Keyword">退款单号 / 订单号模糊搜索（后台搜索框），空表示不限。</param>
+/// <param name="Page">页码，从 1 起。</param>
+/// <param name="PageSize">每页条数。</param>
+public record QueryRefundsCommand(
+    int Status = 0, string OrderNo = "", string Keyword = "", int Page = 1, int PageSize = 20)
+    : IRequest<ApiResponse<PagedRefundDtos>>;
 
 /// <summary>退款单视图。</summary>
 /// <param name="RefundId">退款单 Id。</param>

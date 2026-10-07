@@ -7,9 +7,13 @@ export const optionSources: Record<string, any> = {
   // 用 List 而不是 Options：DATA_SPEC 4.2 列了 roles/Options，但后端只实现了 List，
   // 而且 List 已经返回了下拉需要的 id + roleName。为此再加一个 Options 端点是纯重复。
   roles: { url: '/gateway/roles/List', method: 'GET' },
-  // 券模板没有 Options 端点，只有按 Id 的 Get。用 List（POST，带分页）当数据源，
-  // 第一页足够覆盖运营会选的模板数量。
-  couponTemplates: { url: '/gateway/marketing/coupon-templates/List', method: 'POST', body: { page: 1, pageSize: 200 } },
+  // 用 Options 而不是 List：
+  //   ① Options 只返回**启用**模板（DATA_SPEC 4.2），List 会把停用的一起带出来，
+  //      选到停用模板的活动建得出来但用户领不到；
+  //   ② Options 的形状是统一的 { id, name }，而 List 的 DTO 是 { templateId, templateName } ——
+  //      前端按 id 取值时整排变成空串，下拉里看得见名字、选中却什么都没选上，
+  //      「新建券活动」因此永远提交不了（表单报「券模板不能为空」）。
+  couponTemplates: { url: '/gateway/marketing/coupon-templates/Options', method: 'GET' },
   logisticsCompanies: { url: '/gateway/logistics-companies/Options', method: 'POST' },
 };
 
@@ -119,6 +123,10 @@ export const FORMS = {
     createEndpoint: '/gateway/marketing/coupon-templates/Create',
     updateEndpoint: '/gateway/marketing/coupon-templates/Update',
     idField: 'templateId',
+    // 有 Get 就用 Get：列表兜底只取第一页，券模板 400+ 条跨好几页，
+    // 直接打开编辑页（或从第 2 页点进来）会捞不到那一行。
+    detailEndpoint: '/gateway/marketing/coupon-templates/Get',
+    detailMethod: 'GET',
     listSource: { url: '/gateway/marketing/coupon-templates/List', method: 'POST' },
     listRoute: '/coupons/templates',
     fields: [
@@ -193,6 +201,8 @@ export const FORMS = {
     createEndpoint: '/gateway/marketing/coupon-activities/Create',
     updateEndpoint: '/gateway/marketing/coupon-activities/Update',
     idField: 'activityId',
+    detailEndpoint: '/gateway/marketing/coupon-activities/Get',
+    detailMethod: 'GET',
     listSource: { url: '/gateway/marketing/coupon-activities/List', method: 'POST' },
     listRoute: '/coupons/activities',
     fields: [
@@ -280,8 +290,13 @@ export const FORMS = {
     createEndpoint: '/gateway/marketing/activities/Create',
     updateEndpoint: '/gateway/marketing/activities/Update',
     idField: 'activityId',
+    detailEndpoint: '/gateway/marketing/activities/Get',
+    detailMethod: 'GET',
     listRoute: '/promotions',
     listSource: { url: '/gateway/marketing/activities/List', method: 'POST' },
+    // 适用范围不在表单上（这个表单只做「全场」），但**必须原样带回去**：
+    // 编辑接口收到什么就写什么，不带等于把定向活动洗成全场。
+    carry: ['targetType', 'targets'],
     fields: [
       { field: 'activityName', label: '活动名', required: true, pattern: '^.{2,128}$', patternMessage: '活动名 2-128 个字符' },
       { field: 'activityType', label: '活动类型', type: 'select', required: true, default: 1, static: [{ value: 1, label: '满减' }, { value: 2, label: '满折' }, { value: 3, label: '满赠' }] },
@@ -292,7 +307,9 @@ export const FORMS = {
       { field: 'giftQuantity', label: '赠送张数', type: 'number', min: 1, max: 100, default: 1, help: '满赠每单赠送张数，1 ~ 100' },
       { field: 'startTime', label: '开始时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
       { field: 'endTime', label: '结束时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
-      { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0 },
+      // 归属创建后锁定：更新接口根本不接收 PlatformId，
+      // 做成可编辑的下拉只会让人以为改生效了。
+      { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0, readonlyInEdit: true, help: '归属平台创建后不可修改' },
       { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0 },
       { field: 'status', label: '状态', type: 'select', required: true, default: 1, static: [{ value: 1, label: '启用' }, { value: 2, label: '停用' }] },
     ],
@@ -311,7 +328,7 @@ export const FORMS = {
       { field: 'startTime', label: '开始时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
       { field: 'endTime', label: '结束时间', type: 'datetime', required: true, toApi: toUtcIso, format: toLocalInput },
       { field: 'sortOrder', label: '排序', type: 'number', min: 0, default: 0 },
-      { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0 },
+      { field: 'platformId', label: '归属平台', type: 'select', options: 'platforms', default: 0, readonlyInEdit: true, help: '归属平台创建后不可修改' },
     ],
   },
 
@@ -338,7 +355,9 @@ export const FORMS = {
     createEndpoint: '/gateway/logistics-companies/Create',
     updateEndpoint: '/gateway/logistics-companies/Update',
     idField: 'logisticsId',
-    listRoute: '/orders/logistics-companies',
+    // 物流公司挂在 platforms 模块下。写成 `/orders/...` 时保存成功也会被
+    // catch-all 送去工作台 —— 数据存进去了，但运营看到的是「保存完跳到首页」。
+    listRoute: '/platforms/logistics-companies',
     listSource: { url: '/gateway/logistics-companies/List', method: 'POST' },
     fields: [
       { field: 'companyName', label: '公司名称', required: true, pattern: '^.{1,64}$', patternMessage: '公司名称 1-64 个字符' },

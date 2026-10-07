@@ -28,7 +28,7 @@ public sealed class QueryAdminEvaluatesHandler
     {
         var filter = new EvaluateAdminFilter(
             request.SpuId, request.MerchantId, request.StarScore,
-            request.OnlyHidden, request.Page, request.PageSize);
+            request.OnlyHidden, request.Keyword, request.Page, request.PageSize);
 
         var page = await _repo.PageForAdminAsync(filter, ct).ConfigureAwait(false);
         var dtos = await EvaluateAssembler.BuildListAsync(_repo, page.Items, forAdmin: true, ct);

@@ -79,7 +79,7 @@ SimpleShop 是一个**多平台（多租户）电商系统**，目标是跑通�
 
 ## 快速开始
 
-所有脚本均为 **PowerShell**。
+Windows 用 **PowerShell**（`scripts/*.ps1`）；Linux（Mint / Ubuntu）用 **bash**（`deploy/linux/*.sh`，含低内存档）。
 
 | 步骤 | 命令 | 说明 |
 |---|---|---|
@@ -91,6 +91,30 @@ SimpleShop 是一个**多平台（多租户）电商系统**，目标是跑通�
 | 6 | `./scripts/seed-data.ps1` | 生成演示数据（平台/商户/商品/活动/券/用户/订单/秒杀场次） |
 | 7 | 后台 `apps/admin-vue` → build + preview `:5173` | 管理后台 |
 | 8 | 商城 `apps/user-uniapp` → build + preview `:5174` | 商城 H5（微信小程序 `build:mp-weixin`） |
+
+**Linux Mint / Ubuntu（16G 低内存档）**
+
+```bash
+cd deploy/linux
+chmod +x ./*.sh && ./build.sh     # 首次：构建后端 + 前端
+./start-infra.sh minimal && ./init-db.sh   # 全新设备首次：建库建表（数据卷迁移可跳过）
+./start-all.sh                    # minimal 档全套（~2.4G）；需要搜索/日志面板时用 ./start-all.sh full（~4.2G）
+./status.sh                       # 状态与内存占用；./stop-all.sh 全停
+```
+
+分档与内存预算、首次准备（docker 组 / `vm.max_map_count` / swap）、排障见 [`deploy/linux/README.md`](deploy/linux/README.md)。
+
+**AgileConfig 管理台**
+
+| 项 | 值 |
+|---|---|
+| 地址 | `http://localhost:5000/ui` |
+| 账号 | `deploy/.env` 的 `AGILECONFIG_ADMIN_USER`（默认 `admin`） |
+| 密码 | `deploy/.env` 的 `AGILECONFIG_ADMIN_PASSWORD`（该文件已 gitignore，**不入库**） |
+| 首次初始化 | 部署脚本调用 `POST /admin/InitPassword` 设置初始密码；忘记密码时清空 `simpleshop_configcenter` 的 `agc_user` 后重启容器可重新初始化 |
+
+> 管理密码只存在于 `deploy/.env`，被跟踪的文档与脚本里都不出现明文（安全约定，见 `AI_HANDOFF.md`）。
+> 各微服务读取配置用的是只读应用凭据（`AGILECONFIG_APP_SECRET`），与能写配置的管理密码是两回事。
 
 **演示账号**
 
@@ -121,7 +145,7 @@ SimpleShop 是一个**多平台（多租户）电商系统**，目标是跑通�
 | `src/` | 后端微服务（每服务四层） |
 | `src/Collaboration/` | 公共类库（通用仓储、模型基类、gRPC 契约、注册扩展、公共枚举与 DTO） |
 | `SimpleShop.slnx` | **根解决方案**：登记全部工程，按磁盘目录自动嵌套 |
-| `src/<服务名>/<服务名>.slnx` | **每个微服务一个独立解决方案**，只含自己的四个分层工程。日常开发打开这个 |
+| `src/<服务名>/<服务名>.sln` | **每个微服务一个独立解决方案**（经典 `.sln` 格式）：含自己的四个分层工程 + 引用的 `Collaboration` 工程；根目录 `SimpleShop.slnx` 仍是全量入口。Rider / VS 里按文件夹打开单个服务时用这个 |
 | `Gateway/` | Ocelot 网关 |
 | `apps/admin-vue/` | 管理后台（Vue3 + Element Plus） |
 | `apps/user-uniapp/` | 商城端（UniApp：H5 + 微信小程序） |
@@ -129,6 +153,8 @@ SimpleShop 是一个**多平台（多租户）电商系统**，目标是跑通�
 | `tests/visual/` | 视觉回归产物：`baseline` 基线 / `current` 本次 / `diff` 差异三联图 |
 | `scripts/` | PowerShell 启动与初始化脚本 |
 | `deploy/` | docker-compose（AgileConfig / EFK / 自建 ES-IK 镜像） |
+| `deploy/linux/` | **Linux 低内存启动脚本**（bash：start-all / start-services / start-web / stop-all / status；三档 minimal/standard/full） |
+| `deploy/docker-compose.linux.yml` | Linux 低内存覆盖层（ES 512m 堆 / Kibana 384m 堆 / 容器 mem_limit 等，与基础 compose 叠加使用） |
 | `deploy/sql/<service>/` | **各服务建表 DDL 与种子数据**（幂等可重跑，不用 CodeFirst） |
 | `deploy/elasticsearch/` | 自建 ES 镜像 Dockerfile（装 IK 分词插件） |
 | `deploy/shared/` | **校验规则单一来源**（`validation-rules.json`），构建时生成 C# 与 JS 常量 |

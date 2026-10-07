@@ -38,7 +38,8 @@ public sealed class CreateLogisticsCompanyHandler
             Logo = request.Logo?.Trim() ?? string.Empty,
             SortOrder = request.SortOrder,
             Status = request.Status,
-            PlatformId = request.PlatformId
+            PlatformId = request.PlatformId,
+            Remark = request.Remark?.Trim() ?? string.Empty
         };
 
         var id = await _companies.InsertAsync(company, ct).ConfigureAwait(false);

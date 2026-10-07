@@ -141,8 +141,12 @@ export function idOf(row) {
     row.customerId ??
     row.merchantId ??
     row.productId ??
-    row.templateId ??
+    // 🔴 activityId 必须排在 templateId **前面**：券活动的行形状是
+    // { activityId, templateId, ... }（没有 id 字段），反过来取会把
+    // 「模板 Id」当成活动 Id 拼进 /coupons/activities/edit/{id}，
+    // 编辑页 404，而报告里看起来像「券活动页坏了」。
     row.activityId ??
+    row.templateId ??
     row.sessionId ??
     row.refundId ??
     row.logisticsId ??

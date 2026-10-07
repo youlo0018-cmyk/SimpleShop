@@ -495,6 +495,7 @@ public interface IOrderStore
     /// <param name="logisticsCompanyId">物流公司 Id。</param>
     /// <param name="logisticsCompanyName">物流公司名称快照。</param>
     /// <param name="trackingNo">运单号。</param>
+    /// <param name="shipRemark">发货备注（选填），写入 ship_remark 列。</param>
     /// <param name="shippedAt">发货时间 UTC。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>受影响行数；为 0 表示状态已被别人改过，本次不生效。</returns>
@@ -508,7 +509,29 @@ public interface IOrderStore
     Task<int> TryShipAsync(
         long orderId, int fromStatus, int toStatus,
         long logisticsCompanyId, string logisticsCompanyName, string trackingNo,
-        DateTime shippedAt, CancellationToken ct = default);
+        string shipRemark, DateTime shippedAt, CancellationToken ct = default);
+
+    /// <summary>
+    /// 无物流信息的发货 / 备货（虚拟发货 20→30、自提备货 20→40）：
+    /// 条件更新状态并写入发货内容 / 备注。
+    /// </summary>
+    /// <param name="orderId">订单 Id。</param>
+    /// <param name="fromStatus">期望的原状态，必须是待发货。</param>
+    /// <param name="toStatus">目标状态：虚拟发货为待收货，自提备货为待取货。</param>
+    /// <param name="shipRemark">发货内容 / 备货备注。虚拟商品是卡号 / 激活码，**会展示给客户**。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>受影响行数；为 0 表示状态已被别人改过，本次不生效。</returns>
+    /// <remarks>
+    /// <b>单独一个方法而不是给 <see cref="TryTransitStatusAsync"/> 再加可选参数</b>：
+    /// ship_remark 只在发货 / 备货这两条路径上写。挂进通用方法后，
+    /// 「确认收货」「支付完成」等调用点也可能顺手带上它，
+    /// 而这种错误在页面上完全看不出来。状态与发货内容必须在**同一条 UPDATE** 里写：
+    /// 拆开的话中间崩掉会留下一张「已发货但发货内容为空」的虚拟单——
+    /// 顾客付了钱，卡号却永远收不到。
+    /// </remarks>
+    Task<int> TryDeliverAsync(
+        long orderId, int fromStatus, int toStatus,
+        string shipRemark, CancellationToken ct = default);
 
     /// <summary>按订单行聚合已退数量与已退金额。</summary>
     /// <param name="orderId">订单 Id。</param>

@@ -26,7 +26,13 @@
           <el-option value="profile" label="我的" />
         </el-select>
         <span v-else class="head__page head__page--fixed">店铺页</span>
-        <el-button :loading="saving" @click="saveDraft">存草稿</el-button>
+        <!--
+          必须写成 `saveDraft()` 而不是 `saveDraft`：直接绑函数名时 Vue 会把
+          MouseEvent 当成第一个实参传进去，而 `saveDraft(silent = false)`
+          只判真假 —— 事件对象恒为真，于是成功提示被当成「静默保存」吞掉，
+          界面上点了「存草稿」什么反馈都没有（草稿其实已经存进去了）。
+        -->
+        <el-button :loading="saving" @click="saveDraft()">存草稿</el-button>
         <el-button type="primary" :loading="publishing" @click="publish">发布</el-button>
       </div>
     </div>
@@ -66,11 +72,89 @@
           :page="page"
           :components="components"
           :library="library"
+          :selected-index="selectedIndex"
+          @select="selectComponent"
           @reorder="onReorder"
           @move="move"
           @remove="remove"
         />
       </section>
+
+      <!--
+        右侧属性面板（DATA_SPEC 5.29「选中组件后编辑其私有配置」）。
+        之前只有「组件库 + 手机预览」两栏：组件能拖进来、能排序、能删，
+        但**改不了里面的字和图片** —— 用户明确要求「A3 可以改组件内的内容」
+        「商户可以改自己店铺页的轮播图」，没有这一栏这两条就是空的。
+        字段由后端下发的 props schema 驱动，前端不按组件类型写死分支。
+      -->
+      <aside class="props">
+        <p class="props__title">组件属性</p>
+
+        <p v-if="!selected" class="props__empty">
+          在中间的手机预览里点一个组件，这里就能改它的内容。
+        </p>
+
+        <template v-else>
+          <p class="props__name">{{ nameOf(selected.type) }}</p>
+
+          <el-form label-position="top" class="props__form">
+            <el-form-item label="宽度（栅格）">
+              <el-select v-model="selected.span" class="props__control">
+                <el-option v-for="s in SPANS" :key="s" :label="`${s} / 12`" :value="s" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="高度（px，0 = 按组件默认）">
+              <el-input v-model.number="selected.height" type="number" class="props__control" />
+            </el-form-item>
+
+            <el-form-item
+              v-for="f in selectedProps"
+              :key="f.key"
+              :label="f.label"
+            >
+              <ImageUploader
+                v-if="f.kind === 'image'"
+                v-model="selected.props[f.key]"
+                :hint="f.placeholder"
+              />
+              <ImageUploader
+                v-else-if="f.kind === 'images'"
+                v-model="selected.props[f.key]"
+                multiple
+                :max="f.max || 8"
+                show-index
+                sortable
+                :hint="f.placeholder"
+              />
+              <el-input
+                v-else-if="f.kind === 'textarea'"
+                v-model="selected.props[f.key]"
+                type="textarea"
+                :rows="3"
+                class="props__control"
+                :placeholder="f.placeholder"
+              />
+              <el-input
+                v-else-if="f.kind === 'number'"
+                v-model.number="selected.props[f.key]"
+                type="number"
+                class="props__control"
+                :placeholder="f.placeholder"
+              />
+              <el-input
+                v-else
+                v-model="selected.props[f.key]"
+                class="props__control"
+                :placeholder="f.placeholder"
+              />
+            </el-form-item>
+          </el-form>
+
+          <p v-if="!selectedProps.length" class="props__empty">
+            这个组件没有可改的内容，只能调宽度、高度和顺序。
+          </p>
+        </template>
+      </aside>
     </div>
   </div>
 </template>
@@ -81,17 +165,19 @@ import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import request from '@/api/request';
 import PhonePreview from '@/components/PhonePreview.vue';
+import ImageUploader from '@/components/ImageUploader.vue';
 
 const props = defineProps<{ merchantId?: string }>();
 const route = useRoute();
 
 const isMerchant = computed(() => !!props.merchantId);
-const merchantId = computed(() => Number(props.merchantId || route.params.id || 0));
+// 雪花 Id 全程按字符串传递；Number() 会丢末位精度。
+const merchantId = computed(() => String(props.merchantId || route.params.id || ''));
 const title = computed(() => (isMerchant.value ? '商户店铺装修' : '平台装修'));
 
 // 商户装修只能建店铺页，平台装修默认首页
 const page = ref(props.merchantId ? 'store' : 'index');
-const platformId = ref(0);
+const platformId = ref('');
 const platforms = ref<any[]>([]);
 const platformsLoading = ref(false);
 const saving = ref(false);
@@ -103,6 +189,34 @@ const dragging = ref<any>(null);
 const library = ref<any[]>([]);
 const warnings = ref<string[]>([]);
 const components = ref<any[]>([]);
+
+// 宽度只能是 12 栅格里的这几个值（与后端 DesignComponentRegistry.AllowedSpans 一致）。
+// 前端给下拉而不是自由输入：填个 5 会被后端拒，运营还得回头看错误提示。
+const SPANS = [1, 2, 3, 4, 6, 12];
+
+/** 当前选中的组件下标；-1 = 没选中。 */
+const selectedIndex = ref(-1);
+
+const selected = computed(() =>
+  selectedIndex.value >= 0 ? components.value[selectedIndex.value] : null);
+
+/** 选中组件的可编辑属性 schema（来自后端组件库，按 type 取）。 */
+const selectedProps = computed(() => {
+  const type = selected.value?.type;
+  if (!type) return [];
+  return library.value.find((c: any) => c.type === type)?.props || [];
+});
+
+function selectComponent(i: number) {
+  selectedIndex.value = i;
+}
+
+/** 选中项变化后把下标拉回合法范围，避免删除后属性面板指向不存在的组件。 */
+function clampSelection() {
+  if (selectedIndex.value >= components.value.length) {
+    selectedIndex.value = components.value.length - 1;
+  }
+}
 
 const grouped = computed(() => {
   const map = new Map<string, any[]>();
@@ -126,6 +240,9 @@ function onDrop() {
   const c = dragging.value;
   if (!c) return;
   components.value.push({ id: nextId(), type: c.type, span: 12, height: 80, props: {} });
+  // 拖进来就选中：运营的下一步一定是「把它的字和图片改成我要的」，
+  // 让他在预览里再点一下是多余的一步。
+  selectedIndex.value = components.value.length - 1;
   dragging.value = null;
 }
 
@@ -137,12 +254,16 @@ function onReorder(target: number) {
   const [item] = list.splice(from, 1);
   list.splice(target, 0, item);
   components.value = list;
+  // 选中项跟着被拖动的那一个走。不跟的话属性面板会**悄悄切到邻居身上**：
+  // 用户拖完组件接着改标题，改的却是另一个组件，而且界面上看不出任何异常。
+  if (selectedIndex.value === from) selectedIndex.value = target;
 }
 
 function move(i: number, delta: number) {
   const to = i + delta;
   if (to < 0 || to >= components.value.length) return;
   onReorderTo(i, to);
+  if (selectedIndex.value === i) selectedIndex.value = to;
 }
 
 function onReorderTo(from: number, to: number) {
@@ -154,6 +275,12 @@ function onReorderTo(from: number, to: number) {
 
 function remove(i: number) {
   components.value.splice(i, 1);
+  clampSelection();
+}
+
+/** 组件类型的中文名（组件库里有就显示中文，没有就退回 type）。 */
+function nameOf(type: string) {
+  return library.value.find((c: any) => c.type === type)?.name || type;
 }
 
 function buildConfig(): string {
@@ -199,9 +326,17 @@ async function load() {
 
     warnings.value = res?.warnings || [];
     const cfg = parseConfig(res?.configJson);
-    components.value = cfg?.pages?.[page.value]?.components || [];
+    const loaded = cfg?.pages?.[page.value]?.components || [];
+    // props 缺失 / 不是对象时补空对象：属性面板直接 v-model 到 props[key]，
+    // 没有这层兜底，一条历史配置就能让整个面板报错。
+    components.value = loaded.map((c: any) => ({
+      ...c,
+      props: c?.props && typeof c.props === 'object' ? c.props : {},
+    }));
+    selectedIndex.value = -1;
   } catch {
     components.value = [];
+    selectedIndex.value = -1;
   } finally {
     loading.value = false;
   }
@@ -213,7 +348,7 @@ async function loadPlatforms() {
   try {
     const rows = await request('/gateway/platforms/Options', { method: 'GET', silent: true });
     platforms.value = (Array.isArray(rows) ? rows : []).map((r: any) => ({
-      value: Number(r.id ?? r.Id ?? 0),
+      value: String(r.id ?? r.Id ?? ''),
       label: String(r.name ?? r.platformName ?? ''),
     }));
     if (platforms.value.length) platformId.value = platforms.value[0].value;
@@ -320,9 +455,19 @@ onMounted(load);
 
 .workbench {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: 200px minmax(0, 1fr) 300px;
   gap: var(--space-5);
   align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .workbench {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .props {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 900px) {
@@ -362,6 +507,44 @@ onMounted(load);
 
 .palette__item:hover {
   background: var(--neutral-bg);
+}
+
+/* 属性面板：与左侧组件库同一张卡片样式，保持「三栏一体」的观感 */
+.props {
+  padding: var(--space-4);
+  border-radius: var(--radius-card);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+}
+
+.props__title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sub);
+  font-weight: 600;
+}
+
+.props__name {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft, var(--neutral-bg));
+  color: var(--brand);
+  font-size: var(--text-note);
+}
+
+.props__empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-note);
+  line-height: 1.6;
+}
+
+.props__control {
+  width: 100%;
+}
+
+.props__form :deep(.el-form-item) {
+  margin-bottom: var(--space-3);
 }
 
 /* 商户装修锁定在店铺页，这里用同样宽度的静态文字代替下拉，

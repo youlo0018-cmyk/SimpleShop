@@ -44,6 +44,41 @@ public static class PromotionNames
             TargetTypes.BySku => $"指定规格（{PromotionCalculator.ParseTargets(targets).Count} 个 SKU）",
             _ => "未知范围"
         };
+
+    /// <summary>「优惠」列的展示文本：按活动类型给出满减金额 / 折扣 / 赠品张数。</summary>
+    /// <param name="type">活动类型。</param>
+    /// <param name="discountAmount">满减金额。</param>
+    /// <param name="discountRate">折扣率（折）。</param>
+    /// <param name="giftQuantity">满赠每单张数。</param>
+    /// <returns>展示文本。</returns>
+    /// <remarks>
+    /// 列表的「优惠」列不能直接绑 <c>discountAmount</c>：满折活动那一列永远是 0.00，
+    /// 满赠活动也没有金额可显示。前端的列格式化器只认固定字段（金额 / 计数 / 时间），
+    /// 所以由服务端按类型算好一段文本下发；金额遵循「只显示数字、两位小数」的口径。
+    /// </remarks>
+    public static string DiscountValue(int type, decimal discountAmount, decimal discountRate, int giftQuantity)
+        => type switch
+        {
+            ActivityTypes.FullReduction => discountAmount.ToString("0.00"),
+            ActivityTypes.Discount => $"{discountRate:0.##} 折",
+            ActivityTypes.Gift => $"赠 {giftQuantity} 张",
+            _ => string.Empty
+        };
+}
+
+/// <summary>营销活动 DTO 里时间字段的统一格式。</summary>
+/// <remarks>
+/// 必须带 <c>Z</c>：编辑页把这两个字段交给 `new Date(...)` 再按本地时区显示，
+/// 没有时区标记时 JS 会当成**本地时间**解析 —— 界面上看到的是 UTC 原值，
+/// 保存时又按本地转 UTC，每编辑一次活动时间就整体偏移一个时区（实测差 8 小时）。
+/// </remarks>
+internal static class PromotionTimeFormat
+{
+    /// <summary>把库里的 UTC 时间转成带 <c>Z</c> 的 ISO 字符串。</summary>
+    /// <param name="value">数据库中的 UTC 时间（Kind 可能是 Unspecified）。</param>
+    /// <returns>形如 <c>2026-10-07T07:29:00Z</c> 的字符串。</returns>
+    public static string UtcIso(DateTime value)
+        => DateTime.SpecifyKind(value, DateTimeKind.Utc).ToString("yyyy-MM-ddTHH:mm:ssZ");
 }
 
 /// <summary>新建营销活动的处理器。</summary>
@@ -216,9 +251,12 @@ public sealed class QueryPromotionActivitiesHandler
             a.Id, a.ActivityName, a.ActivityType, PromotionNames.TypeName(a.ActivityType),
             a.ThresholdAmount, a.DiscountAmount, a.DiscountRate,
             a.TargetType, PromotionNames.TargetName(a.TargetType, a.Targets),
-            a.StartTime.ToString("yyyy-MM-dd HH:mm"), a.EndTime.ToString("yyyy-MM-dd HH:mm"),
+            PromotionTimeFormat.UtcIso(a.StartTime), PromotionTimeFormat.UtcIso(a.EndTime),
             a.Status, PromotionNames.StatusName(a.Status),
-            a.GiftTemplateId, a.GiftQuantity)).ToList();
+            a.GiftTemplateId, a.GiftQuantity,
+            a.SortOrder, a.Targets, a.PlatformId,
+            PromotionNames.DiscountValue(a.ActivityType, a.DiscountAmount, a.DiscountRate, a.GiftQuantity)))
+            .ToList();
 
         return ApiResults.Ok(new PagedPromotionResult(dtos, total, request.Page, request.PageSize));
     }
@@ -248,9 +286,11 @@ public sealed class GetPromotionActivityHandler
             a.Id, a.ActivityName, a.ActivityType, PromotionNames.TypeName(a.ActivityType),
             a.ThresholdAmount, a.DiscountAmount, a.DiscountRate,
             a.TargetType, PromotionNames.TargetName(a.TargetType, a.Targets),
-            a.StartTime.ToString("yyyy-MM-dd HH:mm"), a.EndTime.ToString("yyyy-MM-dd HH:mm"),
+            PromotionTimeFormat.UtcIso(a.StartTime), PromotionTimeFormat.UtcIso(a.EndTime),
             a.Status, PromotionNames.StatusName(a.Status),
-            a.GiftTemplateId, a.GiftQuantity));
+            a.GiftTemplateId, a.GiftQuantity,
+            a.SortOrder, a.Targets, a.PlatformId,
+            PromotionNames.DiscountValue(a.ActivityType, a.DiscountAmount, a.DiscountRate, a.GiftQuantity)));
     }
 }
 

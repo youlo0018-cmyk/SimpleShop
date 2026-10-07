@@ -1058,8 +1058,38 @@ Invoke-Case 'API-ORD-090' '虚拟单：手动发货（不填物流信息）20 �
 
     # 确认收货也是一条进「已完成」的路，积分同样要发。
     # 漏掉的话就是「同一个功能，有的单给积分有的不给」，客服解释不了。
-    return $r.success -and $v.success -and $shipped.status -eq 30 -and $c.success -and $d.status -eq 50 `
+    # 发货内容必须原样落库并返回：虚拟商品的卡号是顾客拿到的唯一交付物，
+    # 只在弹窗里存在、详情里查不到，等于顾客付了钱什么都拿不到。
+    $shipRemarkOk = $shipped.shipRemark -eq '卡号 ABCD-1234'
+    Write-Host ("        发货内容回读='{0}'" -f $shipped.shipRemark) -ForegroundColor DarkGray
+
+    return $r.success -and $v.success -and $shipped.status -eq 30 -and $shipRemarkOk -and $c.success -and $d.status -eq 50 `
         -and ($after.totalEarned - $script:before090Points.totalEarned) -eq [long]$d.payableAmount
+}
+
+Invoke-Case 'API-ORD-090b' '🔴 虚拟发货必须填写发货内容（空 remark 被后端校验拦住）' {
+    # 前端必填挡的是手滑，这条验证的是**后端**：绕过前端的调用同样发不出去。
+    # 空着发货会让订单进入 30 待收货，而顾客手里没有卡号 —— 后台看不出任何异常。
+    $o = OrderPost 'Create' (New-OrderBody 'vnoremark' 2 1)
+    if (-not $o.success) { return $false }
+    $no = $o.data.orderNo
+    AdminOrderPost 'SimulatePayment' @{ orderNo = $no; succeed = $true; remark = '回归' } | Out-Null
+
+    $r = AdminOrderPost 'DeliverVirtual' @{ orderNo = $no }
+    $d = Get-Order $no
+    # 校验失败的顶层 message 统一是「请求参数校验失败」，具体原因在 errors.Remark 里
+    # （CODING_STANDARD 3.4：前端只用 errors 做 tip 提示）
+    $remarkErrors = @($r.errors.PSObject.Properties | Where-Object { $_.Name -eq 'Remark' } |
+        ForEach-Object { $_.Value })
+    Write-Host ("        空发货内容: success={0} msg={1} errors={2} 状态={3}" -f `
+        $r.success, $r.message, ($remarkErrors -join ' / '), $d.status) -ForegroundColor DarkGray
+
+    $ok = (-not $r.success) -and ($remarkErrors -join ' ') -match '发货内容' -and $d.status -eq 20
+
+    # 收尾：补上发货内容走完流程
+    AdminOrderPost 'DeliverVirtual' @{ orderNo = $no; remark = '卡号 ABCD-0003' } | Out-Null
+    OrderPost 'ConfirmReceipt' @{ customerId = $script:customerId; orderNo = $no } | Out-Null
+    return $ok
 }
 
 Invoke-Case 'API-ORD-091' '🔴 虚拟订单**签收后**不可退款（含部分退款）' {
@@ -1644,10 +1674,9 @@ Invoke-Case 'API-ORD-146' '🔴 P0 指定 SKU 的券只减适用行（逐行分�
         -and $pvA.couponDiscount -eq 20.00 -and $pvB.couponDiscount -eq 0.00
 
     OrderPost 'Cancel' @{ customerId = $script:customerId; orderNo = $d.orderNo } | Out-Null
-    Invoke-Api "$Gateway/gateway/marketing/coupon-activities/Update" 'Post' @{
-        activityId = $activity; activityName = "作用域券活动$($script:suffix)"; templateId = $template
-        claimStartTime = $now.AddMinutes(-5).ToString('o'); claimEndTime = $now.AddDays(1).ToString('o')
-        claimQuantity = 50; perUserLimit = 5; targetType = 3; targets = "[$skuA]"; sortOrder = 0; status = 2
+    # 收尾只停用，不整行覆盖：Update 会把适用范围洗成请求体里的值。
+    Invoke-Api "$Gateway/gateway/marketing/coupon-activities/SetStatus" 'Post' @{
+        activityId = $activity; status = 2
     } $script:adminHeaders | Out-Null
     Invoke-Api "$Marketing/marketing/coupon-templates/Delete" 'Post' @{ templateId = $template } | Out-Null
 

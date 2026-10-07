@@ -27,6 +27,7 @@
 | `DESIGN_SPEC.md` | **苹果风设计体系**（token / 组件规范）、**原始数据禁显示清单**、硬约束检查清单 | 写任何前端页面之前 |
 | `TEST_CASES.md` | **测试用例**（单元 / API / UI / 视觉截图 / P0 专项 / 越权矩阵） | 实现期照着写测试、CI 配置 |
 | `REVIEW.md` | 全链路执行顺序 + 风险审计 | 改交易/库存/定时/积分/秒杀链路时 |
+| `REQUIREMENTS_TRACE.md` | **需求追溯与漂移审计**：用户明确提过的需求 → 实现位置 → 验证证据 | 新需求 / 改导航 / 改交互 / 发现需求与实现不一致时 |
 | 本文件 | 环境、启动、协作约定、进度 | 每次开场 |
 
 ---
@@ -42,6 +43,18 @@ PowerShell 一键拉起全部中间件：
 ```
 
 包含：`postgres` / `redis` / `consul` / `rabbitmq` / `agileconfig` / `elasticsearch`（**自建 IK 镜像**）/ `kibana` / `fluentd`。
+
+**Linux（Mint / Ubuntu，低内存档）**：`deploy/linux/` 提供 bash 版一键脚本，
+分 `minimal` / `standard` / `full` 三档并按内存裁剪（ES 512m 堆、Kibana 384m 堆、.NET 工作站 GC、串行启动）：
+
+```bash
+cd deploy/linux
+./build.sh          # 首次：构建后端 + 前端
+./start-all.sh      # minimal 档全套（~2.4G）；需要搜索/日志时 ./start-all.sh full（~4.2G）
+./status.sh / ./stop-all.sh
+```
+
+细节与内存预算表见 `deploy/linux/README.md`。
 
 ### 2.2 数据库
 
@@ -236,11 +249,11 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 | 下单锁积分 | **接受冻结模型的复杂度**（下单冻结 → 支付实扣 / 取消解冻 / 退款回收） |
 | 店铺评分 | **只统计有评价商品的均分**，**每日一更新**（03:00） |
 | 配送方式 | **虚拟 / 快递 / 自提** 三种 |
-| 虚拟发货 | **手动点发货，不填物流信息** |
+| 虚拟发货 | **手动点发货，不填物流信息**；但**必填发货内容**（卡号 / 激活码），落库并展示给客户（D-38 / D-40） |
 | 虚拟退款 | **确认收货后不可退款**（仅虚拟订单；实物仍可退） |
 | 取货码 | **订单号派生短码 + RSA 签名**，格式 `{8位短码}{8位签名}` |
 | 密钥 | **私钥公钥都放服务器**，前端只显示与接收，加解密全部服务端完成 |
-| 核销方式 | **手输 + 扫码** 两种都支持 |
+| 核销方式 | **手输 + 扫码** 两种都支持（密文 344 字符，实际以扫码枪 / 粘贴为主，输入框保留） |
 | 券数量 | **订单级只能一张**；结算页默认选最优券（并列取最临期），可改选 |
 | 活动类型 | 满减 / 满折 / 满赠 / **新增秒杀** |
 | 秒杀库存 | **划出常规库存**，场次结束/中止立即回补 |
@@ -281,6 +294,169 @@ node ./tests/e2e/visual-regression.js        # 视觉回归（对比基线，产
 ## 5. 进度日志
 
 > 倒序，新条目写在**最上面**。每条格式：日期（第 N 轮）：标题 + 变更点 + 验证结果 + 回归。
+
+### 2026-10-07：Linux Mint 低内存启动方案（deploy/linux）
+
+目标设备换成 **Linux Mint，16G 内存（实际可用 ~13.5G）**。原有的 `scripts/*.ps1` 是 Windows 口径，
+且默认中间件参数偏重（实测：ES 1.9G、Kibana 675M、16 个 .NET 服务各 ~140M ≈ 2.3G），
+低内存设备上启动峰值不可控。本轮交付一套**分档 + 低内存**的 Linux 启动脚本。
+
+**先确认了三件事（决定 minimal 档能裁到什么程度）**：
+
+| 组件 | 结论 | 依据 |
+|---|---|---|
+| RabbitMQ | **可缺省**：事件发布懒连接 + 未配置时空实现 | `EventBusRegistration` / `EventBus` |
+| Elasticsearch | **可缺省**：索引初始化失败不阻止启动，搜索降级为数据库浏览 | `ProductService/Program.cs` |
+| Consul | **可缺省**：网关用静态 `DownstreamHostAndPorts`，不依赖服务发现 | `GatewayHealthCheck` 注释 |
+| LogService | **默认不启**：整个服务就是写 ES 的，属 full 档 | `LogService/ServiceExtensions` |
+
+**交付物**：
+
+- `deploy/docker-compose.linux.yml`（覆盖层，不动基础文件）：ES 堆 512m、Kibana 384m、
+  MQ 内存水位 0.25、Redis `384M + noeviction`（**不能用 LRU**：里面是会话/锁/workerId 租约）、
+  postgres `shared_buffers=192M`、逐容器 `mem_limit`（上限非预留）。
+- `deploy/linux/*.sh`（9 个，bash，Linux 原生零依赖）：`common` / `start-infra` / `init-db` / `build` /
+  `start-services` / `start-web` / `start-all` / `stop-all` / `status`。
+  - `start-services.sh`：**工作站 GC**（`DOTNET_gcServer=0`，每服务常驻 ~140M → ~80-110M）+ **串行启动**
+    （16 个进程同时 JIT/建连是峰值杀手）+ 先探 AgileConfig 可达（fail-fast 提示比 16 份超时日志快）。
+  - 三档：`minimal`(~2.4G) / `standard`(~2.6G) / `full`(~4.2G)；加 Mint 桌面后 minimal≈4G、full≈6G。
+  - `stop-all.sh` 按**端口**找进程（pid 文件只兜底无端口进程），容器 `stop` 不删。
+- 首次初始化两条路径（README 2.1）：**迁移 `deploy/data/` 数据卷**（推荐）或**全新初始化**
+  —— 后者 = `init-db.sh`（建库/建表/SQL 种子，bash）+ 3 个 pwsh 种子脚本跑一次
+  （权限树 245 行 / 角色 110 行 / AgileConfig 配置 379 行数据量太大，**不做第二份 bash 实现**以免两套漂移；
+  日常启动不需要 pwsh）。
+- `deploy/linux/README.md`：首次准备（docker 组、`vm.max_map_count`、swap、chmod +x）、
+  日常用法、低内存逐项对照表、排障表。
+- `.gitattributes`：`*.sh text eol=lf`（CRLF 会让 bash 报 `\r: command not found` 且行号错位）。
+
+**验证**：`bash -n` 9/9 通过（bash:5 容器内，含 `init-db.sh`）；`load_services` 的 node 主路径与
+awk 兜底（含 CRLF 兼容——Windows 写的 JSON 带 `\r` 会让 implemented 比较永远为假）容器内实测输出 17 个服务；
+`docker compose config` 合并正确
+（ES_JAVA_OPTS 512m / NODE_OPTIONS 384m / mem_limit 全部生效 / redis command 完整保留 appendonly）；
+`up --dry-run` 通过。**Windows 流程不受影响**（ps1 与基础 compose 均未改动）。
+
+### 2026-10-07：需求漂移审计第四轮（微服务解决方案 / 密码盐 / AgileConfig 登录 / 虚拟发货内容）
+
+起因：用户发现「支付 / 库存合并到订单和商品列表」没写进需求文件（实为 D-1，已补），
+随后要求**全面复查历史需求是否还有漂移**。逐条对照对话历史、`AI_HANDOFF` 4.3 确认表与实现，
+新增 D-35 ~ D-40 六条（完整表见 `REQUIREMENTS_TRACE.md`）：
+
+| 漂移 | 结论 |
+|---|---|
+| D-35 **微服务级 `.sln` 从来不存在** | README / PLAN 声称「每个微服务一个独立解决方案」，`src/` 下实际只有总 `SimpleShop.slnx`。用户明确要求过「总 slnx + 每个微服务一个 sln」。**已为 18 个文件夹各生成 `<服务名>.sln`**（`dotnet sln add` 默认递归带上引用的 Collaboration 工程）；`dotnet sln list` 18/18 通过 |
+| D-36 密码盐表述错误 | 文档写「`User.PasswordSalt` 字段」，实际**没有 salt 列**——盐编码在 `password_hash` 串内（`pbkdf2$迭代$盐$哈希`）。用户问过「盐保存了吗、没看到字段」，答案是「在哈希串里」。`REQUIREMENTS_TRACE` 与 `DATA_SPEC` 2.4 / 2.5 已按实现修正 |
+| D-37 AgileConfig 登录方式没写进文档 | 用户问过「你是怎么登录的」。管理台 `http://localhost:5000/ui`，凭据在 `deploy/.env`（不入库），首次初始化 `POST /admin/InitPassword`。README 已补小节；实测 `POST /admin/jwt/login` 拿得到 token |
+| D-38 虚拟发货「发货内容必填」没进业务文档 | `FulfillDialog` 写着「会展示给客户」，`BUSINESS.md` 只有「不填物流信息」。已在 6.1 / 7.1 / 7.2 三处补「必填发货内容（卡号 / 激活码 / 网盘链接）」 |
+| D-39 核销口径两份文档不一致 | `AI_HANDOFF` 4.3 写「手输 + 扫码」，`BUSINESS` 写「无法手输」。统一为「输入框 + 扫码枪（可粘贴）」；实现本来就是输入框 |
+| D-40 **虚拟发货内容被后端静默丢弃**（功能缺陷） | 弹窗必填的卡号 / 激活码提交后 `DeliverVirtualHandler` 直接扔掉——顾客永远看不到卡号，弹窗在骗运营。**已修**：`order` 表加 `ship_remark`（SQL 幂等补列）+ 实体字段 + `TryShipAsync` 带备注 + 新增 `TryDeliverAsync`（状态与内容同一条 UPDATE）+ 三个发货 Handler 全部写入 + 后端 `DeliverVirtualValidator`（空发货内容 400）+ 详情 DTO 返回 `shipRemark` + 后台详情 / 小程序虚拟订单详情展示 |
+| D-41 营销活动「优惠」列永远空白 | 列绑的 `discountValue` 后端根本没有（DTO 只有 `discountAmount` / `discountRate` / `giftQuantity`）。后端新增 `DiscountValue`（满减金额 / N 折 / 赠 N 张），前端列改文本渲染 |
+| D-42 营销活动启停没有确认框 | 补 `confirm`（与券活动 / 客户启停同口径） |
+| D-43 非菜单页巡检把券活动的 `templateId` 当 `activityId` | `idOf` 字段顺序修正，编辑券活动页不再 404 |
+| D-44 深测 create-flow 三条「新建后列表可见」失败 | 四层原因：搜索框只认回车（脚本没按）、列表按 `sortOrder` 排序（脚本填了 5/6）、营销活动 verify 取错 Id 字段（`activityId` → `id`）、颜色面板选择器过时（`.el-color-dropdown` → `.el-color-picker__panel`）。全部修复 |
+
+**验证**：`order-regression` 89/89（新增 `API-ORD-090b` 空发货内容被拦、`API-ORD-090` 断言发货内容回读）、
+`payment-regression` 28/28（其虚拟发货调用补上 remark）、单元测试 392/392、
+后端构建 0 警告 0 错误、`admin-vue` 构建通过、`user-uniapp` type-check 通过、16/16 服务健康。
+深测全量 **255/255**（原 254/258，含 4 条失败——本轮全部修复）、
+`admin-ui-regression` 31 + 27 + 10 全绿、`check-route-links` 71 路由 × 65 跳转全绿、
+e2e 全量 **695/695**。
+
+**排查插曲**：`order-regression` 的 `API-ORD-010/012` 一度失败（实付 50 而非 51）。
+根因不是代码，而是**上一轮临时探针留下的 5 个「探针活动」**（满 10 减 1、全场、启用中、未软删）
+持续命中新订单。软删这批残留后 010/012 立即恢复。教训：**临时探针造的活动也必须收尾**，
+或者至少验证后立刻软删；测试数据污染会伪装成「业务算错」。
+
+### 2026-10-07：后台逐页深测 + 漂移审计第三轮（表单落库 / 树 CRUD / 下拉数据源）
+
+本轮的目标是「每个页面、每个组件、每个功能都要测到」，做法是**先扫清单再补用例**：
+`tests/ui/admin-coverage-audit.mjs` 打开全部 57 个页面（31 菜单 + 27 非菜单，含参数页），
+把每个页面上的按钮 / 页签 / 字段 / 分段控件扫成 `tests/ui/admin-coverage.json`，
+再与深测实际点过的动作对照，缺口一目了然。
+
+**深测从 167 条扩到 254 条**，新增（每条都是「点下去 → 落库 → 回列表可见 → 收尾清理」的真跑）：
+
+| 新增覆盖 | 说明 |
+|---|---|
+| 11 个列表页的「新建 X」按钮 | 只验过「新建页能打开」，没验过「按钮能到那一页」——物流公司就栽在这里 |
+| 10 个新建表单的真实落库 | 品牌 / 物流 / 角色 / 账号 / 平台 / 商户 / 券模板 / 券活动 / 活动 / 场次 / 商品（含主图上传、规格、SKU 编码售价库存） |
+| 分类树、权限点树的完整 CRUD | 新增 → 修改 → 停用 → 启用 → 删除（含清理兜底） |
+| 分配权限：全部权限 / 保存 / 清空 | 断言只落库 77 条叶子、容器 Id 不落库 |
+| 分页「上一页」 | 只测下一页时，prev 绑错事件看不出来 |
+| 地区地址：新增省 / 市 / 区 → 保存 → 删除 → 保存 | 保存后重载验证真的落库，最后把数据还原 |
+| 场次商品：添加 → 删除 | 用真实 SKU |
+| 自提单取货码核销成功 | 建自提商品 → 下单 → 支付 → 备货 → RSA 取货码 → 界面核销 → 状态 40→50 |
+| 装修：拖入组件 → 上移 → 下移 → 删除 → 存草稿 → 发布 | 拖放用派发 DragEvent（locator.dragTo 对原生 HTML5 拖放不可靠） |
+| 登录页：退出 / 空提交 / 错误密码 / 重新登录 | |
+| 客户详情、优惠优先级与积分规则的「恢复默认值」 | |
+| 商品批量设置 SKU：空提交拦截 → 售价 / 库存套用到全部 SKU | |
+| 商品审核：结论切换（通过 / 驳回）→ 驳回原因必填 → 通过后 auditStatus=20 | |
+| 商户审核：通过确认框（带影响面）→ 审核状态落库 | |
+| 订单详情：快递发货（物流公司 + 运单号必填）→ 状态 20→30 | |
+| 订单详情：虚拟发货（发货内容必填）→ 状态 20→30 | |
+| 订单详情：整单退款与部分退款（勾行 + 金额）→ 退款单落库 | |
+| 死信重放：造一条真死信（RabbitMQ DLQ + ES 记录）→ 确认框 → 重放 → 已重放计数 +1 | |
+| 装修属性面板：上传图片 → 存草稿 → 草稿 JSON 里带上图片地址 | |
+| 富文本工具栏：加粗 / 斜体 / 标题 / 列表 / 插入图片（走真实上传）逐个验证 HTML | |
+| 图片上传器：「替换图片」后仍然只有一张且地址变了 | |
+| 地区：删除城市 / 删除区县；商品：删除规格值（el-tag 的关闭按钮）；场次商品：返回场次列表 | |
+
+**覆盖口径**：`admin-coverage-audit.mjs` 扫出的 **57 个页面 / 511 个可交互控件 / 58 个不同按钮标签**，
+现在每一个都能在 `admin-deep-regression.mjs` 里找到对应的点击用例
+（`↑ / ↓` 用 `title` 选择器、`订单明细` 用「明细」子串、`•` 用 `title="列表"`）。
+
+**本轮修掉的真缺陷**（完整表见 `REQUIREMENTS_TRACE.md` D-16 ~ D-25）：
+
+| 缺陷 | 影响 |
+|---|---|
+| 物流公司「新建 / 编辑」与保存回跳指向不存在的 `/orders/logistics-companies/*` | 点按钮被 catch-all 送去工作台 |
+| 树页的「修改 / 启停」发 `{ id }`，后端要 `CategoryId` / `PermissionId` | 编辑分类 / 权限点、启停分类一律 400 |
+| 分类页没有启停按钮（`toggleStatus` 的 else 分支不可达） | 只能进弹窗改状态 |
+| 券模板下拉用 List 当数据源（DTO 是 `templateId`），前端只认 `id` | **每个选项的 value 都是空串**，新建券活动永远存不了 |
+| 新建账号不选角色时 `roleIds: ""` | 整个命令绑定失败（HTTP 200 + 「不能为空」） |
+| 商品 SKU 表在规格项 ≥ 2 个时列错位，SKU 编码输入框消失 | 商品永远存不了 |
+| 设计器移动组件后属性面板悄悄切到邻居 | 改的是另一个组件 |
+| 订单发货弹窗没有取消按钮；客户启停没有确认框 | 与全站交互口径不一致 |
+| 订单详情页的「快递发货」只传 orderNo（校验器要求物流公司 + 运单号）→ 点了必然 400；且发货弹窗在列表 / 详情各写一份 | 抽成 `FulfillDialog` 共用；虚拟发货补内容必填；备货完成的取货码弹出来 |
+| 死信「重放」没有确认框 | 补确认框（说明会重复投递一次） |
+| `withReason` 类确认框（商户拒绝 / 退款拒绝 / 评价回复 / 评价隐藏）把原因传成了对象 `{__reason:"…"}` | 后端按 string 收，整个命令绑定失败（400「不能为空」）；`ListView` 改为按确认框形态分别传字符串 / 对象 |
+| 退款列表 / 积分流水 / 评价管理 三处**搜索框是装饰性的**（后端没有 `Keyword` 字段） | 补 keyword 过滤；评价占位符同步改成「商品名 / 评价内容」；新增 `API-ADM-101` 逐个列表比对「带/不带 keyword」的 total |
+| 列表搜索用例只验「输入能回车」，后端忽略 keyword 时照样通过 | 深测的搜索步骤改成「用一个绝对搜不到的词，行数必须掉到 0，清空后恢复」，17 个可搜索列表全部覆盖 |
+
+新增两个静态/汇总入口：`tests/ui/check-route-links.mjs`（71 条路由 × 65 处跳转，已挂进 `run-all.ps1`）与 `tests/ui/run-all.ps1`（静态核对 → 后台页面巡检 → 后台深测 → 小程序巡检）。
+
+### 2026-10-07：需求漂移审计第二轮（券活动启停 / 权限树 / 报表下钻 / 装修搭建器）
+
+继续按 `REQUIREMENTS_TRACE.md` 逐条对照代码、文档与运行中的界面，本轮发现并修正：
+
+| 漂移 | 修正 | 验证 |
+|---|---|---|
+| 券活动「启用 / 停用」复用整行 `Update`，把定向活动的 `Targets` 洗成全场；模板被删后永远启用不了 | 新增 `coupon-activities/SetStatus`（只改状态 + 最后操作人）；启用补确认框；`TemplateExists=false` 时不显示「启用」 | `API-MKT-108`；`admin-deep merged-coupon-activity-status` |
+| 权限树把容器 Id（虚拟根 0 / 业务大类 / 功能模块 / 空模块「品牌」）当权限点提交并落库 | 前端只提交带 `code` 的叶子、空模块复选框按 `selectable` 禁用；后端 `roles/BindPermissions` 只接受叶子 | `API-ADM-083d`（0 / 2101 / 2108 全被拒，真叶子放行） |
+| `BUSINESS.md` 5.2 权限点清单与库中实际内容对不上（`customer:update` / `order:receive` / `order:cancel`），5.4 写「78 条」 | 按 `permission` 表同步为 77 条，模块列表补「品牌」并把「文件与日志」并回一项 | 与 `psql` 查询逐条比对 |
+| 营销报表「订单明细」下钻指向不存在的 `/marketing/activity-records`，落到 catch-all 回工作台 | 改为 `/coupons/activity-records` | `admin-deep page-reports` |
+| 平台 / 商户装修「存草稿」100% 失败（前端只发当前页，后端按完整配置校验）；成功后还没有提示 | 后端 `DesignDraftMerger` 按页合并（其余顶层属性显式带了才覆盖）；`@click="saveDraft()"` 修掉 MouseEvent 被当成 `silent` 的坑 | `API-DS-036`；`admin-deep page-design-platform` |
+| 装修搭建器缺右侧属性面板，组件拖进来改不了内容（DATA_SPEC 5.29 要求；用户要求 A3 / A4） | 组件库接口下发 props schema；`DesignBuilderView` 补第三栏属性面板（宽度 / 高度 / 文本 / 图片）；`PhonePreview` 支持选中态 | `admin-deep page-design-platform`：改标题 → 存草稿 → 重开仍在 |
+| 两个 UI 回归脚本的默认端口是错的（后台脚本默认指到小程序 5174、小程序脚本默认指到空端口 5175） | 默认值改为 5173 / 5174，与 `scripts/start-web.ps1` 对齐 | 两个脚本**不带环境变量**直接跑：后台 31 + 27 + 10 全绿、小程序 22/22 |
+
+**深测覆盖扩展**：`admin-deep-regression.mjs` 新增工作台、权限点树、分类树、优惠优先级、积分规则、地区地址、四张报表（含区间与下钻）、索引对账、取货码核销、库存调整、商品规格 / SKU 矩阵、场次商品、订单详情、平台 / 商户装修共 16 组功能级用例；
+并把行操作改为逐页签查找（待发货才有「发货」、待取货才有「核销」）。
+
+**验证**：`admin-deep-regression` **167/167**；`admin-ui-regression` 31 菜单页 + 27 非菜单页 + 10 流程；小程序 UI 22/22；
+`tests/e2e/run-all.ps1` **693/693**（18 个脚本）；单元测试 **392/392**（新增 `DesignDraftMergerTests` 8 条）；
+`check-permission-paths.ps1` / `check-table-columns.ps1` 通过；`dotnet build` 0 警告 0 错误。
+
+### 2026-10-07：需求漂移审计第一轮（支付 / 库存合并、Options、雪花 Id）
+
+用户要求「检查之前提出的需求是否还有漂移」。按 `REQUIREMENTS_TRACE.md` 逐条对照代码与文档，发现并修正：
+
+| 漂移 | 修正 |
+|---|---|
+| 后台出现独立「支付」「库存」菜单 | 删除独立路由与死配置；支付回到订单列表/详情，库存回到商品列表「库存」操作；写入 `FRONTEND_DESIGN.md` |
+| `merchants/Options?platformId=0` 返回空 | `MerchantRepository.ListEnabledByPlatform` 改为 0 表示全部平台；补 `API-MP-029` |
+| 后台 / 小程序多处 `Number(雪花 Id)` | 修正配置页、装修、详情、表单、商品表单、场次商品、小程序最优券 Id |
+| 场次商品 SKU Id 校验后不显示错误 | 补 `:error="errors.sku"` |
+
+新增 `REQUIREMENTS_TRACE.md` 作为防漂移总表；`admin-deep-regression.mjs` 增加商品库存入口与订单模拟支付的真实深测。
 
 ### 2026-10-07：小程序补齐地址簿 / 收藏 / 发表评价与追评；C 端地区库与上传打通
 

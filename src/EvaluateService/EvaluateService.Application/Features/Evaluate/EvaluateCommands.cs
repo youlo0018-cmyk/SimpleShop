@@ -87,7 +87,7 @@ public record AppendEvaluateCommand(
 /// <param name="PageSize">每页条数。</param>
 public record QueryAdminEvaluatesCommand(
     long SpuId = 0, long MerchantId = 0, int StarScore = 0,
-    bool OnlyHidden = false, int Page = 1, int PageSize = 20)
+    bool OnlyHidden = false, string Keyword = "", int Page = 1, int PageSize = 20)
     : IRequest<ApiResponse<EvaluatePageResult>>;
 
 /// <summary>隐藏 / 取消隐藏评价（后台）。</summary>

@@ -248,7 +248,7 @@
 | 模块 | 权限点 |
 |---|---|
 | 账号 | `user:read` `user:create` `user:update` `user:status` |
-| 客户 | `customer:read` `customer:update` `customer:status` |
+| 客户 | `customer:read` `customer:status` |
 | 角色权限 | `permission:read` `permission:create` `permission:update` `permission:delete` `permission:manage` |
 | 平台 | `platform:read` `platform:create` `platform:update` |
 | 商户 | `merchant:read` `merchant:create` `merchant:update` `merchant:audit` |
@@ -256,7 +256,7 @@
 | 分类 | `category:read` `category:create` `category:update` `category:delete` |
 | 商品 | `product:read` `product:create` `product:update` `product:audit` `product:delete` |
 | 库存 | `inventory:read` `inventory:update` |
-| 订单 | `order:read` `order:ship` `order:receive` `order:cancel` `order:pickup` `order:simulate` `logistics:manage` |
+| 订单 | `order:read` `order:ship` `order:virtual-deliver` `order:pickup` `order:pickup-ready` `order:simulate` `order:refund` `logistics:manage` |
 | 支付 | `payment:read` |
 | 退款 | `refund:read` `refund:apply` `refund:approve` `refund:reject` |
 | 营销活动 | `marketing:read` `marketing:create` `marketing:update` `marketing:delete` |
@@ -282,6 +282,11 @@
 > 2. 同批次纠正了 30 条绑错的 `api_path`（原路径与真实端点对不上 = 该接口完全不鉴权）。
 >    `scripts/check-permission-paths.ps1` 现在把每条 `api_path` 按 ocelot 规则翻成下游路径，
 >    与控制器真实路由逐条比对，对不上就非零退出，并挂在 `tests/e2e/run-all.ps1` 里。
+> 3. 上表的**订单 / 客户**两行与种子脚本已对不上（表里还留着 `order:receive` / `order:cancel` /
+>    `customer:update`，实际落库的是 `order:virtual-deliver` / `order:pickup-ready` / `order:refund`）。
+>    总数虽然都是 77，但按表去核对权限时会找不到对应权限点。现已按 `permission` 表实际内容同步。
+>    核对口径：`docker exec simpleshop-postgres psql -U postgres -d simpleshoppermission -c
+>    "select parent_id, code, api_path from permission where code <> '' order by parent_id, id;"`。
 
 ### 5.3 网关 RBAC
 
@@ -302,10 +307,17 @@
 |---|---|---|
 | 根节点 | **全部权限**（虚拟节点） | 勾选它 = 勾中全部 |
 | 第 1 层 | 业务大类（5 个） | 系统管理、商品中心、交易管理、营销中心、数据报表 |
-| 第 2 层 | 功能模块（现有 23 组） | 账号、客户、角色权限、平台、商户、地区地址、分类、商品、库存、订单、支付、退款、营销活动、券、营销配置、限时抢购、积分、评价、装修、报表、搜索索引、文件、日志 |
+| 第 2 层 | 功能模块（现有 23 组） | 账号、客户、角色权限、平台、商户、地区地址、分类、品牌、商品、库存、订单、支付、退款、营销活动、券、营销配置、限时抢购、积分、评价、装修、报表、搜索索引、文件与日志 |
 | 第 3 层 | 权限点（叶子） | `user:read`、`order:ship` 等 |
 
-**「全部权限」的语义**：它是树上的**虚拟根节点，纯 UI 快捷方式**。勾选时批量勾中所有叶子；**存储上仍然存全部具体权限点**（78 条）。**不引入 `*` 这种特殊权限值**，RBAC 匹配逻辑保持简单。
+**「全部权限」的语义**：它是树上的**虚拟根节点，纯 UI 快捷方式**。勾选时批量勾中所有叶子；**存储上仍然存全部具体权限点**（77 条）。**不引入 `*` 这种特殊权限值**，RBAC 匹配逻辑保持简单。
+
+> **空模块**：`品牌` 模块节点保留在树上，但 `brands/*` 复用 `product:*` 权限点（DATA_SPEC 5.21），
+> 它自己没有叶子。后端 `PermissionNodeDto.Selectable` 对这种节点返回 `false`，前端 `RolePermissionsView`
+> 据此把它的复选框禁用 —— 否则运营会勾中一个「勾了却什么都没选」的节点。
+>
+> **只有叶子能落库**：`roles/BindPermissions` 只接受带 `code` 的叶子 Id，收到容器 Id
+> （业务大类 / 功能模块 / 虚拟根 `0` / 空模块）直接 400。前端「全部权限」按钮也改成只展开叶子集合再勾选。
 
 **「全部权限」与 `AllowedScopes` 正交**：前者只管权限点集合，后者管租户范围。`platform-admin` = 全部权限点 + 范围=平台；`merchant-admin` = 全部权限点 + 范围=商户。
 
@@ -345,7 +357,7 @@
 | 枚举 | 名称 | 运费 | 发货动作 | 收货动作 |
 |---|---|---|---|---|
 | `1` | 实物快递 | 按平台配置 | 商户手动发货，**必填**物流公司 + 运单号 | 用户确认收货 |
-| `2` | 虚拟商品 | 0 | 商户**手动**点发货，**不填任何物流信息** | 用户确认收货 |
+| `2` | 虚拟商品 | 0 | 商户**手动**点发货，**不填任何物流信息**，但**必须填写发货内容**（卡号 / 激活码 / 网盘链接，展示给客户） | 用户确认收货 |
 | `3` | 实物自提 | 0 | 商户点「备货完成」，**不填任何物流信息** | 商户核销取货码 |
 
 **不支持**「快递 + 自提都可选」——一个 SPU 只有一种配送方式。
@@ -389,7 +401,7 @@
 |---|---|---|---|
 | `10` | 待支付 | 全部 | 下单成功。**实付 0.00 的积分全额抵扣单直接跳 20** |
 | `20` | 待发货 | 全部 | 支付成功 |
-| `30` | 待收货 | 快递 / 虚拟 | 商户发货（快递必填物流信息；虚拟不填） |
+| `30` | 待收货 | 快递 / 虚拟 | 商户发货（快递必填物流公司 + 运单号；虚拟不填物流信息、必填发货内容） |
 | `40` | 待取货 | 仅自提 | 商户点「备货完成」，不填物流信息 |
 | `50` | 已完成 | 全部 | 快递/虚拟：用户确认收货；自提：商户核销取货码 |
 | `60` | 已退款 | 全部 | 退款审批通过（仅可从 20 / 30 / 40 进入） |
@@ -400,7 +412,7 @@
 | 规则 | 内容 |
 |---|---|
 | 部分发货 | **不支持**。一个订单一次性发货，不拆多包裹 |
-| 发货表单 | 后台发货弹窗按订单行 `DeliveryType` **动态显隐**物流字段；虚拟/自提**前端也不提交**物流字段 |
+| 发货表单 | 后台发货弹窗按订单行 `DeliveryType` **动态显隐**物流字段；虚拟/自提**前端也不提交**物流字段；虚拟发货**必填发货内容**（卡号 / 激活码，会展示给客户），自提只点「备货完成」 |
 | 取消 | **仅 10 可取消** → 释放库存 + 解冻积分 + 回退券占用 + 发 `order.cancelled` |
 | 超时关单 | **仅 10**，超时阈值 **30 分钟**，ScheduledService **每 30 秒**扫描 |
 | 签收后 | `50` 之后不可取消。**虚拟订单不可退款**；实物订单仍可退款（见第 10 节） |
@@ -566,6 +578,16 @@
 | 审批拒绝 | 退款单拒绝(90)，**无副作用** |
 | 退款是否退券 | **不退券**（券核销后不返还）。这是产品口径，客服话术需说明 |
 | 运费 | 整单退含运费；部分退款不退运费 |
+
+**两套退款记录（不要混为一谈）**：
+
+| 记录 | 表 | 谁写 | 出现在哪 |
+|---|---|---|---|
+| 退款申请 / 审批单 | PaymentService `refund_order` | C 端申请（`refunds/Apply`）或后台代客申请 | 后台「退款列表」——**审批队列** |
+| 退款执行记录 | OrderService `order_refund` | 审批通过后由 `payment.refunded` 驱动；或后台「代客退款」直接执行 | 订单详情的「退款记录」与行级可退余额 |
+
+> 后台「代客退款」是**立即生效**的退款（不走审批），所以它只写 `order_refund`，
+> **不会**出现在退款列表里；退款列表里的每一条都是等待审批的申请单。
 
 ### 10.3 积分回收规则
 

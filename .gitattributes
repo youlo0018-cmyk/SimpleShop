@@ -1,0 +1,4 @@
+# Linux 启动脚本必须保持 LF 行尾：
+# 文件一旦被 checkout 成 CRLF，Linux 上 bash 会报 "\r: command not found"，
+# 而且报错行号全错位，非常难查。
+*.sh text eol=lf

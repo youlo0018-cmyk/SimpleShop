@@ -64,8 +64,12 @@ export const REPORTS = {
       // 下钻带上当前时间档位：明细页的默认区间与报表不同的话，
       // 明细行数与报表上的「参与订单数」对不上，看起来像数据丢了。
       linkText: '订单明细',
+      // 🔴 参与记录页挂在 `/coupons/activity-records`（券模块下），
+      // 这里曾写成 `/marketing/activity-records` —— 那条路由不存在，
+      // vue-router 落到 catch-all 直接把人送去工作台，
+      // 表现是「点明细回到了首页」，看起来像按钮没接线。
       linkTo: (row: any, range: number) =>
-        `/marketing/activity-records?activityId=${row.activityId}&range=${range}`,
+        `/coupons/activity-records?activityId=${row.activityId}&range=${range}`,
     },
   },
 

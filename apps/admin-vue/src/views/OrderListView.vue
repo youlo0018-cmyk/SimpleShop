@@ -185,75 +185,13 @@
       </div>
     </section>
 
-    <el-dialog v-model="fulfill.open" title="订单发货" width="520" align-center>
-      <p class="fulfill__subject">{{ fulfill.orderNo }}</p>
-      <el-form label-position="top" class="fulfill__form">
-        <!--
-          快递发货**必填物流公司与运单号**：客服接到物流异常时，
-          没有单号的订单无从追责，「已发货」只是一个空口的状态。
-        -->
-        <template v-if="fulfill.hasPhysical">
-          <el-form-item label="物流公司" :error="fulfill.errors.company">
-            <el-select
-              v-model="fulfill.logisticsCompanyId"
-              class="fulfill__control"
-              placeholder="请选择物流公司"
-              filterable
-              :loading="fulfill.companiesLoading"
-            >
-              <el-option
-                v-for="c in fulfill.companies"
-                :key="c.id"
-                :label="c.name"
-                :value="c.id"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="运单号" :error="fulfill.errors.trackingNo">
-            <el-input
-              v-model="fulfill.trackingNo"
-              class="fulfill__control"
-              placeholder="请输入快递运单号"
-              maxlength="64"
-            />
-          </el-form-item>
-        </template>
-        <el-form-item label="发货备注">
-          <el-input
-            v-model="fulfill.remark"
-            type="textarea"
-            :rows="2"
-            :placeholder="fulfill.hasVirtual ? '虚拟商品卡号 / 激活码（会展示给客户）' : '选填'"
-          />
-        </el-form-item>
-      </el-form>
-      <div class="fulfill__actions">
-        <el-button
-          v-if="fulfill.hasPhysical"
-          type="primary"
-          :loading="fulfill.saving"
-          @click="submitFulfill('Ship')"
-        >
-          快递发货
-        </el-button>
-        <el-button
-          v-if="fulfill.hasVirtual"
-          type="primary"
-          :loading="fulfill.saving"
-          @click="submitFulfill('DeliverVirtual')"
-        >
-          虚拟发货
-        </el-button>
-        <el-button
-          v-if="fulfill.hasSelfPickup"
-          type="primary"
-          :loading="fulfill.saving"
-          @click="submitFulfill('SelfPickupReady')"
-        >
-          备货完成
-        </el-button>
-      </div>
-    </el-dialog>
+    <!-- 发货弹窗抽到 FulfillDialog：详情页与列表页共用一份，避免两处实现漂移 -->
+    <FulfillDialog
+      v-model="fulfill.open"
+      :order-no="fulfill.orderNo"
+      :items="fulfill.items"
+      @done="load"
+    />
 
     <!-- 部分退款：规则集中在 RefundDialog，列表与详情共用一份。 -->
     <RefundDialog
@@ -271,6 +209,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/api/request';
 import RefundDialog from '@/components/RefundDialog.vue';
+import FulfillDialog from '@/components/FulfillDialog.vue';
 import { statusColor } from '@/utils/dict';
 import { formatAmount, formatCount, formatDateTime, emptyText, maskPhone } from '@/utils/format';
 import { hasPermission } from '@/utils/session';
@@ -291,17 +230,9 @@ const merchants = ref<any[]>([]);
 const dateRange = ref<[string, string] | null>(null);
 const fulfill = reactive({
   open: false,
-  saving: false,
   orderNo: '',
-  remark: '',
-  logisticsCompanyId: '',
-  trackingNo: '',
-  companies: [] as any[],
-  companiesLoading: false,
-  errors: {} as Record<string, string>,
-  hasPhysical: false,
-  hasVirtual: false,
-  hasSelfPickup: false,
+  // 明细行交给 FulfillDialog：由它按配送方式决定显示快递 / 虚拟 / 自提哪个按钮
+  items: [] as any[],
 });
 
 // 退款弹窗只存「打开哪一单」与它的详情；规则与表单都在 RefundDialog 里。
@@ -377,75 +308,15 @@ function canRefund(row: any) {
 }
 
 async function openFulfill(row: any) {
+  // 明细行交给 FulfillDialog：它按配送方式决定显示快递 / 虚拟 / 自提哪个按钮，
+  // 快递发货的物流公司与运单号校验也在那里（提交时校验，失焦不校验）。
   const detail = await request('/gateway/admin/orders/Detail', {
     body: { orderId: row.orderId },
     silent: true,
   });
-  fulfill.open = true;
-  fulfill.saving = false;
   fulfill.orderNo = row.orderNo;
-  fulfill.remark = '';
-  fulfill.logisticsCompanyId = '';
-  fulfill.trackingNo = '';
-  fulfill.errors = {};
-  fulfill.hasPhysical = (detail.items || []).some((item: any) => Number(item.deliveryType) === 1);
-  fulfill.hasVirtual = (detail.items || []).some((item: any) => Number(item.deliveryType) === 2);
-  fulfill.hasSelfPickup = (detail.items || []).some((item: any) => Number(item.deliveryType) === 3);
-  if (fulfill.hasPhysical) await loadLogisticsCompanies();
-}
-
-// 物流公司字典只在第一次发货时拉一次，之后复用。
-// 每开一次弹窗都请求一遍的话，点「发货」会有一次明显的白屏等待。
-async function loadLogisticsCompanies() {
-  if (fulfill.companies.length || fulfill.companiesLoading) return;
-  fulfill.companiesLoading = true;
-  try {
-    const rows = await request('/gateway/logistics-companies/Options', {
-      method: 'POST',
-      body: {},
-      silent: true,
-    });
-    fulfill.companies = (Array.isArray(rows) ? rows : (rows?.items || [])).map((r: any) => ({
-      id: String(r.logisticsId ?? r.LogisticsId ?? r.id ?? r.Id ?? ''),
-      name: String(r.companyName ?? r.CompanyName ?? r.name ?? ''),
-    }));
-  } catch {
-    fulfill.companies = [];
-  } finally {
-    fulfill.companiesLoading = false;
-  }
-}
-
-async function submitFulfill(action: string) {
-  // ⚠️ 只在**提交时**校验（用户要求失焦不校验）。
-  // 快递发货必须选物流公司 + 填运单号；虚拟发货与自提备货不需要。
-  fulfill.errors = {};
-  if (action === 'Ship') {
-    if (!fulfill.logisticsCompanyId) fulfill.errors.company = '请选择物流公司';
-    if (!fulfill.trackingNo.trim()) fulfill.errors.trackingNo = '请填写运单号';
-    if (Object.keys(fulfill.errors).length) {
-      ElMessage.warning('请先补全物流信息');
-      return;
-    }
-  }
-
-  fulfill.saving = true;
-  try {
-    const response = await request(`/gateway/admin/orders/${action}`, {
-      body: {
-        orderNo: fulfill.orderNo,
-        remark: fulfill.remark.trim(),
-        logisticsCompanyId: fulfill.logisticsCompanyId,
-        trackingNo: fulfill.trackingNo.trim(),
-      },
-      raw: true,
-    });
-    ElMessage.success(response?.message || '操作成功');
-    fulfill.open = false;
-    await load();
-  } finally {
-    fulfill.saving = false;
-  }
+  fulfill.items = detail.items || [];
+  fulfill.open = true;
 }
 
 async function cancelOrder(row: any) {

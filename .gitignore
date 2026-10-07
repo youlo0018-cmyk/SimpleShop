@@ -77,3 +77,8 @@ deploy/fonts/*.otf
 
 # UI 回归的运行结果：每次跑都变，是生成物不是源码。证据看 tests/visual/current 的截图。
 tests/ui/ui-report.json
+# 深度回归（admin-deep-regression.mjs）同理：报告与截图都是每次跑都变的生成物
+tests/ui/admin-deep-report.json
+tests/visual/deep/
+# 控件覆盖清单（admin-coverage-audit.mjs 每次扫描重新生成）
+tests/ui/admin-coverage.json

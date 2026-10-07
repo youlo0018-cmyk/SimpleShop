@@ -76,6 +76,24 @@ function MpGet([string]$Path) {
     return Invoke-RestMethod "$Gateway/gateway$Path" -Headers $script:adminHeaders -TimeoutSec 60
 }
 
+function MpPost-Api([string]$Path, $Body) {
+    # 「预期失败」的调用必须用它：校验失败是 HTTP 400，Invoke-RestMethod 直接抛异常，
+    # 拿不到 body 里的 message，用例只能看到一句 "400 (Bad Request)"，
+    # 分不清到底是被哪条规则拒的。
+    try {
+        return Invoke-RestMethod "$Gateway/gateway$Path" -Method Post -Headers $script:adminHeaders `
+            -Body ($Body | ConvertTo-Json -Depth 12) -ContentType 'application/json' -TimeoutSec 60
+    }
+    catch {
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{ success = $false; message = $_.Exception.Message; data = $null }
+        }
+        try { return $raw | ConvertFrom-Json -AsHashtable }
+        catch { return [pscustomobject]@{ success = $false; message = $raw; data = $null } }
+    }
+}
+
 function GwPost([string]$Path, $Body) {
     return Invoke-RestMethod "$Gateway$Path" -Method Post -Headers $script:adminHeaders `
         -Body ($Body | ConvertTo-Json -Depth 12) -ContentType 'application/json' -TimeoutSec 60
@@ -433,14 +451,51 @@ Invoke-Case 'API-DS-049' '清理：删商品 → 删分类' {
     return $true
 }
 
-Invoke-Case 'API-DS-036' '🔴 缺少必需的页面画布被拒' {
+Invoke-Case 'API-DS-036' '🔴 增量提交（只发一页）保留另一页；全新平台只给一页仍被拒' {
+    # 后台搭建器**一次只提交当前编辑的那一页**（DesignBuilderView.buildConfig：
+    # `{ pages: { [当前页]: {...} } }`），指望后端把其它页原样保留 ——
+    # 而校验器是按完整配置校验的，直接拿请求体去校验就会报「缺少「profile」页面画布」，
+    # 于是平台装修的「存草稿」在界面上 100% 失败（API 层的 e2e 一直用完整配置，所以从没红过）。
+    # 现在的口径：保存前先与已存草稿合并，再整体校验。
     $cfg = New-PlatformConfig
-    $cfg.pages.Remove('profile')
-    $r = MpPost '/design/SavePlatformDraft' @{
+    $seed = MpPost '/design/SavePlatformDraft' @{
         platformId = $script:platformId
         configJson = ($cfg | ConvertTo-Json -Depth 12)
     }
-    return (-not $r.success) -and $r.message -match 'profile'
+    if (-not $seed.success) {
+        Write-Host ("        预置完整草稿失败：" + $seed.message) -ForegroundColor DarkYellow
+        return $false
+    }
+
+    # 只发 index 一页：必须成功，且读回来 profile 还在
+    $partial = @{
+        pages = @{
+            index = @{ components = @(
+                @{ id = 'inc1'; type = 'banner'; span = 12; height = 80; props = @{} }
+            ) }
+        }
+    }
+    $inc = MpPost '/design/SavePlatformDraft' @{
+        platformId = $script:platformId
+        configJson = ($partial | ConvertTo-Json -Depth 12)
+    }
+    $back = (MpGet "/design/Platform?platformId=$($script:platformId)").data
+    $parsed = $back.configJson | ConvertFrom-Json
+    $keptProfile = $null -ne $parsed.pages.profile
+    $keptTabBar = @($parsed.tabBar).Count -ge 2
+    $indexCount = @($parsed.pages.index.components).Count
+
+    # 反证：一个全新的平台（没有已存草稿）只发一页，仍然必须被拒
+    $fresh = MpPost-Api '/design/SavePlatformDraft' @{
+        platformId = 999999999999
+        configJson = ($partial | ConvertTo-Json -Depth 12)
+    }
+
+    Write-Host ("        增量保存 success={0}；profile 保留={1} tabBar 保留={2} index 组件={3}；全新平台被拒={4}" -f `
+        $inc.success, $keptProfile, $keptTabBar, $indexCount, (-not $fresh.success)) -ForegroundColor DarkGray
+
+    $inc.success -and $keptProfile -and $keptTabBar -and $indexCount -eq 1 `
+        -and (-not $fresh.success) -and $fresh.message -match 'profile'
 }
 
 Invoke-Case 'API-DS-037' '🔴 tabBar 少于 2 项被拒' {

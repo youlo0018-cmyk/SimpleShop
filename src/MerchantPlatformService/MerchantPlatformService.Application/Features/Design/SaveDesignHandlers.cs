@@ -43,6 +43,7 @@ internal static class DesignDraftSaver
     /// </remarks>
     public static async Task<DesignSaveResult> SaveAsync(
         string configJson,
+        string? storedJson,
         bool forMerchant,
         long platformId,
         long merchantId,
@@ -53,7 +54,11 @@ internal static class DesignDraftSaver
         DesignConfig config;
         try
         {
-            config = DesignConfig.FromJson(configJson);
+            // 搭建器**按页增量提交**：一次只发当前编辑的那一页（见 DesignBuilderView.buildConfig）。
+            // 所以保存前必须先与已存草稿合并，再整体校验：
+            // 直接校验请求体会因为「缺少另一页画布」整单失败（平台装修存草稿 100% 报
+            // 「缺少「profile」页面画布」）；而整份覆盖又会把另一页的排版、主题、TabBar 洗掉。
+            config = DesignConfig.FromJson(DesignDraftMerger.Merge(storedJson, configJson));
         }
         catch (System.Text.Json.JsonException)
         {
@@ -133,8 +138,15 @@ public sealed class SavePlatformDraftHandler
                 BaseApiResponseCode.NotFound, DesignTenantScope.NotFoundMessage);
         }
 
+        // 草稿优先，没有草稿就退回已发布版本：首次进搭建器时线上那份就是起点，
+        // 拿它当合并底才能保证「只改一页」不会把另一页弄丢。
+        var existing = await _design.GetPlatformAsync(request.PlatformId, ct).ConfigureAwait(false);
+        var baseJson = !string.IsNullOrWhiteSpace(existing?.DraftJson)
+            ? existing!.DraftJson
+            : existing?.PublishedJson;
+
         var saved = await DesignDraftSaver.SaveAsync(
-            request.ConfigJson, forMerchant: false,
+            request.ConfigJson, baseJson, forMerchant: false,
             request.PlatformId, merchantId: 0, _products, _logger, ct).ConfigureAwait(false);
 
         if (!saved.IsValid)
@@ -197,8 +209,15 @@ public sealed class SaveMerchantDraftHandler
 
         // 商户只能装修**自己的**商品：平台维度传 0、商户维度传自己，
         // 否则就能把别人家的商品挂到自己的店铺页上
+        // 与平台装修同一套合并逻辑：商户搭建器同样一次只提交店铺页，
+        // 主题三档色由平台继承，不该被这次提交清掉。
+        var existing = await _design.GetMerchantAsync(request.MerchantId, ct).ConfigureAwait(false);
+        var baseJson = !string.IsNullOrWhiteSpace(existing?.DraftJson)
+            ? existing!.DraftJson
+            : existing?.PublishedJson;
+
         var saved = await DesignDraftSaver.SaveAsync(
-            request.ConfigJson, forMerchant: true,
+            request.ConfigJson, baseJson, forMerchant: true,
             platformId: 0, merchantId: request.MerchantId, _products, _logger, ct).ConfigureAwait(false);
 
         if (!saved.IsValid)

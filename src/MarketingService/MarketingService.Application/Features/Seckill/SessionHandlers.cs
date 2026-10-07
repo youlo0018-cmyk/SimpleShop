@@ -131,12 +131,22 @@ public sealed class QuerySessionsHandler : IRequestHandler<QuerySessionsCommand,
             var list = await _seckill.ListItemsAsync(s.Id, ct);
             items.Add(new SessionDto(
                 s.Id.ToString(), s.SessionName,
-                s.StartTime.ToString("yyyy-MM-dd HH:mm"), s.EndTime.ToString("yyyy-MM-dd HH:mm"),
-                s.Status, SeckillNames.StatusName(s.Status), s.StockTransferred, list.Count));
+                // 必须带 Z：编辑页把它交给 `new Date(...)` 还原成当地时间，
+                // 没有时区标记时 JS 会当成**本地时间**解析，界面上显示的是 UTC 原值，
+                // 保存时再按本地转 UTC —— 每编辑一次时间就整体偏移一个时区（实测差 8 小时）。
+                UtcIso(s.StartTime), UtcIso(s.EndTime),
+                s.Status, SeckillNames.StatusName(s.Status), s.StockTransferred, list.Count,
+                s.SortOrder, s.PlatformId));
         }
 
         return ApiResults.Ok(new SeckillSessionPage(items, total, request.Page, request.PageSize));
     }
+
+    /// <summary>把库里的 UTC 时间转成带 <c>Z</c> 的 ISO 字符串（前端按 UTC 解析）。</summary>
+    /// <param name="value">数据库中的 UTC 时间（Kind 可能是 Unspecified）。</param>
+    /// <returns>形如 <c>2026-10-07T07:29:00Z</c> 的字符串。</returns>
+    private static string UtcIso(DateTime value)
+        => DateTime.SpecifyKind(value, DateTimeKind.Utc).ToString("yyyy-MM-ddTHH:mm:ssZ");
 }
 
 /// <summary>发布场次处理器：<b>把库存从常规池划到秒杀池</b>。</summary>

@@ -250,70 +250,6 @@ export const LISTS = {
     actionsWidth: 150,
   },
 
-  inventory: {
-    title: '库存管理',
-    desc: '可用 / 锁定 / 已扣，以及预警阈值',
-    endpoint: '/gateway/inventory/List',
-    method: 'GET',
-    search: true,
-    searchPlaceholder: '商品名 / 规格',
-    columns: [
-      { field: 'productName', label: '商品', width: 220 },
-      { field: 'skuSpecText', label: '规格', width: 120, format: 'text' },
-      { field: 'available', label: '可用', width: 90, num: true, format: 'count' },
-      { field: 'locked', label: '锁定', width: 90, num: true, format: 'count' },
-      { field: 'deducted', label: '已扣', width: 90, num: true, format: 'count' },
-      { field: 'warnThreshold', label: '预警阈值', width: 110, num: true, format: 'count' },
-      {
-        field: 'isLowStock',
-        label: '预警',
-        width: 90,
-        dict: 'lowStock',
-      },
-      { field: 'updatedAt', label: '更新时间', width: 150, format: 'time' },
-    ],
-    actions: [
-      {
-        label: '调整库存',
-        endpoint: '/gateway/inventory/Adjust',
-        okText: '库存已调整',
-        permission: 'inventory:update',
-        build: (r: any, value: any) => ({
-          skuId: r.skuId,
-          availableAdjust: Number(value.availableAdjust),
-          remark: value.remark,
-          warnThreshold: Number(r.warnThreshold || 0),
-        }),
-        confirm: {
-          title: '调整可用库存',
-          message: '提交的是调整量，不是最终值。例如当前可用 10、填 5 会变成 15；填 -3 会变成 7。',
-          subject: (r: any) => `${r.productName} / ${r.skuSpecText || '默认规格'}｜当前可用 ${r.available}`,
-          okText: '确认调整',
-          fields: [
-            {
-              name: 'availableAdjust',
-              label: '调整量',
-              type: 'number',
-              required: true,
-              placeholder: '可正可负，例如 5 或 -3',
-            },
-            {
-              name: 'remark',
-              label: '调整原因',
-              type: 'textarea',
-              rows: 3,
-              required: true,
-              minLength: 2,
-              maxlength: 200,
-              placeholder: '会写入库存流水，至少 2 个字符',
-            },
-          ],
-        },
-      },
-    ],
-    actionsWidth: 130,
-  },
-
   customers: {
     title: '客户列表',
     desc: '按登录名 / 昵称 / 手机号搜索，可停用',
@@ -370,6 +306,15 @@ export const LISTS = {
         permission: 'customer:status',
         showWhen: (r: any) => Number(r.status) === 1,
         build: (r: any) => ({ customerId: r.customerId, status: 2 }),
+        // 停用是**危险动作**：不给确认框的话点一下客户就登不上了，
+        // 而且后台其它页面的停用都有确认框，少这一处只会让人以为点错了。
+        confirm: {
+          title: '停用客户',
+          message: '停用后该客户无法登录小程序，历史订单与数据不受影响。',
+          subject: (r: any) => r.customerName || r.nickName || r.phone,
+          okText: '停用',
+          danger: true,
+        },
       },
       {
         label: '启用',
@@ -378,6 +323,12 @@ export const LISTS = {
         permission: 'customer:status',
         showWhen: (r: any) => Number(r.status) === 2,
         build: (r: any) => ({ customerId: r.customerId, status: 1 }),
+        confirm: {
+          title: '启用客户',
+          message: '启用后该客户可以重新登录小程序。',
+          subject: (r: any) => r.customerName || r.nickName || r.phone,
+          okText: '启用',
+        },
       },
     ],
     actionsWidth: 340,
@@ -425,7 +376,9 @@ export const LISTS = {
     endpoint: '/gateway/evaluates/admin/List',
     method: 'POST',
     search: true,
-    searchPlaceholder: '商品名 / 客户 / 内容',
+    // 库里没有客户昵称（评价只存 CustomerId），搜「客户」是搜不到的 ——
+    // 占位符必须与后端真正支持的字段一致，否则运营会一直以为「搜不到就是没有」。
+    searchPlaceholder: '商品名 / 评价内容',
     columns: [
       { field: 'spuName', label: '商品', width: 180 },
       { field: 'starScore', label: '评分', width: 90, num: true, format: 'score' },
@@ -574,6 +527,15 @@ export const LISTS = {
         okText: '已重放',
         permission: 'log:read',
         build: (r: any) => ({ eventId: r.eventId }),
+        // 重放会把消息重新投回主交换机，消费方可能再处理一次。
+        // 不弹确认框的话，手滑点一下就是一次真实的重复投递，而且列表上看不出痕迹
+        //（除了「已重放」计数 +1）。
+        confirm: {
+          title: '重放死信',
+          message: '会把这条消息重新投递给消费方，可能被重复处理一次（消费方按 EventId 幂等）。',
+          subject: (r: any) => r.eventId,
+          okText: '重放',
+        },
       },
     ],
     actionsWidth: 100,
@@ -866,7 +828,8 @@ export const LISTS = {
       { field: 'activityName', label: '活动名', width: 180 },
       { field: 'activityType', label: '类型', width: 100, dict: 'promotionType' },
       { field: 'thresholdAmount', label: '门槛', width: 100, num: true, format: 'amount' },
-      { field: 'discountValue', label: '优惠', width: 100, num: true, format: 'amount' },
+      // 后端按活动类型算好的展示文本（满减金额 / N 折 / 赠 N 张），不能再按金额格式化
+      { field: 'discountValue', label: '优惠', width: 110 },
       { field: 'status', label: '状态', width: 90, dict: 'userStatus' },
       { field: 'startTime', label: '开始', width: 155, format: 'time' },
       { field: 'endTime', label: '结束', width: 155, format: 'time' },
@@ -880,6 +843,13 @@ export const LISTS = {
         permission: 'marketing:update',
         showWhen: (r: any) => Number(r.status) === 1,
         build: (r: any) => ({ activityId: r.activityId ?? r.id, status: 2 }),
+        confirm: {
+          title: '停用活动',
+          message: '停用后活动立即从结算中移除；历史订单的优惠金额不会重算。',
+          subject: (r: any) => r.activityName,
+          okText: '停用',
+          danger: true,
+        },
       },
       {
         label: '启用',
@@ -888,6 +858,12 @@ export const LISTS = {
         permission: 'marketing:update',
         showWhen: (r: any) => Number(r.status) === 2,
         build: (r: any) => ({ activityId: r.activityId ?? r.id, status: 1 }),
+        confirm: {
+          title: '启用活动',
+          message: '启用后活动按配置的时间窗立即生效。',
+          subject: (r: any) => r.activityName,
+          okText: '启用',
+        },
       },
       {
         label: '删除',
@@ -1050,36 +1026,6 @@ export const LISTS = {
     actionsWidth: 130,
   },
 
-  // 支付单。后台此前完全没有入口（只有 C 端的 payments/Query 按订单号查单条），
-  // 运营想看「今天有哪些单支付失败」都做不到。
-  payments: {
-    title: '支付列表',
-    desc: '模拟支付通道的单据，按状态与单号筛选',
-    endpoint: '/gateway/admin/payments/List',
-    method: 'POST',
-    tabs: [
-      { label: '全部', value: 0 },
-      { label: '待支付', value: 1 },
-      { label: '已支付', value: 20 },
-      { label: '已关闭', value: 30 },
-    ],
-    byStatus: true,
-    search: true,
-    searchPlaceholder: '支付单号 / 订单号',
-    columns: [
-      { field: 'paymentNo', label: '支付单号', width: 210, format: 'text', mono: true },
-      { field: 'orderNo', label: '订单号', width: 200, format: 'text', mono: true },
-      { field: 'amount', label: '支付金额', width: 110, num: true, format: 'amount' },
-      // 必须标 dict：不标就会渲染成裸的 1 —— 界面上出现枚举数字违反 UI-RAW-003，
-      // 而运营会把它当成「渠道 Id」。文案取后端下发的 channelName。
-      { field: 'channel', label: '渠道', width: 100, dict: 'paymentChannel' },
-      { field: 'status', label: '状态', width: 100, dict: 'payment' },
-      { field: 'failReason', label: '失败原因', width: 180, format: 'text' },
-      { field: 'paidAt', label: '支付时间', width: 155, format: 'time' },
-      { field: 'createdAt', label: '创建时间', width: 155, format: 'time' },
-    ],
-  },
-
   // 积分流水。跨客户查询，所以和 C 端的「我的积分流水」不是一个接口。
   pointRecords: {
     title: '积分流水',
@@ -1236,22 +1182,13 @@ export const LISTS = {
     actions: [
       {
         label: '停用',
-        endpoint: '/gateway/marketing/coupon-activities/Update',
+        endpoint: '/gateway/marketing/coupon-activities/SetStatus',
         danger: true,
         okText: '券活动已停用',
         permission: 'coupon-activity:update',
         showWhen: (r: any) => Number(r.status) === 1,
         build: (r: any) => ({
           activityId: r.activityId ?? r.id,
-          activityName: r.activityName,
-          templateId: r.templateId,
-          claimStartTime: r.claimStartTime,
-          claimEndTime: r.claimEndTime,
-          claimQuantity: r.claimQuantity,
-          perUserLimit: r.perUserLimit,
-          targetType: r.targetType,
-          targets: '[]',
-          sortOrder: r.sortOrder,
           status: 2,
         }),
         confirm: {
@@ -1264,23 +1201,22 @@ export const LISTS = {
       },
       {
         label: '启用',
-        endpoint: '/gateway/marketing/coupon-activities/Update',
+        endpoint: '/gateway/marketing/coupon-activities/SetStatus',
         okText: '券活动已启用',
         permission: 'coupon-activity:update',
-        showWhen: (r: any) => Number(r.status) === 2,
+        // 模板已被删的活动**不显示启用**：它永远启用不了（SetStatus 会以
+        // 「关联的券模板不存在」拒绝），留着按钮就是给运营一个点了必报错的入口。
+        showWhen: (r: any) => Number(r.status) === 2 && r.templateExists !== false,
         build: (r: any) => ({
           activityId: r.activityId ?? r.id,
-          activityName: r.activityName,
-          templateId: r.templateId,
-          claimStartTime: r.claimStartTime,
-          claimEndTime: r.claimEndTime,
-          claimQuantity: r.claimQuantity,
-          perUserLimit: r.perUserLimit,
-          targetType: r.targetType,
-          targets: '[]',
-          sortOrder: r.sortOrder,
           status: 1,
         }),
+        confirm: {
+          title: '启用券活动',
+          message: '启用后客户可在领取时间内领取该活动的券。',
+          subject: (r: any) => r.activityName,
+          okText: '启用',
+        },
       },
     ],
     actionsWidth: 210,
@@ -1358,10 +1294,13 @@ export const LISTS = {
   logisticsCompanies: {
     title: '物流公司',
     desc: '发货表单的下拉数据源，内置常用快递公司',
-    createRoute: '/orders/logistics-companies/create',
+    // 🔴 物流公司挂在**平台**模块下（`modules.ts` 里是 platforms 的子路由），
+    // 这里曾写成 `/orders/logistics-companies/*` —— 那条路由不存在，
+    // 点「新建 / 编辑」会被 catch-all 直接送去工作台，页面上看不出是链接错了。
+    createRoute: '/platforms/logistics-companies/create',
     createLabel: '新建物流公司',
-    rowRoute: (r: any) => `/orders/logistics-companies/edit/${r.logisticsId ?? r.id}`,
-    editRoute: (r: any) => `/orders/logistics-companies/edit/${r.logisticsId ?? r.id}`,
+    rowRoute: (r: any) => `/platforms/logistics-companies/edit/${r.logisticsId ?? r.id}`,
+    editRoute: (r: any) => `/platforms/logistics-companies/edit/${r.logisticsId ?? r.id}`,
     actions: [
       {
         label: '删除',

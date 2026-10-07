@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS "order" (
     receiver_address varchar(256)  NOT NULL DEFAULT '',
     idempotency_key  varchar(64)   NOT NULL,
     remark           varchar(512)  NOT NULL DEFAULT '',
+    -- 发货内容 / 发货备注。客户下单备注在 remark；这里存的是**商户发货时写的内容**：
+    -- 虚拟商品是卡号 / 激活码（展示给客户，空着发货等于顾客付了钱什么都拿不到），
+    -- 快递是发货备注（选填）。与 remark 分开是为了两者互不覆盖。
+    ship_remark      varchar(512)  NOT NULL DEFAULT '',
     -- 🔴 支付时间与完成时间是**报表口径的分水岭**，不能拿 created_at 代替。
     -- GMV 要的是「这段时间里收了多少钱」，按下单时间算会把「昨天下单今天付」
     -- 算进昨天，而昨天的日报里这笔钱根本没收过——对账时对不上。
@@ -53,6 +57,9 @@ ALTER TABLE "order" ADD COLUMN IF NOT EXISTS logistics_company_id bigint NOT NUL
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS logistics_company_name varchar(128) NOT NULL DEFAULT '';
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS tracking_no varchar(64) NOT NULL DEFAULT '';
 ALTER TABLE "order" ADD COLUMN IF NOT EXISTS shipped_at timestamp NULL;
+
+-- 发货内容 / 发货备注。老环境补列用 IF NOT EXISTS，重复执行安全。
+ALTER TABLE "order" ADD COLUMN IF NOT EXISTS ship_remark varchar(512) NOT NULL DEFAULT '';
 
 -- 已退金额合计（冗余列，见 Order.RefundedAmount 注释）。
 -- 它必须与订单状态在**同一条 UPDATE** 里累加，才能在并发退款下挡住超退；

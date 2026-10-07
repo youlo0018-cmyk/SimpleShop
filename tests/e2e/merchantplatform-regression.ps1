@@ -373,6 +373,18 @@ Invoke-Case 'API-MP-028b' '已通过审核的商户可重新启用（幂等回�
     return $r.success -and $r.message -match '启用'
 }
 
+Invoke-Case 'API-MP-029' 'merchants/Options：platformId=0 返回全部启用商户' {
+    # 这条是商品列表「商户」筛选的数据源。曾经 platformId=0 被当成
+    # 「PlatformId 等于 0」过滤，超管打开商品列表时下拉是空的。
+    $all = MpGet '/merchants/Options?platformId=0'
+    $hit = @($all.data | Where-Object { $_.id -eq "$($script:merchantId)" })
+
+    $byPlatform = MpGet "/merchants/Options?platformId=$($script:platformId)"
+    $hitByPlatform = @($byPlatform.data | Where-Object { $_.id -eq "$($script:merchantId)" })
+
+    return $all.success -and $hit.Count -eq 1 -and $hitByPlatform.Count -eq 1
+}
+
 Write-Host "`n=== MP C 端店铺可见性（VIS-001 / VIS-002）===" -ForegroundColor Cyan
 
 Invoke-Case 'API-MP-050' '🔴 P0 未审核商户 C 端店铺列表里看不到（VIS-001）' {

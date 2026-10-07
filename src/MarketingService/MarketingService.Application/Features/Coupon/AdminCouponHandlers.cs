@@ -25,6 +25,16 @@ internal static class CouponTimeNormalizer
         DateTimeKind.Local => value.ToUniversalTime(),
         _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
     };
+
+    /// <summary>把库里的 UTC 时间转成带 <c>Z</c> 的 ISO 字符串。</summary>
+    /// <param name="value">数据库中的 UTC 时间（Kind 可能是 Unspecified）。</param>
+    /// <returns>形如 <c>2026-10-07T07:29:00Z</c> 的字符串。</returns>
+    /// <remarks>
+    /// 券活动的「领取开始 / 结束时间」是**表单要编辑**的字段：不带 <c>Z</c> 时
+    /// 前端 `new Date(...)` 会按本地时间解析，界面上显示 UTC 原值，
+    /// 保存时再按本地转 UTC —— 每编辑一次就整体偏移一个时区。
+    /// </remarks>
+    internal static string ToUtcIso(DateTime value) => ToUtc(value).ToString("yyyy-MM-ddTHH:mm:ssZ");
 }
 
 /// <summary>分页查询券模板处理器。</summary>
@@ -273,14 +283,20 @@ public sealed class QueryCouponActivitiesHandler
             ? new Dictionary<long, string>()
             : await LoadTemplateNamesAsync(templateIds, ct).ConfigureAwait(false);
 
-        var items = page.Items.Select(a => new CouponActivityItem(
-            a.Id, a.ActivityName, a.TemplateId,
-            names.TryGetValue(a.TemplateId, out var name) ? name : "（模板已删除）",
-            a.ClaimStartTime.ToString("yyyy-MM-dd HH:mm:ss"),
-            a.ClaimEndTime.ToString("yyyy-MM-dd HH:mm:ss"),
-            a.ClaimQuantity, a.ClaimedQuantity,
-            a.PerUserLimit, a.TargetType, TargetTypes.NameOf(a.TargetType),
-            a.SortOrder, a.Status, EnableStatuses.NameOf(a.Status), a.PlatformId)).ToList();
+        var items = page.Items.Select(a =>
+        {
+            // 模板已被删的活动是「悬空引用」：能停用、不能启用（SetStatus 会拒），
+            // 所以要把存在性单独告诉前端，由前端收起那个必报错的「启用」按钮。
+            var exists = names.TryGetValue(a.TemplateId, out var name);
+            return new CouponActivityItem(
+                a.Id, a.ActivityName, a.TemplateId,
+                exists ? name! : "（模板已删除）",
+                CouponTimeNormalizer.ToUtcIso(a.ClaimStartTime),
+                CouponTimeNormalizer.ToUtcIso(a.ClaimEndTime),
+                a.ClaimQuantity, a.ClaimedQuantity,
+                a.PerUserLimit, a.TargetType, TargetTypes.NameOf(a.TargetType),
+                a.SortOrder, a.Status, EnableStatuses.NameOf(a.Status), a.PlatformId, exists);
+        }).ToList();
 
         return ApiResults.Ok(new PagedResult<CouponActivityItem>(items, page.Total, request.Page, request.PageSize));
     }
@@ -479,6 +495,60 @@ public sealed class UpdateCouponActivityHandler
     /// <param name="value">原始时间。</param>
     /// <returns>UTC 时间。</returns>
     private static DateTime ToUtc(DateTime value) => CouponTimeNormalizer.ToUtc(value);
+}
+
+/// <summary>启停券活动的处理器。</summary>
+/// <remarks>
+/// 启停是<b>独立接口</b>，不重跑编辑校验：活动创建时已经按模板剩余量校验过，
+/// 之后再点「启用 / 停用」时若重跑，模板剩余量已被本活动占走，
+/// 合法的活动会被自己挡住，运营只能看到一条莫名其妙的 400。
+/// </remarks>
+public sealed class SetCouponActivityStatusHandler
+    : IRequestHandler<SetCouponActivityStatusCommand, ApiResponse>
+{
+    private readonly ICouponRepository _coupons;
+
+    /// <summary>构造处理器。</summary>
+    /// <param name="coupons">券仓储。</param>
+    public SetCouponActivityStatusHandler(ICouponRepository coupons) => _coupons = coupons;
+
+    /// <summary>执行启停。</summary>
+    /// <param name="request">命令。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// 启用时仍要求关联模板存在；停用永远允许——模板已被删的悬空活动，
+    /// 停用是唯一出路，不能因为模板不存在就把它永远锁死在启用状态。
+    /// </remarks>
+    public async Task<ApiResponse> Handle(
+        SetCouponActivityStatusCommand request, CancellationToken ct)
+    {
+        var activity = await _coupons.GetActivityAsync(request.ActivityId, ct).ConfigureAwait(false);
+        if (activity is null)
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "券活动不存在");
+        }
+
+        if (request.Status == 1)
+        {
+            var template = await _coupons.GetTemplateAsync(activity.TemplateId, ct).ConfigureAwait(false);
+            if (template is null)
+            {
+                return ApiResponseFactory.Fail(
+                    BaseApiResponseCode.NotFound, "关联的券模板不存在，不能启用");
+            }
+        }
+
+        var affected = await _coupons
+            .SetActivityStatusAsync(request.ActivityId, request.Status, ct)
+            .ConfigureAwait(false);
+        if (affected == 0)
+        {
+            return ApiResponseFactory.Fail(BaseApiResponseCode.NotFound, "券活动不存在");
+        }
+
+        return ApiResponseFactory.Ok(request.Status == 1 ? "券活动已启用" : "券活动已停用");
+    }
 }
 
 /// <summary>分页查询券核销记录处理器。</summary>

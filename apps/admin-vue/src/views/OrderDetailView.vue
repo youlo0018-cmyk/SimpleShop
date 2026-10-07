@@ -16,9 +16,13 @@
         <el-button v-if="Number(order.status) === 10" @click="simulate(true)">模拟支付成功</el-button>
         <el-button v-if="Number(order.status) === 10" @click="simulate(false)">模拟支付失败</el-button>
         <el-button v-if="Number(order.status) === 10" danger @click="cancelOrder">取消订单</el-button>
-        <el-button v-if="canShip" type="primary" @click="ship">快递发货</el-button>
-        <el-button v-if="canVirtualDeliver" type="primary" @click="deliverVirtual">虚拟发货</el-button>
-        <el-button v-if="canPickupReady" type="primary" @click="pickupReady">备货完成</el-button>
+        <!--
+          三个履约按钮都开同一个 FulfillDialog：由它按订单行的配送方式
+          显示对应动作，并把快递发货的物流公司 / 运单号一起收齐。
+          这里以前直接调 `/orders/Ship` 只传 orderNo，而校验器要求
+          「物流公司必填 + 运单号 2-64 位」—— 点下去必然 400。
+        -->
+        <el-button v-if="fulfillLabel" type="primary" @click="openFulfill">{{ fulfillLabel }}</el-button>
         <el-button v-if="Number(order.status) === 40" type="primary" @click="verifyPickup">核销取货码</el-button>
         <el-button v-if="canRefund" danger @click="refund">代客退款</el-button>
       </div>
@@ -98,6 +102,12 @@
                 <span class="sub">{{ formatDateTime(order.shippedAt) }}</span>
               </div>
             </template>
+            <!-- 发货内容：虚拟商品是卡号 / 激活码（客户凭它收货），快递是发货备注。
+                 独立于运单号判断：虚拟单没有运单号，但有必须让运营核对的内容。 -->
+            <div v-if="order.shipRemark" class="lines__row">
+              <span>发货内容</span>
+              <span class="mono">{{ order.shipRemark }}</span>
+            </div>
             <div class="lines__row">
               <span>订单备注</span>
               <span>{{ emptyText(order.remark) }}</span>
@@ -293,6 +303,14 @@
       :detail="order"
       @done="load"
     />
+
+    <!-- 发货 / 备货：与订单列表共用同一个弹窗（快递要收物流公司 + 运单号） -->
+    <FulfillDialog
+      v-model="fulfillOpen"
+      :order-no="order.orderNo"
+      :items="order.items || []"
+      @done="load"
+    />
   </div>
 </template>
 
@@ -303,6 +321,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/api/request';
 import RefundDialog from '@/components/RefundDialog.vue';
 import SectionPanel from '@/components/SectionPanel.vue';
+import FulfillDialog from '@/components/FulfillDialog.vue';
 import { statusColor, statusText } from '@/utils/dict';
 import {
   formatAmount,
@@ -329,6 +348,8 @@ const payments = ref<any[]>([]);
 const refunds = ref<any[]>([]);
 const refundRequests = ref<any[]>([]);
 const refundOpen = ref(false);
+/** 发货 / 备货弹窗开关（物流公司与运单号在 FulfillDialog 里收）。 */
+const fulfillOpen = ref(false);
 
 const hasDelivery = (type: number) =>
   (order.items || []).some((item: any) => Number(item.deliveryType) === type);
@@ -336,6 +357,18 @@ const hasDelivery = (type: number) =>
 const canShip = computed(() => Number(order.status) === 20 && hasDelivery(1));
 const canVirtualDeliver = computed(() => Number(order.status) === 20 && hasDelivery(2));
 const canPickupReady = computed(() => Number(order.status) === 20 && hasDelivery(3));
+
+/** 履约按钮的文字：按订单行的配送方式取，保持「快递发货 / 虚拟发货 / 备货完成」的原口径。 */
+const fulfillLabel = computed(() =>
+  canShip.value ? '快递发货'
+    : canVirtualDeliver.value ? '虚拟发货'
+      : canPickupReady.value ? '备货完成'
+        : '');
+
+/** 打开发货弹窗（物流公司 / 运单号 / 备注都在 FulfillDialog 里收）。 */
+function openFulfill() {
+  fulfillOpen.value = true;
+}
 const isVirtualOnly = computed(() =>
   (order.items || []).length > 0 &&
   (order.items || []).every((item: any) => Number(item.deliveryType) === 2),
@@ -411,9 +444,6 @@ async function act(path: string, body: any, okText: string) {
   }
 }
 
-function ship() {
-  act('Ship', { orderNo: order.orderNo }, '发货成功');
-}
 
 async function cancelOrder() {
   try {
@@ -436,35 +466,6 @@ function simulate(succeed: boolean) {
   );
 }
 
-async function deliverVirtual() {
-  try {
-    const result = await ElMessageBox.prompt('填写卡号 / 激活码 / 发货备注', '虚拟发货', {
-      inputPlaceholder: '会展示给客户，请确认内容无误',
-      inputValidator: (value) => (value?.trim() ? true : '请填写发货内容'),
-      confirmButtonText: '确认发货',
-      cancelButtonText: '取消',
-    });
-    // 虚拟单也要顾客「确认收货」才算完成（规格 7.1：30 待收货适用于快递 / 虚拟），
-    // 所以这里的提示不能写成「已发货并完成」——运营会以为这单已经结束了。
-    await act('DeliverVirtual', { orderNo: order.orderNo, remark: result.value.trim() }, '虚拟商品已发货，等待顾客确认收货');
-  } catch {
-    // 用户取消不提示
-  }
-}
-
-async function pickupReady() {
-  try {
-    const result = await request('/gateway/admin/orders/SelfPickupReady', {
-      body: { orderNo: order.orderNo },
-    });
-    await load();
-    await ElMessageBox.alert(result?.pickupCode || '未返回取货码', '备货完成，请把取货码交给顾客', {
-      confirmButtonText: '知道了',
-    });
-  } catch {
-    // request 已提示
-  }
-}
 
 async function verifyPickup() {
   try {

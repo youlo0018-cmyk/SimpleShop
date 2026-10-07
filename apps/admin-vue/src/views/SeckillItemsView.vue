@@ -11,7 +11,7 @@
     <section class="panel">
       <el-form label-position="top" class="form">
         <div class="form__grid">
-          <el-form-item label="SKU Id">
+          <el-form-item label="SKU Id" :error="errors.sku">
             <el-input v-model="form.skuId" placeholder="商品 SKU 的 Id" />
           </el-form-item>
           <el-form-item label="秒杀价" :error="errors.price">
@@ -70,7 +70,8 @@ import { formatAmount, formatCount } from '@/utils/format';
 const route = useRoute();
 const router = useRouter();
 
-const sessionId = computed(() => Number(route.params.id || 0));
+// 场次 Id 是雪花 Id，按字符串传递。
+const sessionId = computed(() => String(route.params.id || ''));
 const rows = ref<any[]>([]);
 const adding = ref(false);
 const errors = reactive<Record<string, string>>({});
@@ -101,8 +102,8 @@ async function load() {
 async function add() {
   for (const k of Object.keys(errors)) delete errors[k];
 
-  const skuId = Number(form.skuId);
-  if (!skuId || skuId <= 0) errors.sku = '请填写有效的 SKU Id';
+  const skuId = String(form.skuId || '').trim();
+  if (!/^\d+$/.test(skuId) || skuId === '0') errors.sku = '请填写有效的 SKU Id';
   if (!(Number(form.seckillPrice) > 0)) errors.price = '秒杀价必须大于 0';
   if (!(Number(form.seckillStock) > 0)) errors.stock = '秒杀库存必须大于 0';
   if (Object.keys(errors).length) {

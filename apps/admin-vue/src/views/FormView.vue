@@ -131,14 +131,16 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import request from '@/api/request';
 import { optionSources } from '@/router/form-configs';
+import { toOptions } from '@/utils/options';
 
 const props = defineProps<{ config: any; id?: string }>();
 const route = useRoute();
 const router = useRouter();
 
 const config = computed(() => props.config);
-const entityId = computed(() => props.id || route.params.id || 0);
-const isEdit = computed(() => String(entityId.value) !== '0' && String(entityId.value).length > 0);
+// 雪花 Id 按字符串保存；Number() 会丢末位精度。
+const entityId = computed(() => String(props.id || route.params.id || ''));
+const isEdit = computed(() => entityId.value !== '' && entityId.value !== '0');
 
 /**
  * 这个字段当前是否不可编辑。
@@ -169,7 +171,7 @@ const permissionTree = ref<any[]>([]);
 
 function optionsOf(f: any) {
   if (f.static) return f.static;
-  if (f.options === 'platforms' && isEdit.value && Number(loaded.value.platformId || 0) === 0) {
+  if (f.options === 'platforms' && isEdit.value && String(loaded.value.platformId || '') === '0') {
     return [
       { value: '0', label: '平台超管（不归属具体平台）' },
       ...(optionCache[f.options] || []),
@@ -188,7 +190,19 @@ const visibleFields = computed(() =>
 function fill(values: Record<string, any>) {
   for (const f of config.value.fields || []) {
     const v = values?.[f.field];
-    model[f.field] = f.format ? f.format(v) : (v ?? f.default ?? '');
+    if (f.format) {
+      model[f.field] = f.format(v);
+    } else if (v !== undefined && v !== null) {
+      model[f.field] = v;
+    } else if (f.default !== undefined) {
+      model[f.field] = f.default;
+    } else {
+      // 多选下拉的「空」是 `[]` 而不是 `''`：
+      // el-select 多选绑到字符串上，提交时就是 `"roleIds": ""`，
+      // 而命令里是 long[] —— **整个命令**绑定失败，400 的 message 是「不能为空」，
+      // 完全指不到是哪个字段（新建账号不选角色就是这么挂的）。
+      model[f.field] = f.multiple ? [] : '';
+    }
   }
 }
 
@@ -212,16 +226,9 @@ async function loadOptions() {
         silent: true,
       });
       const list = Array.isArray(rows) ? rows : (rows?.items || []);
-      optionCache[key] = list.map((r: any) => ({
-        // 各后端 DTO 的字段名大小写不一致（RoleListItem 是 Id / RoleName，
-        // 平台与商户是 id / platformName）。这里统一兜住，
-        // 否则某一个下拉会静默变成一排「undefined」而页面不报错。
-        value: String(r.id ?? r.Id ?? r.value ?? r.Value ?? ''),
-        label: String(
-          r.name ?? r.Name ?? r.platformName ?? r.merchantName ??
-          r.templateName ?? r.roleName ?? r.code ?? r.Code ?? '',
-        ),
-      }));
+      // 字段名归一集中到 utils/options.js：这里以前只认 id/Id/value，
+      // 券模板的 { templateId, templateName } 就整排变成了空值。
+      optionCache[key] = toOptions(list);
     } catch {
       optionCache[key] = [];
     }
@@ -241,6 +248,21 @@ async function load() {
     }
     if (!isEdit.value) {
       fill({});
+      return;
+    }
+
+    // 从列表页点「编辑」进来时，ListView 会把那一行放进 router state。
+    // 优先用它：列表兜底只取第一页，券模板这种跨好几页的列表，
+    // 从第 2 页点编辑会捞不到那一行（提示「未找到该记录」+ 表单全空）。
+    // 直接用路由里带过来的行，既省一次请求，也不受分页影响。
+    const seeded = (history.state as any)?.row;
+    if (seeded && String(seeded[config.value.idField || 'id'] ?? seeded.id ?? '') === String(entityId.value)) {
+      loaded.value = seeded;
+      fill(seeded);
+      if (config.value.permissionTree && seeded.permissionIds) {
+        await nextTick();
+        permissionTreeRef.value?.setCheckedKeys(seeded.permissionIds.map(String), false);
+      }
       return;
     }
 
@@ -287,7 +309,13 @@ async function load() {
       silent: true,
     });
     const rows = Array.isArray(res) ? res : (res?.items || []);
-    const hit = rows.find((r: any) => String(r.id) === String(entityId.value));
+    // 按配置里的 idField 找，而不是写死 `id`：
+    // 物流公司是 logisticsId、券模板是 templateId、场次是 sessionId ——
+    // 写死 `id` 时这三类编辑页一律「未找到该记录」，表单全空，
+    // 保存又把空值写回去（备注 / Logo / 排序直接被清掉）。
+    const idField = config.value.idField || 'id';
+    const hit = rows.find((r: any) =>
+      String(r[idField] ?? r.id ?? r.Id ?? '') === String(entityId.value));
     if (!hit) ElMessage.warning('未找到该记录，可能已被删除');
     loaded.value = hit || {};
     fill(hit || {});
@@ -382,7 +410,16 @@ async function submit() {
     }
     for (const f of visibleFields.value) {
       if (f.readonlyInEdit && isEdit.value) continue;
-      body[f.field] = f.toApi ? f.toApi(model[f.field]) : model[f.field];
+      if (f.toApi) {
+        body[f.field] = f.toApi(model[f.field]);
+        continue;
+      }
+      let v = model[f.field];
+      // 下拉是 clearable 的：清空后模型是 `''`，但所有下拉字段在后端都是
+      // long / int / long[]（本文件里没有任何字符串取值的下拉）。
+      // 把 `''` 原样发出去同样是整单绑定失败，所以空值统一收敛成 0 / []。
+      if (f.type === 'select' && v === '') v = f.multiple ? [] : 0;
+      body[f.field] = v;
     }
     if (isEdit.value) body[config.value.idField || 'id'] = String(entityId.value);
 

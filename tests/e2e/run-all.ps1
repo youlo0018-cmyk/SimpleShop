@@ -40,6 +40,23 @@ if ($permExit -ne 0) {
     exit 1
 }
 
+# 再跑一条前端静态核对：列表 / 表单配置里的跳转路径是否都对得上已注册路由。
+# 同样不需要起服务，而且它抓的是「按钮点下去被 catch-all 送去工作台」这类缺陷 ——
+# 那种缺陷所有接口都返回 200，跑一万条 API 用例也碰不到。
+Write-Host ("#" * 70) -ForegroundColor DarkGray
+Write-Host "# 运行 check-route-links.mjs（静态核对前端跳转路径）" -ForegroundColor Cyan
+Write-Host ("#" * 70) -ForegroundColor DarkGray
+
+$routeCheck = Join-Path $PSScriptRoot '..\ui\check-route-links.mjs'
+$routeOutput = (& node $routeCheck 6>&1 2>&1 | Out-String)
+$routeExit = $LASTEXITCODE
+Write-Host $routeOutput
+
+if ($routeExit -ne 0) {
+    Write-Host '前端跳转路径核对未通过：有链接指向不存在的路由（点下去会落到工作台）' -ForegroundColor Red
+    exit 1
+}
+
 # ---------- 服务存活预检 ----------
 #
 # 为什么必须有这一步：服务没起时，脚本里第一句 `Invoke-RestMethod` 会**卡在连接超时上**

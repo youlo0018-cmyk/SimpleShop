@@ -510,7 +510,7 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
 
     /// <inheritdoc />
     public async Task<(List<PointRecord> Items, long Total)> QueryRecordsAdminAsync(
-        int page, int pageSize, long customerId, string action, string bizNo,
+        int page, int pageSize, long customerId, string action, string bizNo, string keyword,
         CancellationToken ct = default)
     {
         var select = _db.Select<PointRecord>()
@@ -526,6 +526,13 @@ public sealed class PointRepository : CrudRepository<PointAccount>, IPointReposi
         {
             var no = bizNo.Trim();
             select = select.Where(a => a.BizNo == no);
+        }
+
+        // 后台搜索框的占位符是「业务单号」：走模糊匹配，运营只记得单号片段时也能搜到。
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            select = select.Where(a => a.BizNo.Contains(kw));
         }
 
         var total = await select.CountAsync(ct).ConfigureAwait(false);

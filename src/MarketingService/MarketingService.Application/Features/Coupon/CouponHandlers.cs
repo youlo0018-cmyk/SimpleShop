@@ -83,8 +83,9 @@ public sealed class QueryAvailableCouponsHandler
             a.ActivityName,
             a.TemplateId,
             names[a.TemplateId],
-            a.ClaimStartTime.ToString("yyyy-MM-dd HH:mm:ss"),
-            a.ClaimEndTime.ToString("yyyy-MM-dd HH:mm:ss"),
+            // 带 Z：小程序端按 UTC 解析后再转本地展示，少了标记会整体偏移一个时区
+            CouponTimeNormalizer.ToUtcIso(a.ClaimStartTime),
+            CouponTimeNormalizer.ToUtcIso(a.ClaimEndTime),
             a.ClaimQuantity,
             a.ClaimedQuantity,
             a.PerUserLimit,
@@ -99,7 +100,9 @@ public sealed class QueryAvailableCouponsHandler
             a.SortOrder,
             a.Status,
             a.Status == 1 ? "启用" : "停用",
-            a.PlatformId)).ToList();
+            a.PlatformId,
+            // 领券中心只列模板仍在的活动（上面已按 names 过滤），这里恒为 true。
+            true)).ToList();
 
         return ApiResults.Ok(result);
     }

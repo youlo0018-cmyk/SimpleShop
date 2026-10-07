@@ -27,7 +27,10 @@ const args = process.argv.slice(2);
 const only = args.includes('--only') ? args[args.indexOf('--only') + 1] : '';
 const headed = args.includes('--headed');
 
-const BASE = process.env.ADMIN_URL || 'http://localhost:5174';
+// 默认端口必须与 `scripts/start-web.ps1` 一致：后台 5173、小程序 5174。
+// 这里曾写成 5174（那是小程序），不带 ADMIN_URL 跑就会去登录小程序页面，
+// 15 秒等不到 #username 直接失败 —— 而失败原因看起来像「后台登录页坏了」。
+const BASE = process.env.ADMIN_URL || 'http://127.0.0.1:5173';
 const USER = process.env.ADMIN_USER || 'codexadmin';
 const PASS = process.env.ADMIN_PASS || 'Admin123456';
 const VIEWPORT = { width: 1440, height: 900 };

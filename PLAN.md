@@ -104,7 +104,7 @@ S0 基础设施
 | 路径 | 内容 |
 |---|---|
 | `SimpleShop.slnx` | **根解决方案**，登记全部工程。`dotnet sln add` 会按磁盘目录自动生成嵌套的解决方案文件夹 |
-| `src/<服务名>/<服务名>.slnx` | **每个微服务一个独立解决方案**，只含自己的四个分层工程。日常开发打开这个即可 |
+| `src/<服务名>/<服务名>.sln` | **每个微服务一个独立解决方案**（经典 `.sln` 格式），含自己的四个分层工程 + 递归引用的 `Collaboration` 工程（`dotnet sln add` 默认 `--include-references`）。日常开发打开这个即可 |
 | `tests/<项目名>.slnx` | 测试项目独立方案，便于单跑测试 |
 | `src/Collaboration/Collaboration.Domain/Collaboration.Domain.csproj` | net10.0 类库 |
 | `.../Common/ApiResponse.cs` | `ApiResponse { Success, Code, Message, Data, Errors }` |

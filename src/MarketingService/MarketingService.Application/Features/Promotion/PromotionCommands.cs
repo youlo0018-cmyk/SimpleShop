@@ -39,8 +39,12 @@ public interface IPromotionActivitySpec
     /// <summary>适用范围类型。</summary>
     int TargetType { get; }
 
-    /// <summary>适用范围的 JSON 文本。</summary>
-    string Targets { get; }
+    /// <summary>适用范围的 JSON 文本；<c>null</c> 等同于 <c>"[]"</c>（全场）。</summary>
+    /// <remarks>
+    /// 声明成可空是为了让「编辑」实现能安全地收不到这个字段：
+    /// 后台营销活动表单是全场专用，请求体里没有 targets。
+    /// </remarks>
+    string? Targets { get; }
 
     /// <summary>开始时间（UTC）。</summary>
     DateTime StartTime { get; }
@@ -112,7 +116,12 @@ public record UpdatePromotionActivityCommand(
     long GiftTemplateId,
     int GiftQuantity,
     int TargetType,
-    string Targets,
+    // 目标 Id 列表 JSON。**可空**：后台的营销活动表单是「全场」专用，
+    // 界面上根本没有这个字段，请求体里也就不会带它 ——
+    // 声明成非空时 ASP.NET Core 会按隐式必填拦下来，
+    // **编辑任何营销活动都保存不了**（400「Targets 不能为空」）。
+    // 处理器里已经有 `request.Targets ?? "[]"` 兜底。
+    string? Targets,
     DateTime StartTime,
     DateTime EndTime,
     int SortOrder,
@@ -196,12 +205,21 @@ public readonly record struct PromotionOrderLine(long SpuId, long SkuId, decimal
 /// 少了这个字段下拉就是空的，运营一保存就把已配好的赠送模板清成 0。
 /// </param>
 /// <param name="GiftQuantity">满赠每单赠送张数。</param>
+/// <param name="SortOrder">排序。**必须下发**：编辑页的「排序」靠它回显，少了就是 0，一保存就重置。</param>
+/// <param name="Targets">适用范围 JSON。**必须下发**：编辑页不带这个字段时后端按「全场」处理，定向活动会被洗成全场。</param>
+/// <param name="PlatformId">归属平台 Id，供编辑页回显（更新接口不接收它，归属创建后锁定）。</param>
+/// <param name="DiscountValue">
+/// 「优惠」列的展示文本（满减为金额、满折为「N 折」、满赠为「赠 N 张」）。
+/// 列表列绑这个字段而不是 <c>DiscountAmount</c>：后者对满折 / 满赠活动恒为 0.00。
+/// </param>
 public sealed record PromotionActivityDto(
     long Id, string ActivityName, int ActivityType, string TypeName,
     decimal ThresholdAmount, decimal DiscountAmount, decimal DiscountRate,
     int TargetType, string TargetName,
     string StartTime, string EndTime, int Status, string StatusName,
-    long GiftTemplateId, int GiftQuantity);
+    long GiftTemplateId, int GiftQuantity,
+    int SortOrder, string Targets, long PlatformId,
+    string DiscountValue = "");
 
 /// <summary>活动分页结果。</summary>
 /// <param name="Items">当页活动。</param>

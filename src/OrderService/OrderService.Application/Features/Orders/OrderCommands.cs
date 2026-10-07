@@ -178,7 +178,10 @@ public sealed record OrderDetailDto(
     long LogisticsCompanyId = 0, string LogisticsCompanyName = "",
     string TrackingNo = "", string ShippedAt = "",
     decimal RefundedAmount = 0m, decimal RemainingRefundable = 0m,
-    decimal ActivityDiscount = 0m);
+    decimal ActivityDiscount = 0m,
+    // 发货内容 / 发货备注：虚拟商品的卡号 / 激活码要展示给客户（后台发货时必填），
+    // 快递发货备注选填。未发货时为空串。
+    string ShipRemark = "");
 
 /// <summary>订单行。</summary>
 /// <param name="OrderItemId">订单行 Id。<b>部分退款按它定位退哪一行</b>，缺了这个字段部分退款无从下手。</param>

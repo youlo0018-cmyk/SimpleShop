@@ -149,6 +149,22 @@ public sealed class CouponAdminController : ControllerBase
         [FromBody] UpdateCouponActivityCommand command, CancellationToken ct)
         => _mediator.Send(command, ct);
 
+    /// <summary>启用 / 停用券活动。</summary>
+    /// <param name="command">活动 Id 与目标状态。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>成功返回空响应。</returns>
+    /// <remarks>
+    /// <para>列表页的「启用 / 停用」按钮走这里，<b>不走 Update</b>：
+    /// 编辑接口会重跑「发放量不得超过模板剩余可发量」，而活动创建时已经占过池子，
+    /// 合法活动再点一次启用就会被自己挡成 400。</para>
+    ///
+    /// <para>停用永远放行；启用时只额外要求关联模板仍然存在。</para>
+    /// </remarks>
+    [HttpPost("coupon-activities/SetStatus")]
+    public Task<ApiResponse> SetActivityStatus(
+        [FromBody] SetCouponActivityStatusCommand command, CancellationToken ct)
+        => _mediator.Send(command, ct);
+
     /// <summary>分页查询券核销记录。</summary>
     /// <param name="command">命令。</param>
     /// <param name="ct">取消令牌。</param>

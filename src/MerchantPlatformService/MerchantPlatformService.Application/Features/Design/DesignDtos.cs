@@ -12,4 +12,15 @@ public sealed record DesignResult(
 /// <param name="Type">组件类型。</param>
 /// <param name="Name">中文名。</param>
 /// <param name="Category">分类。</param>
-public sealed record ComponentDefDto(string Type, string Name, string Category);
+/// <summary>组件库条目。</summary>
+/// <param name="Type">组件类型。</param>
+/// <param name="Name">中文名。</param>
+/// <param name="Category">所属分类。</param>
+/// <param name="Props">可编辑属性 schema，驱动后台右侧属性面板。</param>
+/// <remarks>
+/// schema 由后端下发而不是前端按 type 写死分支：组件注册表加了新组件却忘了在
+/// 属性面板补一段，运营就只能拖出一个改不了内容的组件，而界面上看不出哪里不对。
+/// </remarks>
+public sealed record ComponentDefDto(
+    string Type, string Name, string Category,
+    IReadOnlyList<MerchantPlatformService.Domain.Services.DesignPropDef> Props);

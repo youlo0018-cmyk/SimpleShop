@@ -13,13 +13,20 @@ namespace ProductService.Application.Features.Logistics;
 /// <param name="Logo">Logo URL，走 ToolService 上传。可空。</param>
 /// <param name="SortOrder">排序，小的在前。</param>
 /// <param name="Status">状态。1 启用 / 2 停用。</param>
+/// <param name="Remark">备注，可空。</param>
+/// <remarks>
+/// 🔴 <c>Remark</c> 以前只存在于 <see cref="UpdateLogisticsCompanyCommand"/>：
+/// 新建表单上明明有「备注」输入框，填了却**静默丢掉**（列表里那一列永远空着），
+/// 而编辑同一家公司再填就能存进去 —— 同一份数据两条路径两种结果。
+/// </remarks>
 public record CreateLogisticsCompanyCommand(
     string CompanyName,
     long PlatformId,
     string CompanyCode = "",
     string Logo = "",
     int SortOrder = 0,
-    int Status = LogisticsCompanyStatuses.Enabled) : IRequest<ApiResponse<long>>;
+    int Status = LogisticsCompanyStatuses.Enabled,
+    string Remark = "") : IRequest<ApiResponse<long>>;
 
 /// <summary>编辑物流公司。</summary>
 /// <param name="LogisticsId">物流公司 Id。</param>

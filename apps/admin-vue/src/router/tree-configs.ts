@@ -16,6 +16,12 @@ export const TREES = {
     deletePermission: 'category:delete',
     maxLevel: 3,
     idField: 'id',
+    // 请求体里的 Id 字段名（后端命令是 `UpdateCategoryCommand(long CategoryId, ...)`）。
+    // 它与节点上的 `idField` 不是一回事：节点里叫 `id`，请求体里叫 `categoryId`。
+    // 之前两处共用 `idField`，于是编辑 / 停用分类发的是 `{ id }`，
+    // 后端收不到 CategoryId（默认 0）直接 400「分类 Id 必须为正数」——
+    // 界面表现是「改了名点保存，弹出这句莫名其妙的校验错误」。
+    idBodyField: 'categoryId',
     parentField: 'parentId',
     nameField: 'categoryName',
     codeField: 'categoryCode',
@@ -50,6 +56,8 @@ export const TREES = {
     deletePermission: 'permission:delete',
     maxLevel: 3,
     idField: 'id',
+    // 同上：后端是 `UpdatePermissionCommand(long PermissionId, ...)` / `ChangePermissionStatusCommand`
+    idBodyField: 'permissionId',
     parentField: 'parentId',
     nameField: 'name',
     builtinField: 'isBuiltin',

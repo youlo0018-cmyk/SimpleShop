@@ -90,9 +90,13 @@ public record ShipOrderCommand(
     long LogisticsCompanyId = 0,
     string TrackingNo = "") : IRequest<ApiResponse>, IHasOrderNo;
 
-/// <summary>虚拟商品发货。发货即完成，直接 20 → 50。</summary>
+/// <summary>虚拟商品发货（20 → 30 待收货，与快递同一状态链，区别只在无物流字段）。</summary>
+/// <remarks>
+/// 曾经这里是「发货即完成 20 → 50」，把「不填物流信息」误读成了「交付即完成」：
+/// 虚拟单永远进不了 30，而虚拟商品的退款窗口是 {20,30}，窗口的一半成了死代码。
+/// </remarks>
 /// <param name="OrderNo">订单号。</param>
-/// <param name="Remark">发货备注，通常是卡号 / 激活码。</param>
+/// <param name="Remark">发货内容（卡号 / 激活码），落库后展示给客户；必填由前端与 Handler 把关。</param>
 public record DeliverVirtualCommand(string OrderNo, string Remark = "") : IRequest<ApiResponse>, IHasOrderNo;
 
 /// <summary>自提备货完成。20 → 40 待取货，并返回取货码。</summary>
@@ -201,7 +205,7 @@ public static class OrderAdminValidators
         services.AddScoped<IValidator<QueryAdminOrdersCommand>, QueryAdminOrdersValidator>();
         services.AddScoped<IValidator<AdminCancelOrderCommand>, OrderNoCommandValidator<AdminCancelOrderCommand>>();
         services.AddScoped<IValidator<ShipOrderCommand>, ShipOrderValidator>();
-        services.AddScoped<IValidator<DeliverVirtualCommand>, OrderNoCommandValidator<DeliverVirtualCommand>>();
+        services.AddScoped<IValidator<DeliverVirtualCommand>, DeliverVirtualValidator>();
         services.AddScoped<IValidator<SelfPickupReadyCommand>, OrderNoCommandValidator<SelfPickupReadyCommand>>();
         services.AddScoped<IValidator<VerifyPickupCodeCommand>, VerifyPickupCodeValidator>();
         services.AddScoped<IValidator<SimulatePaymentCommand>, OrderNoCommandValidator<SimulatePaymentCommand>>();
@@ -293,6 +297,23 @@ public static class OrderAdminValidators
             RuleFor(x => x.TrackingNo).NotEmpty().WithMessage("请填写运单号");
             RuleFor(x => x.TrackingNo).MinimumLength(2).MaximumLength(64)
                 .WithMessage("运单号必须为 2-64 个字符");
+        }
+    }
+
+    /// <summary>虚拟发货校验。在「订单号通用规则」之外要求发货内容必填。</summary>
+    /// <remarks>
+    /// 发货内容是顾客拿到的**唯一交付物**（卡号 / 激活码）。空着发出去等于顾客付了钱什么都拿不到，
+    /// 而订单状态已经是「待收货」——后台列表上看不出任何异常。
+    /// 前端必填挡的是手滑，这里挡的是绕过前端的调用。
+    /// </remarks>
+    private sealed class DeliverVirtualValidator : AbstractValidator<DeliverVirtualCommand>
+    {
+        /// <summary>构造校验器。</summary>
+        public DeliverVirtualValidator()
+        {
+            RuleFor(x => x.OrderNo).NotEmpty().MaximumLength(64).WithMessage("订单号不正确");
+            RuleFor(x => x.Remark).NotEmpty().WithMessage("请填写发货内容（卡号 / 激活码）");
+            RuleFor(x => x.Remark).MaximumLength(512).WithMessage("发货内容最多 512 个字符");
         }
     }
 

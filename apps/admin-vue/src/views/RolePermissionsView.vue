@@ -29,7 +29,7 @@
         node-key="id"
         show-checkbox
         default-expand-all
-        :props="{ label: 'name', children: 'children' }"
+        :props="{ label: 'name', children: 'children', disabled: (data: any) => data.selectable === false }"
       >
         <template #default="{ data }">
           <span class="perm">
@@ -62,17 +62,25 @@ const role = reactive({
   isBuiltin: false,
 });
 
-function flattenIds(nodes: any[]): string[] {
-  return nodes.flatMap((node) => [String(node.id), ...flattenIds(node.children || [])]);
+// 只收**叶子**（有 code 的节点）。业务大类 / 功能模块 / 虚拟根「全部权限」都是容器，
+// 它们只是勾选快捷方式，不是权限点本身 —— BUSINESS.md 5.4「半选节点不保存，只保存叶子」。
+// 之前把容器 Id（含虚拟根 0 和没有权限点的空模块）一并提交，等于往 role_permission
+// 里写进一批查不到 code 的绑定：权限不会多出来，但角色详情回显与「已绑定 N 项」计数都会失真。
+function leafIds(nodes: any[]): string[] {
+  return nodes.flatMap((node) => [
+    ...(node.code ? [String(node.id)] : []),
+    ...leafIds(node.children || []),
+  ]);
 }
 
 function checkedIds(): string[] {
   const tree = treeRef.value;
   if (!tree) return [];
-  return [
-    ...tree.getCheckedKeys(false).map(String),
-    ...tree.getHalfCheckedKeys().map(String),
-  ];
+  const leaves = new Set(leafIds(permissions.value));
+  return tree
+    .getCheckedKeys(false)
+    .map(String)
+    .filter((id) => leaves.has(id));
 }
 
 async function load() {
@@ -98,7 +106,7 @@ async function load() {
 }
 
 function selectAll() {
-  treeRef.value?.setCheckedKeys(flattenIds(permissions.value), false);
+  treeRef.value?.setCheckedKeys(leafIds(permissions.value), false);
 }
 
 function clearAll() {

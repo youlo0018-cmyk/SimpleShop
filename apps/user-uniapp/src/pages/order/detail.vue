@@ -8,6 +8,15 @@
         <text class="status-card__time">{{ order.createdAt }}</text>
       </view>
 
+      <!-- 虚拟商品的发货内容（卡号 / 激活码）是顾客拿到的唯一交付物，
+           放在最前面；快递的发货备注属内部信息，不展示给顾客。 -->
+      <view v-if="isVirtual && order.shipRemark" class="panel info">
+        <view class="info__row info__row--strong">
+          <text>发货内容</text>
+          <text class="info__value">{{ order.shipRemark }}</text>
+        </view>
+      </view>
+
       <view class="panel info">
         <view class="info__row">
           <text>收货人</text>
@@ -83,6 +92,10 @@ const session = useSessionStore();
 const loading = ref(true);
 const order = ref<any>({});
 const orderNo = ref('');
+
+/** 订单是否包含虚拟商品（决定是否展示发货内容）。 */
+const isVirtual = computed(() =>
+  Array.isArray(order.value.items) && order.value.items.some((i: any) => Number(i.deliveryType) === 2));
 
 async function load() {
   session.restore();

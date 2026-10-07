@@ -112,9 +112,12 @@ public sealed record SeckillSessionPage(
 /// <param name="StatusName">状态中文名。</param>
 /// <param name="StockTransferred">库存是否已划出。</param>
 /// <param name="ItemCount">场次商品数。</param>
+/// <param name="SortOrder">排序。**必须下发**：编辑页的「排序」输入框靠它回显，少了就是 0，一保存就把排序重置。</param>
+/// <param name="PlatformId">归属平台 Id，供编辑页回显（更新接口不接收它，归属创建后锁定）。</param>
 public sealed record SessionDto(
     string SessionId, string SessionName, string StartTime, string EndTime,
-    int Status, string StatusName, bool StockTransferred, int ItemCount);
+    int Status, string StatusName, bool StockTransferred, int ItemCount,
+    int SortOrder, long PlatformId);
 
 /// <summary>场次商品（后台）。</summary>
 /// <param name="ItemId">商品 Id。</param>

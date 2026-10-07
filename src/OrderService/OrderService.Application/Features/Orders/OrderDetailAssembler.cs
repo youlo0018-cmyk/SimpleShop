@@ -44,5 +44,8 @@ public static class OrderDetailAssembler
             // 单独存一个整单字段是为了让详情页能直接显示「省了多少」，
             // 而不必让前端自己把行加一遍。
             decimal.Round(
-                items.Sum(a => a.ActivityDiscount), 2, MidpointRounding.AwayFromZero));
+                items.Sum(a => a.ActivityDiscount), 2, MidpointRounding.AwayFromZero),
+            // 发货内容：虚拟商品是卡号 / 激活码（客户凭它收货），快递是发货备注。
+            // 未发货为空串，与其它字符串字段的非空约定一致。
+            order.ShipRemark);
 }
