@@ -95,9 +95,17 @@ Windows 用 **PowerShell**（`scripts/*.ps1`）；Linux（Mint / Ubuntu）用 **
 **Linux Mint / Ubuntu（16G 低内存档）**
 
 ```bash
+# A. 已有运行时数据压缩包（推荐）：解压到仓库根目录（含数据库与配置，跳过初始化）
+tar -xzf simpleshop-runtime-data-*.tar.gz -C .
+
 cd deploy/linux
-chmod +x ./*.sh && ./build.sh     # 首次：构建后端 + 前端
-./start-infra.sh minimal && ./init-db.sh   # 全新设备首次：建库建表（数据卷迁移可跳过）
+chmod +x ./*.sh
+./build.sh --fresh            # 首次必须：构建后端 + 前端（前端原生依赖按平台重装）
+
+# B. 没有压缩包时：再补一次全新初始化（建库建表 + 权限/角色/配置中心种子，见 deploy/linux/README.md）
+./start-infra.sh minimal && ./init-db.sh
+
+# 启动
 ./start-all.sh                    # minimal 档全套（~2.4G）；需要搜索/日志面板时用 ./start-all.sh full（~4.2G）
 ./status.sh                       # 状态与内存占用；./stop-all.sh 全停
 ```

@@ -53,14 +53,42 @@ chmod +x ./*.sh        # 首次 clone 后给脚本加执行位（git 不跨平�
 
 ### 2.1 首次初始化（全新设备）
 
-**场景 A：从现有设备迁数据卷**（推荐，最省事）
+**场景 A：用运行时数据压缩包恢复**（推荐，最省事，新机器不用重新初始化）
 
-把 `deploy/data/`（postgres / redis / agileconfig 的数据卷）整体拷到新设备同路径。
-库、表、权限树、内置角色、配置中心内容都在里面，**直接跳到第 3 节**。
+在**旧机器**上生成压缩包（脚本会先检查容器已停止——运行中打包数据可能不一致）：
 
-> **从 Windows 拷贝整个仓库的注意**：两个前端目录的 `node_modules` 不能跨平台复用
-> （esbuild 等原生二进制按平台分发），后端 `bin/obj` 也建议重建。到 Linux 后执行：
-> `./build.sh --fresh`（清理前端依赖重装 + 重建后端）。
+```powershell
+./scripts/stop-infra.ps1            # 停容器（数据保留在 deploy/data）
+./scripts/pack-runtime-data.ps1     # 产物：output/simpleshop-runtime-data-<时间戳>.tar.gz（~96 MB）
+```
+
+压缩包里有：`deploy/data/`（PG 全部业务库 / Redis / AgileConfig / ES / RabbitMQ / Fluentd）、
+`deploy/.env`（管理台凭据 + 内部令牌）、`deploy/keys/`（取货码 RSA 私钥）、
+`deploy/certs/`、`uploads/`，外加根目录的 `RESTORE.md`（恢复说明）。
+这些全部被 `.gitignore` 排除，`git clone` 拿不到——所以要单独搬。
+
+在**新机器**上：
+
+```bash
+# ① 拿源码
+git clone https://github.com/youlo0018-cmyk/SimpleShop.git
+cd SimpleShop
+
+# ② 压缩包解压到仓库根目录（覆盖；根目录有 RESTORE.md 可以先看）
+tar -xzf simpleshop-runtime-data-*.tar.gz -C .
+
+# ③ 按第 2 节做「首次准备」后启动
+cd deploy/linux
+chmod +x ./*.sh
+./build.sh --fresh     # 首次必须 fresh：前端原生依赖（esbuild 等）按平台分发
+./start-all.sh         # minimal 档；需要搜索/日志面板时 ./start-all.sh full
+
+# ④ 验证
+./status.sh            # 17 个服务 + 2 个前端全绿
+```
+
+> **不要从旧机器拷 `node_modules` / `bin` / `obj`**（原生依赖按平台分发，拷了反而坏）；
+> 数据卷必须**同镜像版本**（compose 里已钉住 PG 16 / Redis 7.2 / ES 8.15）。
 
 **场景 B：全新初始化**
 

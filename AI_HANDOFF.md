@@ -335,6 +335,18 @@ awk 兜底（含 CRLF 兼容——Windows 写的 JSON 带 `\r` 会让 implemente
 （ES_JAVA_OPTS 512m / NODE_OPTIONS 384m / mem_limit 全部生效 / redis command 完整保留 appendonly）；
 `up --dry-run` 通过。**Windows 流程不受影响**（ps1 与基础 compose 均未改动）。
 
+**运行时数据搬运（同一天补）**：`git clone` 拿不到的运行时内容（数据卷 / 凭据 / 私钥 / 上传件）
+用压缩包搬运，一条链路闭环：
+
+- `scripts/pack-runtime-data.ps1`：**先检查容器已停**（运行中打包可能不一致）→ `tar` 打包
+  `deploy/data` + `deploy/.env` + `deploy/keys` + `deploy/certs` + `uploads` →
+  `tar -rf` 把 `deploy/linux/RESTORE.md` **追加到压缩包根目录**（Windows 自带 bsdtar 不支持
+  `--transform`/`-s`，压缩流也不能追加，所以必须「先追加后压缩」）→ .NET GZipStream 压缩。
+- `deploy/linux/RESTORE.md`：压缩包内说明书（包含什么 / 怎么用 / 版本与安全注意）。
+- 实测产物：`output/simpleshop-runtime-data-20261007-2144.tar.gz`，**96.4 MB**
+  （原始 342 MB），6923 条目，`RESTORE.md` 在根目录，PG 数据 5988 项 + RSA 私钥 + 证书 + `.env` 齐全。
+- `deploy/linux/README.md` 场景 A 改写为「用压缩包恢复」的完整步骤（旧机打包 → 新机解压 → build --fresh → start-all）。
+
 ### 2026-10-07：需求漂移审计第四轮（微服务解决方案 / 密码盐 / AgileConfig 登录 / 虚拟发货内容）
 
 起因：用户发现「支付 / 库存合并到订单和商品列表」没写进需求文件（实为 D-1，已补），
