@@ -2676,7 +2676,9 @@ FreeSql 3.5 下 `Db.Update<T>(entity)` 在雪花主键实体上**生成空 SET �
 - **② 凭据外移**
   - `scripts/seed-agileconfig.ps1` 不再有硬编码默认值，改为读环境变量或 `deploy/.env`（已 gitignore）。
   - 新增 `deploy/.env.example`。
-  - 已确认管理密码 `Simpleshop@2026` **不再出现在任何被跟踪文件里**（`git grep` 为空）。
+  - 管理密码只存在于 `deploy/.env`（gitignore，**不入库**）；**被跟踪文件里不写明文**。
+    （自检：`git grep -nE 'BEGIN .*PRIVATE KEY'` 与对 `deploy/.env` 密码值的检索都应为空——
+    写这句时顺手发现旧记录自己把明文写进了本文档，已清除。）
   - 说明：`appsettings.json` 里的 `AppSecret` 保留——它是**只读应用凭据**且是 bootstrap 机制本身，
     与能写配置中心的管理密码性质不同。
 - **③ 回归用例**：`tests/e2e/api-regression.ps1`，15 条，覆盖注册、登录、参数校验、
